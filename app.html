@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://unpkg.com; connect-src 'self' https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.kumi.systems https://maps.mail.ru https://api.opentopodata.org;" />
+  <title>Dimension3Prints</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+
+    <!-- ── Header ─────────────────────────────────────────────────── -->
+    <header id="header">
+      <div class="header-left">
+        <div class="logo">
+          <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+            <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2" fill="none"/>
+            <path d="M16 8L22.66 11.5V20.5L16 24L9.34 20.5V11.5L16 8Z" fill="currentColor" opacity="0.3"/>
+          </svg>
+          <span class="logo-text">Dimension<span class="logo-accent">3</span>Prints</span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="header-badge">v0.3 Demo</div>
+      </div>
+    </header>
+
+    <!-- ── Main workspace ─────────────────────────────────────────── -->
+    <div class="workspace">
+
+      <!-- Left sidebar -->
+      <aside class="sidebar">
+        <!-- Search -->
+        <div class="sidebar-section">
+          <label class="section-label">Location</label>
+          <div class="search-row">
+            <div class="search-input-wrap">
+              <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+              </svg>
+              <input
+                type="text"
+                id="search-input"
+                placeholder="Search city, address, landmark..."
+                autocomplete="off"
+              />
+            </div>
+          </div>
+          <div id="search-results" class="search-results"></div>
+        </div>
+
+        <!-- Map -->
+        <div class="sidebar-map">
+          <div id="map-container"></div>
+        </div>
+
+        <!-- Settings -->
+        <div class="sidebar-section sidebar-settings">
+          <label class="section-label">Settings</label>
+
+          <div class="setting-row">
+            <span class="setting-name">Capture Radius <span style="color:var(--text-dim);font-weight:400">(0.7 recommended)</span></span>
+            <span class="setting-val" id="radius-value">1.0 km</span>
+          </div>
+          <input type="range" id="radius-slider" class="slider" min="0.2" max="2" step="0.1" value="1.0" />
+
+          <div class="setting-row" style="margin-top:12px">
+            <span class="setting-name">Vertical Scale</span>
+            <span class="setting-val" id="vscale-value">3x</span>
+          </div>
+          <input type="range" id="vscale-slider" class="slider" min="1" max="4" step="1" value="3" />
+
+          <label class="toggle-row" style="margin-top:12px">
+            <input type="checkbox" id="use-elevation" checked />
+            <span class="toggle-switch"></span>
+            <span class="toggle-label">Include elevation data</span>
+          </label>
+
+          <label class="toggle-row" style="margin-top:12px">
+            <input type="checkbox" id="invert-colors" />
+            <span class="toggle-switch"></span>
+            <span class="toggle-label">Invert colors (black buildings)</span>
+          </label>
+        </div>
+
+        <!-- Generate -->
+        <div class="sidebar-actions">
+          <button id="generate-btn" class="btn-generate" disabled>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            Generate 3D Model
+          </button>
+        </div>
+      </aside>
+
+      <!-- Main preview area -->
+      <main class="preview-area">
+        <div class="preview-header">
+          <div class="preview-toolbar-left">
+            <span class="preview-title">3D Preview</span>
+          </div>
+          <div class="preview-toolbar-right">
+            <button id="toggle-wireframe" class="btn-toolbar" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M2 12L12 2L22 12L12 22Z"/>
+                <path d="M12 2V22M2 12H22"/>
+              </svg>
+              Wireframe
+            </button>
+            <button id="reset-camera" class="btn-toolbar" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 4v6h6M23 20v-6h-6"/>
+                <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
+              </svg>
+              Reset View
+            </button>
+            <div class="export-divider"></div>
+            <button id="order-print" class="btn-toolbar btn-order-toolbar" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0"/>
+              </svg>
+              Order Print — $35
+            </button>
+            <!-- Admin-only export (hidden, Ctrl+Shift+E to show) -->
+            <button id="export-stl" class="btn-toolbar btn-export-toolbar" disabled style="display:none">STL</button>
+            <button id="export-3mf" class="btn-toolbar btn-export-toolbar" disabled style="display:none">3MF</button>
+          </div>
+        </div>
+
+        <div id="preview-container">
+          <div id="preview-placeholder">
+            <div class="placeholder-hex">
+              <svg width="80" height="80" viewBox="0 0 32 32" fill="none">
+                <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="1" opacity="0.3"/>
+                <path d="M16 8L22.66 11.5V20.5L16 24L9.34 20.5V11.5L16 8Z" stroke="currentColor" stroke-width="0.5" opacity="0.15"/>
+              </svg>
+            </div>
+            <p class="placeholder-main">Select a location and generate</p>
+            <p class="placeholder-sub">Search or click the map, then hit Generate 3D Model</p>
+            <div class="placeholder-controls">
+              <span>Orbit: drag</span>
+              <span>Zoom: scroll</span>
+              <span>Pan: right-drag</span>
+            </div>
+          </div>
+          <canvas id="preview-canvas"></canvas>
+        </div>
+
+        <!-- Legend bar -->
+        <div class="legend-bar">
+          <div class="legend-items" id="legend-items">
+            <span class="legend-item">
+              <span class="legend-dot" id="legend-dot-bldg" style="background:#F0F0F0;border:1px solid #666"></span>
+              <span id="legend-label-bldg">Buildings / Base</span>
+            </span>
+            <span class="legend-item">
+              <span class="legend-dot" id="legend-dot-road" style="background:#1A1A1A;border:1px solid #666"></span>
+              <span id="legend-label-road">Roads / Parks / Water</span>
+            </span>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <!-- ── Status bar ───────────────────────────────────────────── -->
+    <div id="status-bar">
+      <div id="progress-track">
+        <div id="progress-bar"></div>
+      </div>
+      <span id="status-text">Ready</span>
+    </div>
+
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

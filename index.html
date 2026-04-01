@@ -3,179 +3,506 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://unpkg.com; connect-src 'self' https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.kumi.systems https://maps.mail.ru https://api.opentopodata.org;" />
-  <title>Dimension3Prints</title>
+  <title>Dimension3Prints — Custom 3D Printed City Maps</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #050505;
+      --bg-panel: #0a0a0a;
+      --bg-card: #111;
+      --border: #1e1e1e;
+      --text: #f0f0f0;
+      --text-sec: #bbb;
+      --text-muted: #666;
+      --font: 'Inter', system-ui, -apple-system, sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      overflow-x: hidden;
+    }
+
+    /* ── Nav ──────────────────────────────────────── */
+    nav {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+      background: rgba(5,5,5,0.85);
+      backdrop-filter: blur(20px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 40px;
+      height: 60px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .nav-logo {
+      display: flex; align-items: center; gap: 10px;
+      text-decoration: none; color: var(--text);
+    }
+    .nav-logo svg { color: var(--text); }
+    .nav-logo-text { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+    .nav-logo-accent { color: var(--text-muted); }
+    .nav-links { display: flex; align-items: center; gap: 32px; }
+    .nav-links a {
+      color: var(--text-sec); text-decoration: none; font-size: 13px; font-weight: 500;
+      transition: color 0.2s;
+    }
+    .nav-links a:hover { color: #fff; }
+    .nav-cta {
+      background: #fff !important; color: #000 !important; border-radius: 8px;
+      padding: 8px 20px !important; font-weight: 600 !important;
+      transition: all 0.2s !important;
+    }
+    .nav-cta:hover { background: #ddd !important; transform: translateY(-1px); }
+
+    /* ── Hero ─────────────────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 120px 40px 80px;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::before {
+      content: '';
+      position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
+      background: radial-gradient(ellipse at 50% 30%, rgba(255,255,255,0.03) 0%, transparent 60%);
+      pointer-events: none;
+    }
+    .hero-content {
+      max-width: 800px; text-align: center; position: relative; z-index: 1;
+    }
+    .hero-badge {
+      display: inline-block;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 20px;
+      padding: 6px 16px;
+      font-size: 12px; font-weight: 500; color: var(--text-sec);
+      margin-bottom: 24px;
+    }
+    .hero h1 {
+      font-size: clamp(40px, 7vw, 72px);
+      font-weight: 900;
+      line-height: 1.05;
+      letter-spacing: -0.03em;
+      margin-bottom: 20px;
+    }
+    .hero h1 .highlight {
+      background: linear-gradient(135deg, #fff 0%, #888 100%);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero-sub {
+      font-size: clamp(16px, 2.2vw, 20px);
+      color: var(--text-sec);
+      line-height: 1.6;
+      max-width: 560px;
+      margin: 0 auto 40px;
+    }
+    .hero-buttons { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+    .btn-primary {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: #fff; color: #000;
+      border: none; border-radius: 10px;
+      padding: 16px 32px;
+      font-family: var(--font); font-size: 16px; font-weight: 700;
+      cursor: pointer; text-decoration: none;
+      transition: all 0.2s;
+    }
+    .btn-primary:hover { background: #ddd; transform: translateY(-2px); box-shadow: 0 8px 30px rgba(255,255,255,0.1); }
+    .btn-secondary {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: transparent; color: var(--text-sec);
+      border: 1px solid var(--border); border-radius: 10px;
+      padding: 16px 32px;
+      font-family: var(--font); font-size: 16px; font-weight: 500;
+      cursor: pointer; text-decoration: none;
+      transition: all 0.2s;
+    }
+    .btn-secondary:hover { border-color: #555; color: #fff; }
+
+    .hero-price {
+      margin-top: 24px;
+      font-size: 14px; color: var(--text-muted);
+    }
+    .hero-price span { color: var(--text); font-weight: 600; }
+
+    /* ── Hero image ───────────────────────────────── */
+    .hero-image {
+      max-width: 1000px; margin: -20px auto 0; padding: 0 40px;
+      position: relative; z-index: 1;
+    }
+    .hero-image-frame {
+      border-radius: 16px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      background: var(--bg-card);
+      aspect-ratio: 16/9;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .hero-image-frame img {
+      width: 100%; height: 100%; object-fit: cover;
+    }
+    .hero-image-frame .placeholder-img {
+      color: var(--text-muted); font-size: 14px; text-align: center; padding: 40px;
+    }
+    .hero-image-frame .placeholder-img svg { display: block; margin: 0 auto 12px; opacity: 0.3; }
+
+    /* ── Section layout ───────────────────────────── */
+    section { padding: 100px 40px; }
+    .section-inner { max-width: 1100px; margin: 0 auto; }
+    .section-label {
+      font-size: 11px; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.1em; color: var(--text-muted); margin-bottom: 12px;
+    }
+    .section-title {
+      font-size: clamp(28px, 4vw, 42px); font-weight: 800;
+      letter-spacing: -0.02em; line-height: 1.15; margin-bottom: 16px;
+    }
+    .section-desc {
+      font-size: 16px; color: var(--text-sec); max-width: 500px; line-height: 1.6;
+    }
+
+    /* ── How it works ─────────────────────────────── */
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-top: 60px; }
+    .step {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px;
+      padding: 32px 28px;
+      transition: border-color 0.3s, transform 0.3s;
+    }
+    .step:hover { border-color: #333; transform: translateY(-4px); }
+    .step-num {
+      font-size: 48px; font-weight: 900; color: rgba(255,255,255,0.06);
+      line-height: 1; margin-bottom: 16px;
+    }
+    .step h3 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+    .step p { font-size: 14px; color: var(--text-sec); line-height: 1.6; }
+
+    /* ── Gallery ──────────────────────────────────── */
+    #gallery { background: var(--bg-panel); }
+    .gallery-grid {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px;
+      margin-top: 48px;
+    }
+    .gallery-item {
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      aspect-ratio: 1;
+      background: var(--bg-card);
+      transition: border-color 0.3s, transform 0.3s;
+      position: relative;
+    }
+    .gallery-item:hover { border-color: #444; transform: translateY(-4px); }
+    .gallery-item img { width: 100%; height: 100%; object-fit: cover; }
+    .gallery-item .gallery-placeholder {
+      display: flex; align-items: center; justify-content: center;
+      height: 100%; color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;
+    }
+    .gallery-caption {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: linear-gradient(transparent, rgba(0,0,0,0.8));
+      padding: 20px 16px 14px; font-size: 13px; font-weight: 500;
+    }
+
+    /* ── Features ─────────────────────────────────── */
+    .features-grid {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px;
+      margin-top: 48px;
+    }
+    .feature-card {
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px;
+      padding: 28px;
+      transition: border-color 0.3s;
+    }
+    .feature-card:hover { border-color: #333; }
+    .feature-icon {
+      width: 40px; height: 40px; border-radius: 10px;
+      background: rgba(255,255,255,0.05);
+      display: flex; align-items: center; justify-content: center;
+      margin-bottom: 16px;
+    }
+    .feature-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 6px; }
+    .feature-card p { font-size: 13px; color: var(--text-sec); line-height: 1.6; }
+
+    /* ── Pricing ──────────────────────────────────── */
+    .price-card {
+      max-width: 420px; margin: 48px auto 0;
+      background: var(--bg-card); border: 1px solid var(--border); border-radius: 16px;
+      padding: 40px; text-align: center;
+    }
+    .price-amount { font-size: 56px; font-weight: 900; letter-spacing: -0.03em; }
+    .price-amount span { font-size: 20px; color: var(--text-muted); font-weight: 500; }
+    .price-desc { font-size: 14px; color: var(--text-sec); margin: 8px 0 24px; }
+    .price-features { list-style: none; text-align: left; margin-bottom: 28px; }
+    .price-features li {
+      font-size: 14px; color: var(--text-sec); padding: 8px 0;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 10px;
+    }
+    .price-features li::before { content: ''; display: inline-block; width: 6px; height: 6px; background: #fff; border-radius: 50%; flex-shrink: 0; }
+
+    /* ── CTA ──────────────────────────────────────── */
+    .cta-section {
+      text-align: center;
+      padding: 120px 40px;
+    }
+    .cta-section h2 {
+      font-size: clamp(32px, 5vw, 52px); font-weight: 900;
+      letter-spacing: -0.03em; margin-bottom: 16px;
+    }
+    .cta-section p {
+      font-size: 18px; color: var(--text-sec); margin-bottom: 32px;
+    }
+
+    /* ── Footer ───────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 40px;
+      text-align: center;
+      font-size: 12px; color: var(--text-muted);
+    }
+    footer a { color: var(--text-sec); text-decoration: none; }
+    footer a:hover { color: #fff; }
+
+    /* ── Responsive ───────────────────────────────── */
+    @media (max-width: 768px) {
+      nav { padding: 0 20px; }
+      .nav-links a:not(.nav-cta) { display: none; }
+      section { padding: 60px 20px; }
+      .hero { padding: 100px 20px 60px; }
+      .hero-image { padding: 0 20px; }
+      .steps { grid-template-columns: 1fr; }
+      .gallery-grid { grid-template-columns: repeat(2, 1fr); }
+      .features-grid { grid-template-columns: 1fr; }
+      .hero-buttons { flex-direction: column; align-items: center; }
+    }
+  </style>
 </head>
 <body>
-  <div id="app">
 
-    <!-- ── Header ─────────────────────────────────────────────────── -->
-    <header id="header">
-      <div class="header-left">
-        <div class="logo">
-          <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
-            <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2" fill="none"/>
-            <path d="M16 8L22.66 11.5V20.5L16 24L9.34 20.5V11.5L16 8Z" fill="currentColor" opacity="0.3"/>
+  <!-- ── Nav ──────────────────────────────────────── -->
+  <nav>
+    <a href="/" class="nav-logo">
+      <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
+        <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2" fill="none"/>
+        <path d="M16 8L22.66 11.5V20.5L16 24L9.34 20.5V11.5L16 8Z" fill="currentColor" opacity="0.3"/>
+      </svg>
+      <span class="nav-logo-text">Dimension<span class="nav-logo-accent">3</span>Prints</span>
+    </a>
+    <div class="nav-links">
+      <a href="#how-it-works">How It Works</a>
+      <a href="#gallery">Gallery</a>
+      <a href="#pricing">Pricing</a>
+      <a href="/app.html" class="nav-cta">Start Making</a>
+    </div>
+  </nav>
+
+  <!-- ── Hero ─────────────────────────────────────── -->
+  <section class="hero">
+    <div class="hero-content">
+      <div class="hero-badge">3D Printed to Order</div>
+      <h1>Your City,<br/><span class="highlight">Printed in 3D.</span></h1>
+      <p class="hero-sub">
+        Pick any place on Earth. We turn it into a stunning 3D printed map model
+        with real buildings, roads, and terrain. Designed by you, printed by us.
+      </p>
+      <div class="hero-buttons">
+        <a href="/app.html" class="btn-primary">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polygon points="5 3 19 12 5 21 5 3"/>
           </svg>
-          <span class="logo-text">Dimension<span class="logo-accent">3</span>Prints</span>
-        </div>
+          Start Making
+        </a>
+        <a href="#how-it-works" class="btn-secondary">See How It Works</a>
       </div>
-      <div class="header-right">
-        <div class="header-badge">v0.3 Demo</div>
-      </div>
-    </header>
-
-    <!-- ── Main workspace ─────────────────────────────────────────── -->
-    <div class="workspace">
-
-      <!-- Left sidebar -->
-      <aside class="sidebar">
-        <!-- Search -->
-        <div class="sidebar-section">
-          <label class="section-label">Location</label>
-          <div class="search-row">
-            <div class="search-input-wrap">
-              <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-              </svg>
-              <input
-                type="text"
-                id="search-input"
-                placeholder="Search city, address, landmark..."
-                autocomplete="off"
-              />
-            </div>
-          </div>
-          <div id="search-results" class="search-results"></div>
-        </div>
-
-        <!-- Map -->
-        <div class="sidebar-map">
-          <div id="map-container"></div>
-        </div>
-
-        <!-- Settings -->
-        <div class="sidebar-section sidebar-settings">
-          <label class="section-label">Settings</label>
-
-          <div class="setting-row">
-            <span class="setting-name">Capture Radius <span style="color:var(--text-dim);font-weight:400">(0.7 recommended)</span></span>
-            <span class="setting-val" id="radius-value">1.0 km</span>
-          </div>
-          <input type="range" id="radius-slider" class="slider" min="0.2" max="2" step="0.1" value="1.0" />
-
-          <div class="setting-row" style="margin-top:12px">
-            <span class="setting-name">Vertical Scale</span>
-            <span class="setting-val" id="vscale-value">3x</span>
-          </div>
-          <input type="range" id="vscale-slider" class="slider" min="1" max="4" step="1" value="3" />
-
-          <label class="toggle-row" style="margin-top:12px">
-            <input type="checkbox" id="use-elevation" checked />
-            <span class="toggle-switch"></span>
-            <span class="toggle-label">Include elevation data</span>
-          </label>
-
-          <label class="toggle-row" style="margin-top:12px">
-            <input type="checkbox" id="invert-colors" />
-            <span class="toggle-switch"></span>
-            <span class="toggle-label">Invert colors (black buildings)</span>
-          </label>
-        </div>
-
-        <!-- Generate -->
-        <div class="sidebar-actions">
-          <button id="generate-btn" class="btn-generate" disabled>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
-            Generate 3D Model
-          </button>
-        </div>
-      </aside>
-
-      <!-- Main preview area -->
-      <main class="preview-area">
-        <div class="preview-header">
-          <div class="preview-toolbar-left">
-            <span class="preview-title">3D Preview</span>
-          </div>
-          <div class="preview-toolbar-right">
-            <button id="toggle-wireframe" class="btn-toolbar" disabled>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M2 12L12 2L22 12L12 22Z"/>
-                <path d="M12 2V22M2 12H22"/>
-              </svg>
-              Wireframe
-            </button>
-            <button id="reset-camera" class="btn-toolbar" disabled>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M1 4v6h6M23 20v-6h-6"/>
-                <path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
-              </svg>
-              Reset View
-            </button>
-            <div class="export-divider"></div>
-            <button id="order-print" class="btn-toolbar btn-order-toolbar" disabled>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M6 2L3 6v14a2 2 0 002 2h14a2 2 0 002-2V6l-3-4zM3 6h18M16 10a4 4 0 01-8 0"/>
-              </svg>
-              Order Print — $35
-            </button>
-            <!-- Admin-only export (hidden, Ctrl+Shift+E to show) -->
-            <button id="export-stl" class="btn-toolbar btn-export-toolbar" disabled style="display:none">STL</button>
-            <button id="export-3mf" class="btn-toolbar btn-export-toolbar" disabled style="display:none">3MF</button>
-          </div>
-        </div>
-
-        <div id="preview-container">
-          <div id="preview-placeholder">
-            <div class="placeholder-hex">
-              <svg width="80" height="80" viewBox="0 0 32 32" fill="none">
-                <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="1" opacity="0.3"/>
-                <path d="M16 8L22.66 11.5V20.5L16 24L9.34 20.5V11.5L16 8Z" stroke="currentColor" stroke-width="0.5" opacity="0.15"/>
-              </svg>
-            </div>
-            <p class="placeholder-main">Select a location and generate</p>
-            <p class="placeholder-sub">Search or click the map, then hit Generate 3D Model</p>
-            <div class="placeholder-controls">
-              <span>Orbit: drag</span>
-              <span>Zoom: scroll</span>
-              <span>Pan: right-drag</span>
-            </div>
-          </div>
-          <canvas id="preview-canvas"></canvas>
-        </div>
-
-        <!-- Legend bar -->
-        <div class="legend-bar">
-          <div class="legend-items" id="legend-items">
-            <span class="legend-item">
-              <span class="legend-dot" id="legend-dot-bldg" style="background:#F0F0F0;border:1px solid #666"></span>
-              <span id="legend-label-bldg">Buildings / Base</span>
-            </span>
-            <span class="legend-item">
-              <span class="legend-dot" id="legend-dot-road" style="background:#1A1A1A;border:1px solid #666"></span>
-              <span id="legend-label-road">Roads / Parks / Water</span>
-            </span>
-          </div>
-        </div>
-      </main>
+      <p class="hero-price">Starting at <span>$35</span> + shipping</p>
     </div>
+  </section>
 
-    <!-- ── Status bar ───────────────────────────────────────────── -->
-    <div id="status-bar">
-      <div id="progress-track">
-        <div id="progress-bar"></div>
+  <!-- Hero showcase image -->
+  <div class="hero-image">
+    <div class="hero-image-frame">
+      <!-- REPLACE: Add your hero image here -->
+      <!-- <img src="/images/hero-showcase.jpg" alt="3D printed city map" /> -->
+      <div class="placeholder-img">
+        <svg width="60" height="60" viewBox="0 0 32 32" fill="none">
+          <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="1"/>
+        </svg>
+        Add your hero showcase photo here<br/>
+        <span style="color:#444;font-size:12px">Replace this with /images/hero-showcase.jpg (recommended: 1600x900)</span>
       </div>
-      <span id="status-text">Ready</span>
     </div>
-
   </div>
 
-  <script type="module" src="/src/main.js"></script>
+  <!-- ── How it works ─────────────────────────────── -->
+  <section id="how-it-works">
+    <div class="section-inner">
+      <div class="section-label">How It Works</div>
+      <div class="section-title">Three steps to your custom map.</div>
+      <p class="section-desc">No design skills needed. Pick a location, preview it in 3D, and we handle the rest.</p>
+
+      <div class="steps">
+        <div class="step">
+          <div class="step-num">01</div>
+          <h3>Pick Your Location</h3>
+          <p>Search any city, neighborhood, or landmark on Earth. Adjust the capture radius and vertical scale to get the perfect frame.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">02</div>
+          <h3>Preview in 3D</h3>
+          <p>See your model come to life with real buildings, roads, parks, and terrain. Rotate, zoom, and customize colors before ordering.</p>
+        </div>
+        <div class="step">
+          <div class="step-num">03</div>
+          <h3>We Print & Ship</h3>
+          <p>Place your order and we 3D print your model in high-quality PLA on professional equipment. Ships to your door in 5–10 days.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Gallery ──────────────────────────────────── -->
+  <section id="gallery">
+    <div class="section-inner">
+      <div class="section-label">Gallery</div>
+      <div class="section-title">Made with Dimension3Prints.</div>
+      <p class="section-desc">Real prints from real places. Each one unique, each one made to order.</p>
+
+      <div class="gallery-grid">
+        <!-- REPLACE: Add your print photos here -->
+        <!-- Example:
+        <div class="gallery-item">
+          <img src="/images/gallery-1.jpg" alt="NYC Manhattan 3D print" />
+          <div class="gallery-caption">Manhattan, New York</div>
+        </div>
+        -->
+        <div class="gallery-item">
+          <div class="gallery-placeholder">
+            Photo 1<br/><span style="font-size:11px;color:#444">Add /images/gallery-1.jpg</span>
+          </div>
+        </div>
+        <div class="gallery-item">
+          <div class="gallery-placeholder">
+            Photo 2<br/><span style="font-size:11px;color:#444">Add /images/gallery-2.jpg</span>
+          </div>
+        </div>
+        <div class="gallery-item">
+          <div class="gallery-placeholder">
+            Photo 3<br/><span style="font-size:11px;color:#444">Add /images/gallery-3.jpg</span>
+          </div>
+        </div>
+        <div class="gallery-item">
+          <div class="gallery-placeholder">
+            Photo 4<br/><span style="font-size:11px;color:#444">Add /images/gallery-4.jpg</span>
+          </div>
+        </div>
+        <div class="gallery-item">
+          <div class="gallery-placeholder">
+            Photo 5<br/><span style="font-size:11px;color:#444">Add /images/gallery-5.jpg</span>
+          </div>
+        </div>
+        <div class="gallery-item">
+          <div class="gallery-placeholder">
+            Photo 6<br/><span style="font-size:11px;color:#444">Add /images/gallery-6.jpg</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Features ─────────────────────────────────── -->
+  <section id="features">
+    <div class="section-inner">
+      <div class="section-label">Features</div>
+      <div class="section-title">Every detail, captured.</div>
+
+      <div class="features-grid">
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M3 21h18M3 7v1a3 3 0 006 0V7M15 7v1a3 3 0 006 0V7M3 7h18M6 21V11M18 21V11"/>
+            </svg>
+          </div>
+          <h3>Real Building Data</h3>
+          <p>Every building pulled from OpenStreetMap with accurate footprints and heights. Skyscrapers, houses, churches — all there.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+            </svg>
+          </div>
+          <h3>Multi-Color Printing</h3>
+          <p>Two-tone prints with distinct buildings and roads. Choose standard (white buildings, black roads) or inverted colors.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>
+            </svg>
+          </div>
+          <h3>Anywhere on Earth</h3>
+          <p>From the streets of Tokyo to a small town in Iowa. If it's on the map, we can print it.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" transform="scale(0.65) translate(2,2)"/>
+            </svg>
+          </div>
+          <h3>Hexagonal Design</h3>
+          <p>110mm hex footprint looks stunning on a desk or shelf. Collect multiple tiles to build a larger map.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Pricing ──────────────────────────────────── -->
+  <section id="pricing">
+    <div class="section-inner" style="text-align:center">
+      <div class="section-label">Pricing</div>
+      <div class="section-title">Simple, transparent pricing.</div>
+
+      <div class="price-card">
+        <div class="price-amount">$35 <span>USD</span></div>
+        <p class="price-desc">Per custom 3D printed map model</p>
+        <ul class="price-features">
+          <li>Custom location of your choice</li>
+          <li>Real buildings, roads, parks & water</li>
+          <li>Two-tone multi-color print</li>
+          <li>110mm hexagonal base</li>
+          <li>High-quality PLA material</li>
+          <li>Ships in 5–10 business days</li>
+        </ul>
+        <a href="/app.html" class="btn-primary" style="width:100%;justify-content:center">
+          Start Making Yours
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── CTA ──────────────────────────────────────── -->
+  <section class="cta-section">
+    <h2>Ready to print your city?</h2>
+    <p>Design your custom 3D map model in under a minute.</p>
+    <a href="/app.html" class="btn-primary">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+      </svg>
+      Start Making
+    </a>
+  </section>
+
+  <!-- ── Footer ───────────────────────────────────── -->
+  <footer>
+    <p>&copy; 2025 Dimension3Prints. All rights reserved.</p>
+  </footer>
+
 </body>
 </html>
