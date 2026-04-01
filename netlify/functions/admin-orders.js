@@ -21,7 +21,6 @@ exports.handler = async (event) => {
     // Fetch checkout sessions from Stripe
     const params = {
       limit: Math.min(limit, 100),
-      expand: ['data.line_items', 'data.customer_details', 'data.shipping_details'],
     };
     if (starting_after) params.starting_after = starting_after;
 
