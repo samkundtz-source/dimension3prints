@@ -440,5 +440,44 @@ function initControls() {
 document.addEventListener('DOMContentLoaded', () => {
   initMap();
   initControls();
-  setStatus('Ready', 0);
+
+  // Check for admin URL params (from admin dashboard "Open in Generator")
+  const params = new URLSearchParams(window.location.search);
+  if (params.has('lat') && params.has('lng')) {
+    const lat = parseFloat(params.get('lat'));
+    const lng = parseFloat(params.get('lng'));
+    if (!isNaN(lat) && !isNaN(lng)) {
+      // Set radius
+      if (params.has('radius')) {
+        const r = parseFloat(params.get('radius'));
+        el('radius-slider').value = r;
+        el('radius-value').textContent = r.toFixed(1) + ' km';
+      }
+      // Set scale
+      if (params.has('scale')) {
+        const s = parseFloat(params.get('scale'));
+        el('vscale-slider').value = s;
+        el('vscale-value').textContent = s + 'x';
+      }
+      // Set elevation
+      if (params.has('elevation')) {
+        el('use-elevation').checked = params.get('elevation') === 'true';
+      }
+      // Set invert
+      if (params.has('invert')) {
+        el('invert-colors').checked = params.get('invert') === 'true';
+      }
+      // Select location
+      selectLocation(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
+
+      // If admin mode, auto-show export buttons
+      if (params.get('admin') === '1') {
+        el('export-stl').style.display = '';
+        el('export-3mf').style.display = '';
+        setStatus('Admin mode — generate model then export', 0);
+      }
+    }
+  } else {
+    setStatus('Ready', 0);
+  }
 });

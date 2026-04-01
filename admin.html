@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — Dimension3Prints</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0a; --bg-panel: #111; --bg-elevated: #1a1a1a;
+      --border: #2a2a2a; --text: #e8e8e8; --text-sec: #bbb;
+      --text-muted: #777; --font: 'Inter', system-ui, sans-serif;
+      --font-mono: 'SF Mono', 'Consolas', monospace;
+    }
+    body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+
+    /* Login */
+    .login-wrap {
+      display: flex; align-items: center; justify-content: center;
+      min-height: 100vh; padding: 20px;
+    }
+    .login-box {
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px;
+      padding: 40px; width: 100%; max-width: 380px; text-align: center;
+    }
+    .login-box h1 { font-size: 22px; margin-bottom: 8px; }
+    .login-box p { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+    .login-box input {
+      width: 100%; background: #141414; border: 1px solid var(--border); border-radius: 10px;
+      color: var(--text); font-family: var(--font); font-size: 14px;
+      padding: 12px 16px; outline: none; margin-bottom: 16px;
+    }
+    .login-box input:focus { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.08); }
+    .login-box button {
+      width: 100%; background: #fff; color: #000; border: none; border-radius: 10px;
+      padding: 12px; font-family: var(--font); font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s;
+    }
+    .login-box button:hover { background: #ddd; }
+    .login-error { color: #ff6b6b; font-size: 12px; margin-top: 8px; }
+
+    /* Dashboard */
+    .dashboard { display: none; }
+    .dash-header {
+      background: var(--bg-panel); border-bottom: 1px solid var(--border);
+      padding: 16px 24px; display: flex; align-items: center; justify-content: space-between;
+    }
+    .dash-header h1 { font-size: 18px; font-weight: 700; }
+    .dash-header .stats { display: flex; gap: 24px; }
+    .stat { text-align: center; }
+    .stat-val { font-size: 22px; font-weight: 700; font-family: var(--font-mono); }
+    .stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+    .btn-logout {
+      background: transparent; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text-muted); font-family: var(--font); font-size: 12px;
+      padding: 6px 14px; cursor: pointer;
+    }
+    .btn-logout:hover { border-color: #555; color: var(--text); }
+
+    /* Orders */
+    .orders-wrap { padding: 24px; max-width: 1200px; margin: 0 auto; }
+    .orders-title { font-size: 14px; color: var(--text-muted); margin-bottom: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
+
+    .order-card {
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px;
+      margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s;
+    }
+    .order-card:hover { border-color: #444; }
+    .order-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 16px 20px; cursor: pointer; user-select: none;
+    }
+    .order-header:hover { background: var(--bg-elevated); }
+    .order-left { display: flex; align-items: center; gap: 16px; }
+    .order-num { font-size: 14px; font-weight: 600; font-family: var(--font-mono); }
+    .order-date { font-size: 12px; color: var(--text-muted); }
+    .order-amount { font-size: 16px; font-weight: 700; font-family: var(--font-mono); }
+    .order-right { display: flex; align-items: center; gap: 12px; }
+
+    .status-badge {
+      font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .status-pending { background: #2a2000; color: #ffc107; border: 1px solid #3d3000; }
+    .status-printing { background: #001a2a; color: #42a5f5; border: 1px solid #002a44; }
+    .status-shipped { background: #0a2a0a; color: #66bb6a; border: 1px solid #1a3a1a; }
+    .status-delivered { background: #1a1a1a; color: #888; border: 1px solid #333; }
+
+    .order-details { display: none; padding: 0 20px 20px; border-top: 1px solid var(--border); }
+    .order-details.open { display: block; padding-top: 16px; }
+
+    .detail-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 20px; }
+    .detail-section h3 { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px; }
+    .detail-row { font-size: 13px; margin-bottom: 4px; }
+    .detail-label { color: var(--text-muted); }
+    .detail-val { color: var(--text); font-weight: 500; }
+
+    .order-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+    .btn-action {
+      background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text-sec); font-family: var(--font); font-size: 12px; font-weight: 500;
+      padding: 8px 14px; cursor: pointer; transition: all 0.15s;
+    }
+    .btn-action:hover { border-color: #555; color: #fff; }
+    .btn-action.primary { background: #fff; color: #000; border-color: #fff; font-weight: 600; }
+    .btn-action.primary:hover { background: #ddd; border-color: #ddd; }
+
+    .status-select {
+      background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-family: var(--font); font-size: 12px;
+      padding: 8px 12px; cursor: pointer; outline: none;
+    }
+
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
+    .empty-state h2 { font-size: 18px; margin-bottom: 8px; color: var(--text-sec); }
+
+    .loading { text-align: center; padding: 40px; color: var(--text-muted); }
+  </style>
+</head>
+<body>
+
+  <!-- Login Screen -->
+  <div class="login-wrap" id="login-screen">
+    <div class="login-box">
+      <h1>Admin Dashboard</h1>
+      <p>Dimension3Prints order management</p>
+      <input type="password" id="admin-pw" placeholder="Enter admin password" autocomplete="off" />
+      <button id="login-btn">Sign In</button>
+      <div class="login-error" id="login-error"></div>
+    </div>
+  </div>
+
+  <!-- Dashboard -->
+  <div class="dashboard" id="dashboard">
+    <div class="dash-header">
+      <h1>Dimension3Prints — Orders</h1>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-val" id="stat-total">0</div>
+          <div class="stat-label">Total Orders</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val" id="stat-pending">0</div>
+          <div class="stat-label">Pending</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val" id="stat-revenue">$0</div>
+          <div class="stat-label">Revenue</div>
+        </div>
+      </div>
+      <button class="btn-logout" id="logout-btn">Logout</button>
+    </div>
+
+    <div class="orders-wrap">
+      <div class="orders-title">Recent Orders</div>
+      <div id="orders-list">
+        <div class="loading">Loading orders...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let adminPassword = '';
+    let orders = [];
+
+    // ─── Login ───────────────────────────────────────────────────
+    document.getElementById('login-btn').addEventListener('click', doLogin);
+    document.getElementById('admin-pw').addEventListener('keydown', e => {
+      if (e.key === 'Enter') doLogin();
+    });
+    document.getElementById('logout-btn').addEventListener('click', () => {
+      adminPassword = '';
+      document.getElementById('dashboard').style.display = 'none';
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('admin-pw').value = '';
+    });
+
+    async function doLogin() {
+      const pw = document.getElementById('admin-pw').value.trim();
+      if (!pw) return;
+      document.getElementById('login-error').textContent = '';
+
+      try {
+        const resp = await fetch('/api/admin-verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pw }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+          adminPassword = pw;
+          document.getElementById('login-screen').style.display = 'none';
+          document.getElementById('dashboard').style.display = 'block';
+          loadOrders();
+        } else {
+          document.getElementById('login-error').textContent = 'Invalid password';
+        }
+      } catch (err) {
+        document.getElementById('login-error').textContent = 'Connection error';
+      }
+    }
+
+    // ─── Load orders ─────────────────────────────────────────────
+    async function loadOrders() {
+      try {
+        const resp = await fetch('/api/admin-orders', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: adminPassword, limit: 50 }),
+        });
+        const data = await resp.json();
+        if (data.error) {
+          document.getElementById('orders-list').innerHTML = `<div class="empty-state"><h2>Error</h2><p>${data.error}</p></div>`;
+          return;
+        }
+        orders = data.orders || [];
+        renderOrders();
+        updateStats();
+      } catch (err) {
+        document.getElementById('orders-list').innerHTML = `<div class="empty-state"><h2>Failed to load</h2><p>${err.message}</p></div>`;
+      }
+    }
+
+    function updateStats() {
+      document.getElementById('stat-total').textContent = orders.length;
+      document.getElementById('stat-pending').textContent = orders.filter(o => o.status === 'pending').length;
+      const revenue = orders.reduce((sum, o) => sum + (o.amount || 0), 0) / 100;
+      document.getElementById('stat-revenue').textContent = '$' + revenue.toFixed(2);
+    }
+
+    function renderOrders() {
+      const list = document.getElementById('orders-list');
+      if (orders.length === 0) {
+        list.innerHTML = '<div class="empty-state"><h2>No orders yet</h2><p>Orders will appear here once customers complete checkout.</p></div>';
+        return;
+      }
+
+      list.innerHTML = orders.map((o, i) => {
+        const date = new Date(o.created * 1000);
+        const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const amount = '$' + (o.amount / 100).toFixed(2);
+        const shortId = o.id.slice(-8).toUpperCase();
+        const addr = o.shipping;
+        const addrStr = addr ? `${addr.line1}${addr.line2 ? ', ' + addr.line2 : ''}, ${addr.city}, ${addr.state} ${addr.postal}, ${addr.country}` : 'No address';
+        const m = o.model;
+
+        return `
+          <div class="order-card">
+            <div class="order-header" onclick="toggleOrder(${i})">
+              <div class="order-left">
+                <span class="order-num">#${shortId}</span>
+                <span class="order-date">${dateStr}</span>
+                <span style="font-size:12px;color:var(--text-muted)">${o.name || o.email}</span>
+              </div>
+              <div class="order-right">
+                <span class="order-amount">${amount}</span>
+                <span class="status-badge status-${o.status}">${o.status}</span>
+              </div>
+            </div>
+            <div class="order-details" id="order-${i}">
+              <div class="detail-grid">
+                <div class="detail-section">
+                  <h3>Customer</h3>
+                  <div class="detail-row"><span class="detail-label">Name: </span><span class="detail-val">${o.name || '—'}</span></div>
+                  <div class="detail-row"><span class="detail-label">Email: </span><span class="detail-val">${o.email || '—'}</span></div>
+                </div>
+                <div class="detail-section">
+                  <h3>Shipping</h3>
+                  <div class="detail-row"><span class="detail-val">${addr ? addr.name : '—'}</span></div>
+                  <div class="detail-row"><span class="detail-val">${addrStr}</span></div>
+                </div>
+                <div class="detail-section">
+                  <h3>Model Parameters</h3>
+                  <div class="detail-row"><span class="detail-label">Location: </span><span class="detail-val">${m.lat.toFixed(4)}, ${m.lng.toFixed(4)}</span></div>
+                  <div class="detail-row"><span class="detail-label">Radius: </span><span class="detail-val">${m.radius} km</span></div>
+                  <div class="detail-row"><span class="detail-label">Scale: </span><span class="detail-val">${m.verticalScale}x</span></div>
+                  <div class="detail-row"><span class="detail-label">Elevation: </span><span class="detail-val">${m.elevation ? 'Yes' : 'No'}</span></div>
+                  <div class="detail-row"><span class="detail-label">Colors: </span><span class="detail-val">${m.invertColors ? 'Inverted' : 'Standard'}</span></div>
+                </div>
+              </div>
+              <div class="order-actions">
+                <button class="btn-action primary" onclick="openInGenerator(${i})">Open in Generator</button>
+                <select class="status-select" onchange="updateStatus('${o.id}', this.value, ${i})">
+                  <option value="pending" ${o.status === 'pending' ? 'selected' : ''}>Pending</option>
+                  <option value="printing" ${o.status === 'printing' ? 'selected' : ''}>Printing</option>
+                  <option value="shipped" ${o.status === 'shipped' ? 'selected' : ''}>Shipped</option>
+                  <option value="delivered" ${o.status === 'delivered' ? 'selected' : ''}>Delivered</option>
+                </select>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function toggleOrder(i) {
+      const el = document.getElementById('order-' + i);
+      el.classList.toggle('open');
+    }
+
+    // Open the main site with order params pre-filled so you can regenerate & export
+    function openInGenerator(i) {
+      const m = orders[i].model;
+      const params = new URLSearchParams({
+        lat: m.lat, lng: m.lng, radius: m.radius,
+        scale: m.verticalScale, elevation: m.elevation,
+        invert: m.invertColors, admin: '1',
+      });
+      window.open('/?' + params.toString(), '_blank');
+    }
+
+    async function updateStatus(sessionId, status, i) {
+      try {
+        const resp = await fetch('/api/admin-update-order', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: adminPassword, sessionId, status }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+          orders[i].status = status;
+          renderOrders();
+          updateStats();
+        }
+      } catch (err) {
+        alert('Failed to update: ' + err.message);
+      }
+    }
+  </script>
+</body>
+</html>
