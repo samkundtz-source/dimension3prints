@@ -26,7 +26,8 @@
       "Read(//c/Users/samku/Downloads/**)",
       "Bash(ls -la \"map_mesh \\(20\\).3mf\")",
       "Bash(node -e \":*)",
-      "Bash(npm audit:*)"
+      "Bash(npm audit:*)",
+      "WebFetch(domain:funny-biscochitos-cc4206.netlify.app)"
     ]
   }
 }

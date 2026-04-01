@@ -395,12 +395,28 @@ function initControls() {
   el('export-stl').addEventListener('click', doExportSTL);
   el('export-3mf').addEventListener('click', doExport3MF);
 
-  // Admin shortcut: Ctrl+Shift+E reveals export buttons
+  // Admin login: Ctrl+Shift+E prompts for password, verified server-side
   document.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.shiftKey && e.key === 'E') {
-      el('export-stl').style.display = '';
-      el('export-3mf').style.display = '';
-      setStatus('Admin: export buttons enabled', 0);
+      if (el('export-stl').style.display !== 'none') return; // already unlocked
+      const pw = prompt('Admin password:');
+      if (!pw) return;
+      fetch('/api/admin-verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw }),
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.success) {
+            el('export-stl').style.display = '';
+            el('export-3mf').style.display = '';
+            setStatus('Admin mode enabled', 0);
+          } else {
+            setStatus('Invalid admin password', 0);
+          }
+        })
+        .catch(() => setStatus('Admin verification failed', 0));
     }
   });
 
