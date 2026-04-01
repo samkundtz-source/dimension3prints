@@ -69,7 +69,7 @@ export function exportSTL(modelGroup, filename = 'map-model.stl') {
   const buf     = new ArrayBuffer(84 + numTris * 50);
   const view    = new DataView(buf);
 
-  const header = 'Dimension3Prints - map-model.stl';
+  const header = 'Cities3ds - map-model.stl';
   for (let i = 0; i < 80; i++) {
     view.setUint8(i, i < header.length ? header.charCodeAt(i) : 0);
   }
@@ -187,7 +187,7 @@ export function export3MF(modelGroup, filename = 'map-model.3mf') {
   const mainModelXML =
 `<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06" requiredextensions="p">
-  <metadata name="Application">Dimension3Prints</metadata>
+  <metadata name="Application">Cities3ds</metadata>
   <metadata name="Title">Exported 3D Model</metadata>
   <resources>
     <object id="${assemblyId}" type="model">
@@ -215,7 +215,7 @@ export function export3MF(modelGroup, filename = 'map-model.3mf') {
 `<?xml version="1.0" encoding="UTF-8"?>
 <config>
   <object id="${assemblyId}">
-    <metadata key="name" value="Dimension3Prints.3mf"/>
+    <metadata key="name" value="Cities3ds.3mf"/>
     <metadata key="extruder" value="1"/>
     <metadata key="thumbnail_file" value=""/>
 ${partSettingsXML}

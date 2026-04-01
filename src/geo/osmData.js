@@ -14,7 +14,7 @@ import { buildElevationSampleGrid } from './geoMath.js';
 
 export async function geocode(query) {
   const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=6`;
-  const resp = await fetch(url, { headers: { 'Accept-Language': 'en', 'User-Agent': 'Dimension3Prints/0.3 (https://dimension3prints.com)' } });
+  const resp = await fetch(url, { headers: { 'Accept-Language': 'en', 'User-Agent': 'Cities3ds/0.3 (https://cities3ds.com)' } });
   if (!resp.ok) throw new Error(`Nominatim: HTTP ${resp.status}`);
   const data = await resp.json();
   return data.map(r => ({

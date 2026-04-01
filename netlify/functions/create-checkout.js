@@ -31,9 +31,9 @@ exports.handler = async (event) => {
           price_data: {
             currency: 'usd',
             product_data: {
-              name: 'Dimension3Prints — Custom 3D Map',
+              name: 'Cities3ds — Custom 3D Map',
               description: modelDesc,
-              images: ['https://dimension3prints.com/preview.png'], // placeholder
+              images: ['https://cities3ds.com/preview.png'], // placeholder
             },
             unit_amount: 3500, // $35.00 in cents
           },
