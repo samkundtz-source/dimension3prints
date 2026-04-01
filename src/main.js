@@ -243,7 +243,9 @@ async function generate() {
     setStatus('Building 3D model...', 60);
     const invertColors = el('invert-colors').checked;
     setInvertedColors(invertColors);
-    const group = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, invertColors);
+    const result = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, invertColors);
+    const group = result.group;
+    const modelStats = result.stats;
 
     // 6. Init or update scene
     const canvas      = el('preview-canvas');
@@ -268,7 +270,9 @@ async function generate() {
     el('export-stl').disabled = false;
     el('export-3mf').disabled = false;
 
-    setStatus(`Done — ${counts}`, 100);
+    // Show stats
+    updateModelStats(modelStats);
+    setStatus(`Done — ${modelStats.buildings.toLocaleString()} buildings · ${modelStats.roads.toLocaleString()} roads`, 100);
   } catch (err) {
     console.error('Generation error:', err);
     setStatus('Error: ' + err.message, 0);
@@ -297,6 +301,15 @@ function updateLegend(inverted) {
     lblBldg.textContent = 'Buildings / Base';
     lblRoad.textContent = 'Roads / Parks / Water';
   }
+}
+
+// ─── Model stats ─────────────────────────────────────────────────────────────
+
+function updateModelStats(stats) {
+  el('stats-bar').style.display = '';
+  el('stat-buildings').textContent = stats.buildings.toLocaleString();
+  el('stat-roads').textContent = stats.roads.toLocaleString();
+  el('stat-water').textContent = stats.water.toLocaleString();
 }
 
 // ─── Order ───────────────────────────────────────────────────────────────────

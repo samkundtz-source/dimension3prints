@@ -219,6 +219,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const MAX_BLDG_MM    = 45;
   const MIN_BLDG_DIM   = 0.4; // lowered to keep small buildings in dense cities
 
+  let buildingCount = 0;
   onProgress?.('Extruding buildings…', 74);
   for (const bf of buildingFootprints) {
     // Skip buildings too thin to print
@@ -228,6 +229,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const heightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
     // Solid extrusion (no holes) — simple block buildings
     collectExtrudedPolygon(buildingAcc, bf.polygon, [], BASE, heightMM);
+    buildingCount++;
   }
 
   // ── 5. Water (black, RECESSED) — sits lower than roads/buildings ────────
@@ -235,10 +237,11 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // In multi-material slicing, the slicer subtracts this from the white base,
   // producing a real physical divot filled with black filament.
   const MIN_AREA_MM2  = 3.0;
-  const WATER_DEPTH   = 0.5; // mm below base surface
-  const WATER_TOP     = Math.max(BASE - WATER_DEPTH, 0.3); // don't go below 0.3mm
+  const WATER_DEPTH   = 1.0; // mm below base surface — deeper for pronounced water
+  const WATER_TOP     = Math.max(BASE - WATER_DEPTH, 0.2); // don't go below 0.2mm
   const WATER_SLAB_H  = WATER_TOP; // extrude from Y=0 to WATER_TOP
 
+  let waterCount = 0;
   onProgress?.('Building water…', 78);
   for (const feat of features.water) {
     const poly = clipToHex(feat.polygon, hexInner);
@@ -248,6 +251,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const allHoles  = [...(feat.holes || []), ...bldgHoles];
     // Extrude from bottom (0) to WATER_TOP — sits below base surface
     collectExtrudedPolygon(blackAcc, poly, allHoles, 0, WATER_SLAB_H);
+    waterCount++;
   }
 
   // ── 6. Parks — with building gaps ───────────────────────────────────────────
@@ -268,6 +272,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   // ── 7. Roads — at base bottom, shrink around buildings ────────────────────
+  let roadCount = 0;
   onProgress?.('Building roads…', 84);
   for (const feat of features.roads) {
     const hw    = feat.tags.highway || 'residential';
@@ -275,6 +280,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW = Math.max(realW, minW);
     addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, ROAD_BASE, ROAD_SLAB, findOverlappingBuildings);
+    roadCount++;
   }
 
   // ── 8. Paths — at base bottom, shrink around buildings ────────────────────
@@ -285,6 +291,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.path;
     const halfW = Math.max(realW, minW);
     addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, ROAD_BASE, ROAD_SLAB, findOverlappingBuildings);
+    roadCount++;
   }
 
   // ── Build exactly 3 combined meshes ───────────────────────────────────────
@@ -298,7 +305,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   if (roadMesh) group.add(roadMesh);
 
   onProgress?.('Model ready.', 95);
-  return group;
+  return {
+    group,
+    stats: { buildings: buildingCount, roads: roadCount, water: waterCount },
+  };
 }
 
 // ─── Smart road placement ────────────────────────────────────────────────────

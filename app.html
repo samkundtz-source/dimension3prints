@@ -150,8 +150,25 @@
           <canvas id="preview-canvas"></canvas>
         </div>
 
-        <!-- Legend bar -->
-        <div class="legend-bar">
+        <!-- Stats bar -->
+        <div class="legend-bar" id="stats-bar" style="display:none">
+          <div class="legend-items" style="gap:24px">
+            <span class="legend-item" style="gap:6px">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M3 21h18M9 21V8h6v13M3 21V13h6M15 21V3h6v18"/></svg>
+              <span id="stat-buildings" style="font-weight:600;color:var(--text)">—</span>
+              <span>buildings</span>
+            </span>
+            <span class="legend-item" style="gap:6px">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2C6.5 2 2 6.5 2 12s4.5 10 10 10 10-4.5 10-10S17.5 2 12 2zM2 12h20"/></svg>
+              <span id="stat-roads" style="font-weight:600;color:var(--text)">—</span>
+              <span>roads</span>
+            </span>
+            <span class="legend-item" style="gap:6px">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2.69l5.66 4.26v8.69L12 21.31 6.34 15.64V6.95L12 2.69z"/></svg>
+              <span id="stat-water" style="font-weight:600;color:var(--text)">—</span>
+              <span>water</span>
+            </span>
+          </div>
           <div class="legend-items" id="legend-items">
             <span class="legend-item">
               <span class="legend-dot" id="legend-dot-bldg" style="background:#F0F0F0;border:1px solid #666"></span>
