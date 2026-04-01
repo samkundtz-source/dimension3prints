@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:overpass-api.de)",
+      "WebFetch(domain:opentopodata.org)",
+      "WebFetch(domain:nominatim.org)",
+      "WebFetch(domain:wiki.openstreetmap.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:vitejs.dev)",
+      "WebFetch(domain:vite.dev)",
+      "WebFetch(domain:api.opentopodata.org)",
+      "WebFetch(domain:docs.3mf.io)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(node -e \"const earcut = require\\(''./node_modules/earcut/src/earcut.js''\\); console.log\\(''earcut fn:'', typeof earcut\\); console.log\\(''earcut.deviation:'', typeof earcut.deviation\\);\")",
+      "Bash(node -e \"import\\(''./node_modules/earcut/src/earcut.js''\\).then\\(m => console.log\\(''default:'', typeof m.default, ''deviation:'', typeof m.default?.deviation\\)\\).catch\\(e=>console.log\\(e.message\\)\\)\")",
+      "WebFetch(domain:map2model.com)",
+      "WebSearch",
+      "WebFetch(domain:www.fabbaloo.com)",
+      "WebFetch(domain:3druck.com)",
+      "WebFetch(domain:printer.tools)",
+      "WebFetch(domain:www.3printr.com)",
+      "WebFetch(domain:forum.trains.com)",
+      "Bash(npx vite:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Read(//c/Users/samku/Downloads/**)",
+      "Bash(ls -la \"map_mesh \\(20\\).3mf\")",
+      "Bash(node -e \":*)",
+      "Bash(npm audit:*)"
+    ]
+  }
+}

@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Order Confirmed — Dimension3Prints</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: #0a0a0a;
+      color: #e8e8e8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 40px 20px;
+    }
+    .container {
+      max-width: 480px;
+      text-align: center;
+    }
+    .checkmark {
+      width: 80px; height: 80px;
+      border-radius: 50%;
+      background: #1a1a1a;
+      border: 2px solid #333;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 24px;
+    }
+    .checkmark svg { color: #fff; }
+    h1 {
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      letter-spacing: -0.02em;
+    }
+    .subtitle {
+      font-size: 16px;
+      color: #999;
+      margin-bottom: 32px;
+      line-height: 1.6;
+    }
+    .info-box {
+      background: #111;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+      padding: 20px 24px;
+      text-align: left;
+      margin-bottom: 32px;
+    }
+    .info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      font-size: 14px;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    .info-row:last-child { border-bottom: none; }
+    .info-label { color: #777; }
+    .info-value { color: #e8e8e8; font-weight: 600; }
+    .btn-home {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #fff;
+      color: #000;
+      border: none;
+      border-radius: 10px;
+      padding: 12px 28px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+    .btn-home:hover { background: #ddd; transform: translateY(-1px); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="checkmark">
+      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"/>
+      </svg>
+    </div>
+    <h1>Order Confirmed!</h1>
+    <p class="subtitle">
+      Thank you for your order. Your custom 3D map model is being prepared for printing.
+      You'll receive a shipping confirmation email once it's on its way.
+    </p>
+    <div class="info-box">
+      <div class="info-row">
+        <span class="info-label">Status</span>
+        <span class="info-value">Processing</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Estimated Production</span>
+        <span class="info-value">2–4 business days</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Confirmation</span>
+        <span class="info-value">Sent to your email</span>
+      </div>
+    </div>
+    <a href="/" class="btn-home">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M19 12H5M12 19l-7-7 7-7"/>
+      </svg>
+      Create Another Model
+    </a>
+  </div>
+</body>
+</html>
