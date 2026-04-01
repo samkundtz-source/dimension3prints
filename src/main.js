@@ -312,10 +312,69 @@ function updateModelStats(stats) {
   el('stat-water').textContent = stats.water.toLocaleString();
 }
 
+// ─── Region picker ───────────────────────────────────────────────────────────
+
+function showRegionPicker() {
+  return new Promise((resolve) => {
+    // Create modal overlay
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+
+    const modal = document.createElement('div');
+    modal.style.cssText = 'background:#111;border:1px solid #2a2a2a;border-radius:14px;padding:28px;max-width:360px;width:90%;font-family:Inter,system-ui,sans-serif';
+
+    modal.innerHTML = `
+      <h3 style="color:#e8e8e8;font-size:16px;margin-bottom:4px">Where are we shipping?</h3>
+      <p style="color:#777;font-size:12px;margin-bottom:20px">Select your region for accurate shipping rates</p>
+      <div id="region-options" style="display:flex;flex-direction:column;gap:8px"></div>
+      <button id="region-cancel" style="width:100%;margin-top:12px;background:transparent;border:1px solid #2a2a2a;border-radius:8px;color:#777;padding:10px;font-family:inherit;font-size:13px;cursor:pointer">Cancel</button>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    const options = [
+      { region: 'US', label: 'United States', price: 'from $8' },
+      { region: 'CA', label: 'Canada', price: '$18' },
+      { region: 'INTL', label: 'International', price: '$30' },
+    ];
+
+    const container = modal.querySelector('#region-options');
+    for (const opt of options) {
+      const btn = document.createElement('button');
+      btn.style.cssText = 'display:flex;justify-content:space-between;align-items:center;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;color:#e8e8e8;padding:14px 16px;font-family:inherit;font-size:14px;cursor:pointer;transition:all 0.15s';
+      btn.innerHTML = `<span style="font-weight:600">${opt.label}</span><span style="color:#777;font-size:13px">${opt.price}</span>`;
+      btn.addEventListener('mouseenter', () => { btn.style.borderColor = '#555'; btn.style.background = '#222'; });
+      btn.addEventListener('mouseleave', () => { btn.style.borderColor = '#2a2a2a'; btn.style.background = '#1a1a1a'; });
+      btn.addEventListener('click', () => {
+        document.body.removeChild(overlay);
+        resolve(opt.region);
+      });
+      container.appendChild(btn);
+    }
+
+    modal.querySelector('#region-cancel').addEventListener('click', () => {
+      document.body.removeChild(overlay);
+      resolve(null);
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        document.body.removeChild(overlay);
+        resolve(null);
+      }
+    });
+  });
+}
+
 // ─── Order ───────────────────────────────────────────────────────────────────
 
 async function doOrderPrint() {
   if (!scene?.group || !selectedCenter) return;
+
+  // Ask for shipping region
+  const region = await showRegionPicker();
+  if (!region) return; // cancelled
 
   const btn = el('order-print');
   btn.disabled = true;
@@ -333,6 +392,7 @@ async function doOrderPrint() {
         elevation: el('use-elevation').checked,
         invertColors: el('invert-colors').checked,
         colorMode: el('invert-colors').checked ? 'inverted' : 'standard',
+        region,
       }),
     });
 
