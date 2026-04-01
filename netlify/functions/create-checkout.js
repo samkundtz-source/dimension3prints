@@ -48,7 +48,7 @@ exports.handler = async (event) => {
           shipping_rate_data: {
             type: 'fixed_amount',
             fixed_amount: { amount: 800, currency: 'usd' },
-            display_name: 'Standard Shipping',
+            display_name: 'US Standard Shipping',
             delivery_estimate: {
               minimum: { unit: 'business_day', value: 5 },
               maximum: { unit: 'business_day', value: 10 },
@@ -59,10 +59,32 @@ exports.handler = async (event) => {
           shipping_rate_data: {
             type: 'fixed_amount',
             fixed_amount: { amount: 1500, currency: 'usd' },
-            display_name: 'Express Shipping',
+            display_name: 'US Express Shipping',
             delivery_estimate: {
               minimum: { unit: 'business_day', value: 2 },
               maximum: { unit: 'business_day', value: 4 },
+            },
+          },
+        },
+        {
+          shipping_rate_data: {
+            type: 'fixed_amount',
+            fixed_amount: { amount: 1800, currency: 'usd' },
+            display_name: 'Canada Shipping',
+            delivery_estimate: {
+              minimum: { unit: 'business_day', value: 7 },
+              maximum: { unit: 'business_day', value: 14 },
+            },
+          },
+        },
+        {
+          shipping_rate_data: {
+            type: 'fixed_amount',
+            fixed_amount: { amount: 3000, currency: 'usd' },
+            display_name: 'International Shipping',
+            delivery_estimate: {
+              minimum: { unit: 'business_day', value: 10 },
+              maximum: { unit: 'business_day', value: 21 },
             },
           },
         },
