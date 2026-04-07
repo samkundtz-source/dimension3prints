@@ -352,7 +352,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     onProgress?.('Planting trees…', 90);
     const TREE_R = 0.55;
     const TREE_H = 1.4;
+    // Keep trees off the chamfered edge (chamfer = 0.8mm) plus a margin for the tree footprint
+    const treeHex = getShapeVertices(MODEL_RADIUS_MM - 0.8 - TREE_R - 0.6, shape);
     for (const tree of features.trees) {
+      if (!pointInSimplePolygon({ x: tree.x, y: tree.y }, treeHex)) continue;
       // Skip trees that fall inside any building footprint via the spatial grid
       const [cgx, cgy] = gridCell(tree.x, tree.y);
       let blocked = false;
