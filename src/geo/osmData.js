@@ -53,6 +53,7 @@ function buildQuery(bbox) {
   way["leisure"~"^(park|garden|pitch|playground|nature_reserve)$"](${bb});
   way["landuse"~"^(park|forest|grass|meadow|recreation_ground|village_green|cemetery)$"](${bb});
   way["natural"~"^(wood|scrub|grassland|heath)$"](${bb});
+  node["natural"="tree"](${bb});
   relation["natural"="water"](${bb});
   relation["water"](${bb});
   relation["waterway"](${bb});
@@ -123,9 +124,19 @@ export function parseOSMData(json, projection, hexVertices) {
   }
 
   // ── 3. Parse ways ─────────────────────────────────────────────────────────
-  const features = { buildings: [], roads: [], paths: [], water: [], parks: [] };
+  const features = { buildings: [], roads: [], paths: [], water: [], parks: [], trees: [] };
   let totalWays = 0, skippedNoCoords = 0, skippedUnclassified = 0, skippedClipped = 0;
   const processedWayIds = new Set();
+
+  // Standalone tree nodes (natural=tree)
+  for (const el of json.elements) {
+    if (el.type !== 'node') continue;
+    const tags = el.tags;
+    if (!tags || tags.natural !== 'tree') continue;
+    const pt = projection.project(el.lat, el.lon);
+    if (!pointInHexSimple(pt, hexVertices)) continue;
+    features.trees.push({ x: pt.x, y: pt.y, tags });
+  }
 
   for (const el of json.elements) {
     if (el.type !== 'way') continue;
@@ -209,6 +220,7 @@ export function parseOSMData(json, projection, hexVertices) {
     `paths:${features.paths.length} ` +
     `water:${features.water.length} ` +
     `parks:${features.parks.length} ` +
+    `trees:${features.trees.length} ` +
     `| relations added: ${relationsAdded}` +
     `| skipped: noCoords=${skippedNoCoords} unclassified=${skippedUnclassified} clipped=${skippedClipped}`
   );
@@ -414,4 +426,14 @@ function mergeWaysIntoRings(ways) {
 
 function ptClose(a, b) {
   return Math.abs(a.x - b.x) < 0.05 && Math.abs(a.y - b.y) < 0.05;
+}
+
+/** Convex polygon point-in-polygon (CCW). */
+function pointInHexSimple(pt, hexVerts) {
+  for (let i = 0, n = hexVerts.length; i < n; i++) {
+    const a = hexVerts[i];
+    const b = hexVerts[(i + 1) % n];
+    if ((b.x - a.x) * (pt.y - a.y) - (b.y - a.y) * (pt.x - a.x) < -1e-6) return false;
+  }
+  return true;
 }

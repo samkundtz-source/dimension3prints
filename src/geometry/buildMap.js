@@ -116,7 +116,7 @@ class GeomAccumulator {
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
-export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', invertColors = false, detailedBuildings = false) {
+export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', invertColors = false, detailedBuildings = false, premiumDetail = false) {
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -133,7 +133,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
   // ── 1. Base plate ─────────────────────────────────────────────────────────
   onProgress?.('Building base plate…', 65);
-  collectHexBase(baseAcc, hexFull);
+  collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
 
   // ── 2. Terrain ────────────────────────────────────────────────────────────
   if (elevGrid && N > 0) {
@@ -347,6 +347,33 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     roadCount++;
   }
 
+  // ── 9. Trees (premium detail) — small bumps in the road colour ────────────
+  if (premiumDetail && features.trees && features.trees.length > 0) {
+    onProgress?.('Planting trees…', 90);
+    const TREE_R = 0.55;
+    const TREE_H = 1.4;
+    for (const tree of features.trees) {
+      // Skip trees that fall inside any building footprint via the spatial grid
+      const [cgx, cgy] = gridCell(tree.x, tree.y);
+      let blocked = false;
+      if (cgx >= 0 && cgy >= 0 && cgx < GRID_SIZE && cgy < GRID_SIZE) {
+        const bucket = buildingGrid[gridKey(cgx, cgy)];
+        if (bucket) {
+          for (const bi of bucket) {
+            const bf = buildingFootprints[bi];
+            if (tree.x < bf.bbox.minX || tree.x > bf.bbox.maxX ||
+                tree.y < bf.bbox.minY || tree.y > bf.bbox.maxY) continue;
+            if (pointInSimplePolygon({ x: tree.x, y: tree.y }, bf.polygon)) {
+              blocked = true; break;
+            }
+          }
+        }
+      }
+      if (blocked) continue;
+      collectTreeBump(blackAcc, tree.x, tree.y, BASE, TREE_H, TREE_R);
+    }
+  }
+
   // ── Build exactly 3 combined meshes ───────────────────────────────────────
   onProgress?.('Combining geometry…', 92);
   const baseMesh = baseAcc.build('base');
@@ -467,31 +494,124 @@ function tryCollectExtruded(acc, polygon, holes, baseY, heightMM) {
 
 // ─── Geometry collectors ─────────────────────────────────────────────────────
 
-function collectHexBase(acc, shapeVerts) {
+function collectHexBase(acc, shapeVerts, chamfer = 0) {
   const pos = [];
   const idx = [];
   const top = BASE_THICKNESS_MM;
   const bot = 0;
   const N = shapeVerts.length;
 
-  // Top face
-  pos.push(0, top, 0);
-  for (const v of shapeVerts) pos.push(v.x, top, -v.y);
-  for (let i = 0; i < N; i++) idx.push(0, 1 + i, 1 + (i + 1) % N);
+  if (chamfer <= 0) {
+    // ─── Plain prism: top + bottom + vertical walls ──────────────────────────
+    pos.push(0, top, 0);
+    for (const v of shapeVerts) pos.push(v.x, top, -v.y);
+    for (let i = 0; i < N; i++) idx.push(0, 1 + i, 1 + (i + 1) % N);
 
-  // Bottom face
-  const bOff = N + 1;
-  pos.push(0, bot, 0);
-  for (const v of shapeVerts) pos.push(v.x, bot, -v.y);
-  for (let i = 0; i < N; i++) idx.push(bOff, bOff + 1 + (i + 1) % N, bOff + 1 + i);
+    const bOff = N + 1;
+    pos.push(0, bot, 0);
+    for (const v of shapeVerts) pos.push(v.x, bot, -v.y);
+    for (let i = 0; i < N; i++) idx.push(bOff, bOff + 1 + (i + 1) % N, bOff + 1 + i);
 
-  // Side walls
-  for (let i = 0; i < N; i++) {
-    const tA = 1 + i, tB = 1 + (i + 1) % N;
-    const bA = bOff + 1 + i, bB = bOff + 1 + (i + 1) % N;
-    idx.push(tA, bA, tB,  bA, bB, tB);
+    for (let i = 0; i < N; i++) {
+      const tA = 1 + i, tB = 1 + (i + 1) % N;
+      const bA = bOff + 1 + i, bB = bOff + 1 + (i + 1) % N;
+      idx.push(tA, bA, tB,  bA, bB, tB);
+    }
+
+    acc.add(pos, idx);
+    return;
   }
 
+  // ─── Chamfered top edge (premium look) ────────────────────────────────────
+  // Bottom hex (full size) → vertical walls up to (top - chamfer) → 45° slope
+  // up and inward by `chamfer` to a smaller top hex.
+  const inset = chamfer; // 1:1 slope so the chamfer is 45°
+  // Inward-shrunk vertices for the top face
+  const topVerts = shapeVerts.map(v => {
+    const len = Math.hypot(v.x, v.y);
+    if (len < 1e-9) return { x: 0, y: 0 };
+    const k = (len - inset) / len;
+    return { x: v.x * k, y: v.y * k };
+  });
+  const yShoulder = top - chamfer;
+
+  // Vertex layout:
+  //   [0]               top center
+  //   [1..N]            top inset ring   (y = top)
+  //   [N+1]             bottom center
+  //   [N+2..2N+1]       bottom ring      (y = bot)
+  //   [2N+2..3N+1]      shoulder ring    (y = yShoulder, full size)
+  pos.push(0, top, 0);                                        // 0
+  for (const v of topVerts)  pos.push(v.x, top, -v.y);        // 1..N
+  pos.push(0, bot, 0);                                        // N+1
+  for (const v of shapeVerts) pos.push(v.x, bot, -v.y);       // N+2..2N+1
+  for (const v of shapeVerts) pos.push(v.x, yShoulder, -v.y); // 2N+2..3N+1
+
+  const tCtr = 0;
+  const tRing = 1;             // top inset ring base index
+  const bCtr = N + 1;
+  const bRing = N + 2;         // bottom ring base index
+  const sRing = 2 * N + 2;     // shoulder ring base index
+
+  // Top face (small hex)
+  for (let i = 0; i < N; i++) {
+    idx.push(tCtr, tRing + i, tRing + (i + 1) % N);
+  }
+  // Bottom face (full hex, reversed winding)
+  for (let i = 0; i < N; i++) {
+    idx.push(bCtr, bRing + (i + 1) % N, bRing + i);
+  }
+  // Vertical side walls (bottom ring → shoulder ring)
+  for (let i = 0; i < N; i++) {
+    const a = bRing + i, b = bRing + (i + 1) % N;
+    const c = sRing + (i + 1) % N, d = sRing + i;
+    idx.push(a, b, c,  a, c, d);
+  }
+  // Chamfer slope (shoulder ring → top inset ring)
+  for (let i = 0; i < N; i++) {
+    const a = sRing + i, b = sRing + (i + 1) % N;
+    const c = tRing + (i + 1) % N, d = tRing + i;
+    idx.push(a, b, c,  a, c, d);
+  }
+
+  acc.add(pos, idx);
+}
+
+// Small extruded prism (n-gon) used for tree bumps
+function collectTreeBump(acc, x, y, baseY, height, radius, segments = 6) {
+  const pos = [];
+  const idx = [];
+  // Bottom + top center vertices
+  pos.push(x, baseY, -y);            // 0 = bottom center
+  pos.push(x, baseY + height, -y);   // 1 = top center
+  const ringB = 2;
+  const ringT = 2 + segments;
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    const dx = Math.cos(a) * radius;
+    const dz = Math.sin(a) * radius;
+    pos.push(x + dx, baseY, -(y + dz));
+  }
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    const dx = Math.cos(a) * radius * 0.55; // slight taper at top
+    const dz = Math.sin(a) * radius * 0.55;
+    pos.push(x + dx, baseY + height, -(y + dz));
+  }
+  // Bottom fan
+  for (let i = 0; i < segments; i++) {
+    idx.push(0, ringB + (i + 1) % segments, ringB + i);
+  }
+  // Top fan
+  for (let i = 0; i < segments; i++) {
+    idx.push(1, ringT + i, ringT + (i + 1) % segments);
+  }
+  // Sides (quads as 2 triangles)
+  for (let i = 0; i < segments; i++) {
+    const a = ringB + i, b = ringB + (i + 1) % segments;
+    const c = ringT + (i + 1) % segments, d = ringT + i;
+    idx.push(a, b, c,  a, c, d);
+  }
   acc.add(pos, idx);
 }
 

@@ -244,9 +244,10 @@ async function generate() {
     const invertColors      = el('invert-colors').checked;
     const bathymetry        = el('bathymetry')?.checked !== false;
     const detailedBuildings = el('detailed-buildings')?.checked || false;
+    const premiumDetail     = el('premium-detail')?.checked || false;
     setInvertedColors(invertColors);
     const featuresToBuild = { ...features, water: bathymetry ? features.water : [] };
-    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, invertColors, detailedBuildings);
+    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, invertColors, detailedBuildings, premiumDetail);
     const group = result.group;
     const modelStats = result.stats;
 
