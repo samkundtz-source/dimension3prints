@@ -405,7 +405,15 @@ async function doOrderPrint() {
       }),
     });
 
-    const data = await resp.json();
+    const text = await resp.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      setStatus(`Checkout error: HTTP ${resp.status} — ${text.slice(0, 120) || 'empty response'}`, 0);
+      btn.disabled = false;
+      return;
+    }
     if (data.url) {
       window.location.href = data.url;
     } else {
