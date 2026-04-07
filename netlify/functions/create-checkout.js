@@ -84,6 +84,9 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'Missing location data' }) };
     }
 
+    // Pricing: standard $35, inverted (black buildings / white roads) $40
+    const unitAmount = invertColors ? 4000 : 3500;
+
     const modelDesc = `3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x | ${invertColors ? 'Inverted' : 'Standard'} colors`;
 
     // Get region-specific shipping (defaults to US if not specified)
@@ -101,7 +104,7 @@ exports.handler = async (event) => {
               description: modelDesc,
               images: ['https://cities3ds.com/preview.png'],
             },
-            unit_amount: 3500,
+            unit_amount: unitAmount,
           },
           quantity: 1,
         },
