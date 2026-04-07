@@ -9,12 +9,17 @@ import './style.css';
 
 import L from 'leaflet';
 
-// Fix Leaflet default marker icon in Vite (asset resolution issue)
-import markerIcon    from 'leaflet/dist/images/marker-icon.png';
-import markerIcon2x  from 'leaflet/dist/images/marker-icon-2x.png';
-import markerShadow  from 'leaflet/dist/images/marker-shadow.png';
-delete L.Icon.Default.prototype._getIconUrl;
-L.Icon.Default.mergeOptions({ iconUrl: markerIcon, iconRetinaUrl: markerIcon2x, shadowUrl: markerShadow });
+// Custom marker — themed pin that reads clearly on the dark map tiles
+const PIN_ICON = L.divIcon({
+  className: 'cities3ds-pin',
+  html: `<svg width="26" height="34" viewBox="0 0 26 34" xmlns="http://www.w3.org/2000/svg">
+    <path d="M13 1C6.92 1 2 5.92 2 12c0 8.25 11 21 11 21s11-12.75 11-21c0-6.08-4.92-11-11-11z"
+          fill="#3b82f6" stroke="#ffffff" stroke-width="2" stroke-linejoin="round"/>
+    <circle cx="13" cy="12" r="4" fill="#ffffff"/>
+  </svg>`,
+  iconSize:   [26, 34],
+  iconAnchor: [13, 33],
+});
 
 import { createProjection, getHexVerticesGeo, getHexVertices, getShapeVertices, getShapeVerticesGeo } from './geo/geoMath.js';
 import { geocode, fetchOSMData, parseOSMData, fetchElevation } from './geo/osmData.js';
@@ -79,7 +84,7 @@ function selectLocation(lat, lng, label) {
 
   // Place marker
   markerLayerGroup.clearLayers();
-  L.marker([lat, lng]).addTo(markerLayerGroup);
+  L.marker([lat, lng], { icon: PIN_ICON }).addTo(markerLayerGroup);
 
   // Pan map
   leafletMap.setView([lat, lng], Math.max(leafletMap.getZoom(), 13));

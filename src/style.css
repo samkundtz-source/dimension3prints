@@ -190,6 +190,8 @@ html, body {
 .leaflet-control-zoom a:hover { background: var(--bg-hover) !important; }
 .leaflet-control-zoom { border: 1px solid var(--border) !important; border-radius: var(--radius-sm) !important; overflow: hidden; }
 
+.cities3ds-pin { background: transparent !important; border: none !important; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.6)); }
+
 /* Settings */
 .sidebar-settings { flex-shrink: 0; overflow-y: auto; }
 
