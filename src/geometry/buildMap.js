@@ -670,10 +670,14 @@ function principalAxis(polygon) {
 }
 
 /**
- * Gable/hip roof: builds a ridge line through the centroid along the polygon's
- * principal long axis, then connects every wall edge up to the closest point
- * on the ridge with a sloped triangle. Forms a clean roof on rectangular and
- * near-rectangular footprints; degrades gracefully on irregular shapes.
+ * Watertight gable/hip roof. Builds a ridge segment along the polygon's
+ * principal long axis through the centroid, then connects every wall edge
+ * up to one of the two ridge endpoints. Edges that straddle the long-axis
+ * midpoint emit a TWO-triangle fan (slope + hip seam) so the surface stays
+ * closed — no empty triangle frames.
+ *
+ * Roof apex is fully inside the polygon footprint, so there are no eaves /
+ * overhangs.
  */
 function collectGableHipRoof(acc, polygon, y0, h) {
   const ring = deduplicateRing(polygon);
@@ -682,32 +686,32 @@ function collectGableHipRoof(acc, polygon, y0, h) {
   const n = outer.length;
 
   const { dx, dy, cx, cy } = principalAxis(outer);
-  // Perpendicular axis
   const nx = -dy, ny = dx;
 
   // Project to OBB-aligned coords (u along long axis, v perpendicular)
   let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
-  for (const p of outer) {
+  const us = new Array(n);
+  for (let i = 0; i < n; i++) {
+    const p = outer[i];
     const ox = p.x - cx, oy = p.y - cy;
     const u = ox * dx + oy * dy;
     const v = ox * nx + oy * ny;
+    us[i] = u;
     if (u < uMin) uMin = u;
     if (u > uMax) uMax = u;
     if (v < vMin) vMin = v;
     if (v > vMax) vMax = v;
   }
   const halfWidth = (vMax - vMin) / 2;
-  if (halfWidth < 0.3) {
-    // Too thin to host a real ridge — fall back to simple block top
-    return;
-  }
+  if (halfWidth < 0.3) return; // too thin for a ridge
 
-  // Hip ridge: shrink ridge ends inward by halfWidth so the slopes meet the
-  // short walls at the same height as the long walls (proper hip roof).
+  // Hip ridge: pull ends inward by halfWidth so slopes meet short walls
+  // at the same height as long walls. Clamped so the ridge can't invert.
   const ridgeShrink = Math.min(halfWidth, (uMax - uMin) * 0.45);
   const u0 = uMin + ridgeShrink;
   const u1 = uMax - ridgeShrink;
-  // Two ridge endpoints in world coords
+  const uMid = (u0 + u1) / 2;
+
   const ridgeAx = cx + dx * u0;
   const ridgeAy = cy + dy * u0;
   const ridgeBx = cx + dx * u1;
@@ -716,27 +720,29 @@ function collectGableHipRoof(acc, polygon, y0, h) {
 
   const pos = [];
   const idx = [];
-  // Ring vertices at y0
   for (const p of outer) pos.push(p.x, y0, -p.y);
-  // Two ridge endpoints
-  pos.push(ridgeAx, yTop, -ridgeAy); // index n
-  pos.push(ridgeBx, yTop, -ridgeBy); // index n + 1
+  pos.push(ridgeAx, yTop, -ridgeAy); // index n   = RA
+  pos.push(ridgeBx, yTop, -ridgeBy); // index n+1 = RB
   const RA = n, RB = n + 1;
 
-  // Each polygon edge picks the closer ridge endpoint and forms a triangle.
+  // Per-vertex ridge pick: nearer of RA / RB based on u-coordinate
+  const pick = new Array(n);
+  for (let i = 0; i < n; i++) pick[i] = us[i] < uMid ? RA : RB;
+
   for (let i = 0; i < n; i++) {
-    const a = outer[i];
-    const b = outer[(i + 1) % n];
-    const mx = (a.x + b.x) / 2 - cx;
-    const my = (a.y + b.y) / 2 - cy;
-    const u = mx * dx + my * dy;
-    // Pick ridge endpoint by which side of the long-axis midpoint we're on
-    const apex = (u < (u0 + u1) / 2) ? RA : RB;
-    idx.push(i, (i + 1) % n, apex);
+    const j = (i + 1) % n;
+    if (pick[i] === pick[j]) {
+      // Both vertices on the same side of the seam — single slope triangle
+      idx.push(i, j, pick[i]);
+    } else {
+      // Edge straddles the hip seam — TWO triangles fill the corner cleanly:
+      //   1) wall edge → far ridge point  (slope face)
+      //   2) wall vertex → far ridge → near ridge  (hip seam patch)
+      idx.push(i, j, pick[j]);
+      idx.push(i, pick[j], pick[i]);
+    }
   }
-  // Ridge edge itself (caps the small gap between the two fans along the top)
-  // RA → RB doesn't need a triangle; it's a degenerate seam, but we add a
-  // tiny "ridge cap" by triangulating the two fans' shared edge implicitly.
+
   acc.add(pos, idx);
 }
 
