@@ -241,11 +241,12 @@ async function generate() {
 
     // 5. Build 3D model
     setStatus('Building 3D model...', 60);
-    const invertColors = el('invert-colors').checked;
-    const bathymetry   = el('bathymetry')?.checked !== false;
+    const invertColors      = el('invert-colors').checked;
+    const bathymetry        = el('bathymetry')?.checked !== false;
+    const detailedBuildings = el('detailed-buildings')?.checked || false;
     setInvertedColors(invertColors);
     const featuresToBuild = { ...features, water: bathymetry ? features.water : [] };
-    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, invertColors);
+    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, invertColors, detailedBuildings);
     const group = result.group;
     const modelStats = result.stats;
 

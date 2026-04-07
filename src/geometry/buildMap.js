@@ -116,7 +116,7 @@ class GeomAccumulator {
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
-export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', invertColors = false) {
+export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', invertColors = false, detailedBuildings = false) {
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -276,8 +276,12 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
     const heightM  = parseBuildingHeight(bf.tags, bf.polygon);
     const heightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
-    // Solid extrusion (no holes) — simple block buildings
-    collectExtrudedPolygon(buildingAcc, bf.polygon, [], BASE, heightMM);
+    if (detailedBuildings) {
+      collectDetailedBuilding(buildingAcc, bf.polygon, BASE, heightMM);
+    } else {
+      // Simple block extrusion
+      collectExtrudedPolygon(buildingAcc, bf.polygon, [], BASE, heightMM);
+    }
     buildingCount++;
   }
 
@@ -558,6 +562,83 @@ function collectExtrudedPolygon(acc, polygon, holes, baseY, heightMM) {
 
     acc.add(allPos, allIdx);
   } catch (_) {}
+}
+
+// ─── Detailed building variants ──────────────────────────────────────────────
+// Houses (short)        → walls + pyramid roof cap
+// Mid-rise (4–18 mm)    → simple block
+// Skyscrapers (>18 mm)  → block + setback crown + small antenna nub
+
+const HOUSE_MAX_MM    = 6;   // <= this is treated as a "house"
+const TOWER_MIN_MM    = 18;  // >= this is treated as a "skyscraper"
+
+function collectDetailedBuilding(acc, polygon, baseY, totalH) {
+  if (totalH <= HOUSE_MAX_MM) {
+    // House: 65% wall + 35% pyramid roof
+    const wallH = totalH * 0.62;
+    const roofH = totalH - wallH;
+    collectExtrudedPolygon(acc, polygon, [], baseY, wallH);
+    collectPyramidCap(acc, polygon, baseY + wallH, roofH);
+    return;
+  }
+
+  if (totalH >= TOWER_MIN_MM) {
+    // Skyscraper: main shaft + 1 setback + tiny crown nub
+    const crownH = Math.min(2.0, totalH * 0.12);
+    const nubH   = 0.8;
+    const bodyH  = totalH - crownH - nubH;
+    collectExtrudedPolygon(acc, polygon, [], baseY, bodyH);
+    const setback = shrinkToCentroid(polygon, 0.85);
+    if (setback) {
+      collectExtrudedPolygon(acc, setback, [], baseY + bodyH, crownH);
+      const nub = shrinkToCentroid(polygon, 0.55);
+      if (nub) collectExtrudedPolygon(acc, nub, [], baseY + bodyH + crownH, nubH);
+    }
+    return;
+  }
+
+  // Mid-rise: plain block
+  collectExtrudedPolygon(acc, polygon, [], baseY, totalH);
+}
+
+/** Shrink polygon toward its centroid by `scale` (1.0 = no change). */
+function shrinkToCentroid(polygon, scale) {
+  if (!polygon || polygon.length < 3) return null;
+  let cx = 0, cy = 0;
+  for (const p of polygon) { cx += p.x; cy += p.y; }
+  cx /= polygon.length; cy /= polygon.length;
+  return polygon.map(p => ({
+    x: cx + (p.x - cx) * scale,
+    y: cy + (p.y - cy) * scale,
+  }));
+}
+
+/**
+ * Pyramid roof cap: triangulates the outer ring at y0 to a single apex at y0+h.
+ * No bottom face (sits on the wall extrusion's top, which already covers it).
+ */
+function collectPyramidCap(acc, polygon, y0, h) {
+  const ring = deduplicateRing(polygon);
+  if (ring.length < 3) return;
+  const outer = ensureCCW(ring);
+  const n = outer.length;
+
+  let cx = 0, cz = 0;
+  for (const p of outer) { cx += p.x; cz += p.y; }
+  cx /= n; cz /= n;
+
+  const pos = [];
+  const idx = [];
+  // Outer ring at y0
+  for (const p of outer) pos.push(p.x, y0, -p.y);
+  // Apex
+  pos.push(cx, y0 + h, -cz);
+  const apex = n;
+  // Side triangles (ring i → ring i+1 → apex)
+  for (let i = 0; i < n; i++) {
+    idx.push(i, (i + 1) % n, apex);
+  }
+  acc.add(pos, idx);
 }
 
 /**
