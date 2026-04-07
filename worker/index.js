@@ -147,12 +147,136 @@ async function handleCreateCheckout(request, env) {
   return jsonResponse({ url: session.url });
 }
 
+// ─── Admin endpoints ────────────────────────────────────────────────────────
+
+async function handleAdminVerify(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+  if (!env.ADMIN_PASSWORD)       return jsonResponse({ error: 'Admin password not configured' }, 500);
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+
+  if (body.password === env.ADMIN_PASSWORD) {
+    return jsonResponse({ success: true });
+  }
+  return jsonResponse({ error: 'Invalid password' }, 401);
+}
+
+async function handleAdminOrders(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+  if (!env.STRIPE_SECRET_KEY)    return jsonResponse({ error: 'Server is missing STRIPE_SECRET_KEY' }, 500);
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+
+  if (body.password !== env.ADMIN_PASSWORD) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+
+  const limit = Math.min(body.limit || 50, 100);
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (body.starting_after) params.set('starting_after', body.starting_after);
+
+  const stripeResp = await fetch(`https://api.stripe.com/v1/checkout/sessions?${params.toString()}`, {
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+  });
+
+  let sessions;
+  try { sessions = await stripeResp.json(); }
+  catch { return jsonResponse({ error: `Stripe returned non-JSON (HTTP ${stripeResp.status})` }, 500); }
+
+  if (!stripeResp.ok) {
+    return jsonResponse({ error: sessions.error?.message || 'Stripe error' }, 500);
+  }
+
+  const orders = (sessions.data || [])
+    .filter((s) => s.payment_status === 'paid')
+    .map((s) => ({
+      id:             s.id,
+      paymentIntent:  s.payment_intent,
+      created:        s.created,
+      amount:         s.amount_total,
+      currency:       s.currency,
+      status:         s.metadata?.fulfillment_status || 'pending',
+      email:          s.customer_details?.email || '',
+      name:           s.customer_details?.name || s.shipping_details?.name || '',
+      shipping:       s.shipping_details?.address ? {
+        name:    s.shipping_details.name,
+        line1:   s.shipping_details.address.line1,
+        line2:   s.shipping_details.address.line2,
+        city:    s.shipping_details.address.city,
+        state:   s.shipping_details.address.state,
+        postal:  s.shipping_details.address.postal_code,
+        country: s.shipping_details.address.country,
+      } : null,
+      shippingRate: s.shipping_cost?.amount_total || 0,
+      model: {
+        lat:           parseFloat(s.metadata?.lat) || 0,
+        lng:           parseFloat(s.metadata?.lng) || 0,
+        radius:        parseFloat(s.metadata?.radius) || 1,
+        verticalScale: parseFloat(s.metadata?.verticalScale) || 3,
+        elevation:     s.metadata?.elevation === 'true',
+        invertColors:  s.metadata?.invertColors === 'true',
+        colorMode:     s.metadata?.colorMode || 'standard',
+      },
+    }));
+
+  return jsonResponse({
+    orders,
+    hasMore: sessions.has_more,
+    lastId:  sessions.data?.length ? sessions.data[sessions.data.length - 1].id : null,
+  });
+}
+
+async function handleAdminUpdateOrder(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+  if (!env.STRIPE_SECRET_KEY)    return jsonResponse({ error: 'Server is missing STRIPE_SECRET_KEY' }, 500);
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+
+  if (body.password !== env.ADMIN_PASSWORD) {
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+
+  const validStatuses = ['pending', 'printing', 'shipped', 'delivered'];
+  if (!validStatuses.includes(body.status)) {
+    return jsonResponse({ error: 'Invalid status' }, 400);
+  }
+
+  const formBody = encodeStripeForm({
+    metadata: { fulfillment_status: body.status },
+  }).join('&');
+
+  const stripeResp = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(body.sessionId)}`, {
+    method: 'POST',
+    headers: {
+      Authorization:  `Bearer ${env.STRIPE_SECRET_KEY}`,
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: formBody,
+  });
+
+  let result;
+  try { result = await stripeResp.json(); }
+  catch { return jsonResponse({ error: `Stripe returned non-JSON (HTTP ${stripeResp.status})` }, 500); }
+
+  if (!stripeResp.ok) {
+    return jsonResponse({ error: result.error?.message || 'Stripe error' }, 500);
+  }
+
+  return jsonResponse({ success: true, status: body.status });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    if (url.pathname === '/api/create-checkout') {
-      return handleCreateCheckout(request, env);
+    switch (url.pathname) {
+      case '/api/create-checkout':    return handleCreateCheckout(request, env);
+      case '/api/admin-verify':       return handleAdminVerify(request, env);
+      case '/api/admin-orders':       return handleAdminOrders(request, env);
+      case '/api/admin-update-order': return handleAdminUpdateOrder(request, env);
     }
 
     // Everything else → static assets
