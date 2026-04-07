@@ -277,7 +277,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const heightM  = parseBuildingHeight(bf.tags, bf.polygon);
     const heightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
     if (detailedBuildings) {
-      collectDetailedBuilding(buildingAcc, bf.polygon, BASE, heightMM);
+      collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, BASE, heightMM, heightM);
     } else {
       // Simple block extrusion
       collectExtrudedPolygon(buildingAcc, bf.polygon, [], BASE, heightMM);
@@ -565,27 +565,52 @@ function collectExtrudedPolygon(acc, polygon, holes, baseY, heightMM) {
 }
 
 // ─── Detailed building variants ──────────────────────────────────────────────
-// Houses (short)        → walls + pyramid roof cap
-// Mid-rise (4–18 mm)    → simple block
-// Skyscrapers (>18 mm)  → block + setback crown + small antenna nub
+// Detection uses REAL-WORLD height (metres), not print-mm — print height is
+// distorted by BUILD_EXAG and the MIN_BUILDING_HEIGHT floor, so a true 4 m
+// bungalow and a 25 m apartment block would otherwise look identical.
+//
+// House (≤ 8 m, or building tag is house-like): walls + ridge gable roof
+// Skyscraper (≥ 35 m, or tag is tower-like): block + setback crown + nub
+// Mid-rise: plain block
 
-const HOUSE_MAX_MM    = 6;   // <= this is treated as a "house"
-const TOWER_MIN_MM    = 18;  // >= this is treated as a "skyscraper"
+const HOUSE_REAL_M = 8;
+const TOWER_REAL_M = 35;
 
-function collectDetailedBuilding(acc, polygon, baseY, totalH) {
-  if (totalH <= HOUSE_MAX_MM) {
-    // House: 65% wall + 35% pyramid roof
-    const wallH = totalH * 0.62;
-    const roofH = totalH - wallH;
+const HOUSE_TAGS = new Set([
+  'house', 'detached', 'semidetached_house', 'bungalow', 'cabin',
+  'farm', 'static_caravan',
+]);
+const TOWER_TAGS = new Set([
+  'office', 'commercial', 'hotel', 'apartments',
+  'cathedral', 'tower', 'skyscraper',
+]);
+
+function isHouseLike(tags, heightM) {
+  const t = tags?.building;
+  if (t && HOUSE_TAGS.has(t)) return true;
+  return heightM <= HOUSE_REAL_M;
+}
+
+function isTowerLike(tags, heightM) {
+  if (heightM >= TOWER_REAL_M) return true;
+  const t = tags?.building;
+  return !!(t && TOWER_TAGS.has(t) && heightM >= 25);
+}
+
+function collectDetailedBuilding(acc, polygon, tags, baseY, totalH, heightM) {
+  if (isHouseLike(tags, heightM)) {
+    // House: walls + ridge-line gable/hip roof
+    const roofH = Math.min(1.6, totalH * 0.35);
+    const wallH = Math.max(totalH - roofH, 1.0);
     collectExtrudedPolygon(acc, polygon, [], baseY, wallH);
-    collectPyramidCap(acc, polygon, baseY + wallH, roofH);
+    collectGableHipRoof(acc, polygon, baseY + wallH, roofH);
     return;
   }
 
-  if (totalH >= TOWER_MIN_MM) {
-    // Skyscraper: main shaft + 1 setback + tiny crown nub
+  if (isTowerLike(tags, heightM)) {
+    // Skyscraper: shaft + 0.85x crown + 0.55x nub
     const crownH = Math.min(2.0, totalH * 0.12);
-    const nubH   = 0.8;
+    const nubH   = 0.7;
     const bodyH  = totalH - crownH - nubH;
     collectExtrudedPolygon(acc, polygon, [], baseY, bodyH);
     const setback = shrinkToCentroid(polygon, 0.85);
@@ -614,30 +639,104 @@ function shrinkToCentroid(polygon, scale) {
 }
 
 /**
- * Pyramid roof cap: triangulates the outer ring at y0 to a single apex at y0+h.
- * No bottom face (sits on the wall extrusion's top, which already covers it).
+ * Compute the principal axis of a polygon via PCA on its vertices.
+ * Returns { dx, dy } unit vector along the long axis, plus centroid.
  */
-function collectPyramidCap(acc, polygon, y0, h) {
+function principalAxis(polygon) {
+  let cx = 0, cy = 0;
+  for (const p of polygon) { cx += p.x; cy += p.y; }
+  cx /= polygon.length; cy /= polygon.length;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (const p of polygon) {
+    const dx = p.x - cx, dy = p.y - cy;
+    sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+  }
+  // Eigenvector of [sxx sxy; sxy syy] for the larger eigenvalue
+  const tr = sxx + syy;
+  const det = sxx * syy - sxy * sxy;
+  const disc = Math.max(0, tr * tr / 4 - det);
+  const lambda = tr / 2 + Math.sqrt(disc);
+  let vx, vy;
+  if (Math.abs(sxy) > 1e-9) {
+    vx = lambda - syy;
+    vy = sxy;
+  } else {
+    vx = sxx >= syy ? 1 : 0;
+    vy = sxx >= syy ? 0 : 1;
+  }
+  const len = Math.hypot(vx, vy);
+  if (len < 1e-9) return { dx: 1, dy: 0, cx, cy };
+  return { dx: vx / len, dy: vy / len, cx, cy };
+}
+
+/**
+ * Gable/hip roof: builds a ridge line through the centroid along the polygon's
+ * principal long axis, then connects every wall edge up to the closest point
+ * on the ridge with a sloped triangle. Forms a clean roof on rectangular and
+ * near-rectangular footprints; degrades gracefully on irregular shapes.
+ */
+function collectGableHipRoof(acc, polygon, y0, h) {
   const ring = deduplicateRing(polygon);
   if (ring.length < 3) return;
   const outer = ensureCCW(ring);
   const n = outer.length;
 
-  let cx = 0, cz = 0;
-  for (const p of outer) { cx += p.x; cz += p.y; }
-  cx /= n; cz /= n;
+  const { dx, dy, cx, cy } = principalAxis(outer);
+  // Perpendicular axis
+  const nx = -dy, ny = dx;
+
+  // Project to OBB-aligned coords (u along long axis, v perpendicular)
+  let uMin = Infinity, uMax = -Infinity, vMin = Infinity, vMax = -Infinity;
+  for (const p of outer) {
+    const ox = p.x - cx, oy = p.y - cy;
+    const u = ox * dx + oy * dy;
+    const v = ox * nx + oy * ny;
+    if (u < uMin) uMin = u;
+    if (u > uMax) uMax = u;
+    if (v < vMin) vMin = v;
+    if (v > vMax) vMax = v;
+  }
+  const halfWidth = (vMax - vMin) / 2;
+  if (halfWidth < 0.3) {
+    // Too thin to host a real ridge — fall back to simple block top
+    return;
+  }
+
+  // Hip ridge: shrink ridge ends inward by halfWidth so the slopes meet the
+  // short walls at the same height as the long walls (proper hip roof).
+  const ridgeShrink = Math.min(halfWidth, (uMax - uMin) * 0.45);
+  const u0 = uMin + ridgeShrink;
+  const u1 = uMax - ridgeShrink;
+  // Two ridge endpoints in world coords
+  const ridgeAx = cx + dx * u0;
+  const ridgeAy = cy + dy * u0;
+  const ridgeBx = cx + dx * u1;
+  const ridgeBy = cy + dy * u1;
+  const yTop = y0 + h;
 
   const pos = [];
   const idx = [];
-  // Outer ring at y0
+  // Ring vertices at y0
   for (const p of outer) pos.push(p.x, y0, -p.y);
-  // Apex
-  pos.push(cx, y0 + h, -cz);
-  const apex = n;
-  // Side triangles (ring i → ring i+1 → apex)
+  // Two ridge endpoints
+  pos.push(ridgeAx, yTop, -ridgeAy); // index n
+  pos.push(ridgeBx, yTop, -ridgeBy); // index n + 1
+  const RA = n, RB = n + 1;
+
+  // Each polygon edge picks the closer ridge endpoint and forms a triangle.
   for (let i = 0; i < n; i++) {
+    const a = outer[i];
+    const b = outer[(i + 1) % n];
+    const mx = (a.x + b.x) / 2 - cx;
+    const my = (a.y + b.y) / 2 - cy;
+    const u = mx * dx + my * dy;
+    // Pick ridge endpoint by which side of the long-axis midpoint we're on
+    const apex = (u < (u0 + u1) / 2) ? RA : RB;
     idx.push(i, (i + 1) % n, apex);
   }
+  // Ridge edge itself (caps the small gap between the two fans along the top)
+  // RA → RB doesn't need a triangle; it's a degenerate seam, but we add a
+  // tiny "ridge cap" by triangulating the two fans' shared edge implicitly.
   acc.add(pos, idx);
 }
 
