@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "npm run build && wrangler dev",
+    "deploy": "npm run build && wrangler deploy"
   },
   "dependencies": {
     "earcut": "^2.2.4",
@@ -15,6 +16,8 @@
     "three": "^0.163.0"
   },
   "devDependencies": {
-    "vite": "^6.4.2"
+    "@cloudflare/vite-plugin": "^1.31.1",
+    "vite": "^6.4.2",
+    "wrangler": "^4.81.0"
   }
 }
