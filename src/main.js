@@ -242,13 +242,9 @@ async function generate() {
     // 5. Build 3D model
     setStatus('Building 3D model...', 60);
     const invertColors = el('invert-colors').checked;
-    const topoOnly     = el('topo-only')?.checked || false;
     const bathymetry   = el('bathymetry')?.checked !== false;
     setInvertedColors(invertColors);
-    // Strip features if topo-only mode is enabled
-    const featuresToBuild = topoOnly
-      ? { buildings: [], roads: [], paths: [], parks: [], water: bathymetry ? features.water : [] }
-      : { ...features, water: bathymetry ? features.water : [] };
+    const featuresToBuild = { ...features, water: bathymetry ? features.water : [] };
     const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, invertColors);
     const group = result.group;
     const modelStats = result.stats;
@@ -462,15 +458,6 @@ function initControls() {
   const vscaleSlider = el('vscale-slider');
   vscaleSlider.addEventListener('input', () => {
     el('vscale-value').textContent = `${vscaleSlider.value}x`;
-  });
-
-  // Topography section collapse toggle
-  const topoToggle = el('topo-toggle');
-  const topoBody   = el('topo-body');
-  topoToggle?.addEventListener('click', () => {
-    const expanded = topoToggle.getAttribute('aria-expanded') === 'true';
-    topoToggle.setAttribute('aria-expanded', String(!expanded));
-    topoBody.classList.toggle('collapsed', expanded);
   });
 
   // Invert colors → update price label ($35 → $40)

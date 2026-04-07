@@ -67,68 +67,30 @@
           </div>
           <input type="range" id="radius-slider" class="slider" min="0.2" max="2" step="0.1" value="1.0" />
 
+          <div class="setting-row" style="margin-top:12px">
+            <span class="setting-name">Elevation Scale</span>
+            <span class="setting-val" id="vscale-value">3x</span>
+          </div>
+          <input type="range" id="vscale-slider" class="slider" min="1" max="8" step="1" value="3" />
+
+          <label class="toggle-row" style="margin-top:12px">
+            <input type="checkbox" id="use-elevation" checked />
+            <span class="toggle-switch"></span>
+            <span class="toggle-label">Include elevation data</span>
+          </label>
+
+          <label class="toggle-row" style="margin-top:12px">
+            <input type="checkbox" id="bathymetry" checked />
+            <span class="toggle-switch"></span>
+            <span class="toggle-label">Bathymetry <span style="color:var(--text-dim);font-weight:400">(water depressions)</span></span>
+          </label>
+
           <label class="toggle-row" style="margin-top:12px">
             <input type="checkbox" id="invert-colors" />
             <span class="toggle-switch"></span>
             <span class="toggle-label">Invert colors (black buildings) <span style="color:var(--text-dim);font-weight:400">+$5</span></span>
           </label>
         </div>
-
-        <!-- Topography section (collapsible) -->
-        <div class="sidebar-section sidebar-settings" id="topo-section">
-          <button type="button" class="topo-header" id="topo-toggle" aria-expanded="true">
-            <span class="topo-title">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2">
-                <path d="M3 20l5-9 4 6 3-4 6 7"/>
-                <circle cx="8" cy="11" r="0.5"/>
-              </svg>
-              Topography
-            </span>
-            <svg class="topo-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <polyline points="6 9 12 15 18 9"/>
-            </svg>
-          </button>
-
-          <div class="topo-body" id="topo-body">
-            <label class="toggle-row" style="margin-top:12px">
-              <input type="checkbox" id="use-elevation" checked />
-              <span class="toggle-switch"></span>
-              <span class="toggle-label">Enabled</span>
-            </label>
-
-            <div class="setting-row" style="margin-top:14px">
-              <span class="setting-name">Elevation Scale</span>
-              <span class="setting-val" id="vscale-value">3x</span>
-            </div>
-            <input type="range" id="vscale-slider" class="slider" min="1" max="8" step="1" value="3" />
-
-            <label class="toggle-row" style="margin-top:12px">
-              <input type="checkbox" id="topo-only" />
-              <span class="toggle-switch"></span>
-              <span class="toggle-label">Topography only <span style="color:var(--text-dim);font-weight:400">(no buildings/roads)</span></span>
-            </label>
-
-            <label class="toggle-row" style="margin-top:12px">
-              <input type="checkbox" id="bathymetry" checked />
-              <span class="toggle-switch"></span>
-              <span class="toggle-label">Bathymetry <span style="color:var(--text-dim);font-weight:400">(water depressions)</span></span>
-            </label>
-          </div>
-        </div>
-
-        <style>
-          .topo-header {
-            display:flex; align-items:center; justify-content:space-between;
-            width:100%; background:transparent; border:none; padding:0; cursor:pointer;
-            color:var(--text); font-family:inherit; font-size:11px; font-weight:600;
-            text-transform:uppercase; letter-spacing:0.06em;
-          }
-          .topo-title { display:flex; align-items:center; gap:8px; }
-          .topo-chevron { transition: transform 0.2s ease; }
-          .topo-header[aria-expanded="false"] .topo-chevron { transform: rotate(-90deg); }
-          .topo-body { overflow:hidden; transition: max-height 0.25s ease, opacity 0.2s ease; max-height:500px; opacity:1; }
-          .topo-body.collapsed { max-height:0; opacity:0; pointer-events:none; }
-        </style>
 
         <!-- Generate -->
         <div class="sidebar-actions">
