@@ -598,12 +598,10 @@ function isTowerLike(tags, heightM) {
 }
 
 function collectDetailedBuilding(acc, polygon, tags, baseY, totalH, heightM) {
+  // Houses stay as plain flat-topped blocks — pitched roofs were producing
+  // odd silhouettes on small/irregular footprints, so just leave them alone.
   if (isHouseLike(tags, heightM)) {
-    // House: walls + ridge-line gable/hip roof
-    const roofH = Math.min(1.6, totalH * 0.35);
-    const wallH = Math.max(totalH - roofH, 1.0);
-    collectExtrudedPolygon(acc, polygon, [], baseY, wallH);
-    collectGableHipRoof(acc, polygon, baseY + wallH, roofH);
+    collectExtrudedPolygon(acc, polygon, [], baseY, totalH);
     return;
   }
 
