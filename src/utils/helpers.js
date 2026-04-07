@@ -1,10 +1,10 @@
 // ─── Model configuration ──────────────────────────────────────────────────────
 
-/** Hex circumradius in model millimetres — gives 110mm flat-to-flat */
-export const MODEL_RADIUS_MM = 63.51;
+/** Hex circumradius in model millimetres — gives 130mm flat-to-flat */
+export const MODEL_RADIUS_MM = 75.06;
 
-/** Solid base plate thickness in mm */
-export const BASE_THICKNESS_MM = 1.5;
+/** Solid base plate thickness in mm — thicker for sturdier prints */
+export const BASE_THICKNESS_MM = 2.0;
 
 /** Elevation sample grid dimension (N×N points) */
 export const TERRAIN_GRID_SIZE = 20; // 400 pts → 4 API calls to OpenTopoData
@@ -13,7 +13,10 @@ export const TERRAIN_GRID_SIZE = 20; // 400 pts → 4 API calls to OpenTopoData
 export const DEFAULT_VERT_EXAG = 8;
 
 /** Minimum building height to keep detail printable */
-export const MIN_BUILDING_HEIGHT_MM = 2.5;
+export const MIN_BUILDING_HEIGHT_MM = 3.0;
+
+/** FDM nozzle diameter — nothing in the model can be thinner than this */
+export const NOZZLE_MM = 0.4;
 
 // ─── Layer heights above the base plate top (in mm) ──────────────────────────
 // These are deliberately exaggerated so features read clearly in the 3D preview
@@ -58,7 +61,7 @@ export const ROAD_WIDTHS_M = {
  * These minimums guarantee roads are legible and 3D-printable (≥ 0.4 mm nozzle).
  *
  * Values here are HALF the total road width on the printed model.
- * A residential road will be at least 3 mm wide (1.5 mm each side).
+ * NO value here is below 0.2 — that gives a full road width ≥ 0.4 mm (one nozzle).
  */
 export const ROAD_MIN_VISUAL_HALF_MM = {
   motorway:      1.0,
@@ -76,10 +79,10 @@ export const ROAD_MIN_VISUAL_HALF_MM = {
   service:       0.25,
   living_street: 0.35,
   pedestrian:    0.4,
-  footway:       0.2,
-  path:          0.15,
-  cycleway:      0.2,
-  steps:         0.15,
+  footway:       0.22,
+  path:          0.2,
+  cycleway:      0.22,
+  steps:         0.2,
 };
 
 // ─── Maths helpers ────────────────────────────────────────────────────────────

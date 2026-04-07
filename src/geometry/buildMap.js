@@ -20,6 +20,7 @@ import {
   ROAD_WIDTHS_M,
   ROAD_MIN_VISUAL_HALF_MM,
   MIN_BUILDING_HEIGHT_MM,
+  NOZZLE_MM,
   signedArea2D,
   ensureCCW,
   ensureCW,
@@ -141,8 +142,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   const BASE        = BASE_THICKNESS_MM;
-  const ROAD_HEIGHT = 0.4;
-  const CLEARANCE   = 1.2; // generous gap around buildings to prevent clipping
+  const ROAD_HEIGHT = NOZZLE_MM * 2.5; // 1.0mm — taller ridge, reads clearly above the base
+  const CLEARANCE   = 1.4; // generous gap around buildings to prevent clipping
 
   // ── 3. Pre-collect building footprints ────────────────────────────────────
   // Buildings are generated FIRST so roads can fit around them.
@@ -170,6 +171,33 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     });
   }
 
+  // ── Spatial grid: O(1) building lookup instead of O(N) scan ───────────────
+  // Big speedup for dense cities (was O(roads * buildings) overlap check)
+  const GRID_CELL = 8; // mm per cell
+  const GRID_SIZE = Math.ceil((MODEL_RADIUS_MM * 2) / GRID_CELL) + 2;
+  const GRID_OFFSET = MODEL_RADIUS_MM + GRID_CELL;
+  const buildingGrid = new Array(GRID_SIZE * GRID_SIZE);
+  function gridKey(cx, cy) { return cy * GRID_SIZE + cx; }
+  function gridCell(x, y) {
+    return [
+      Math.floor((x + GRID_OFFSET) / GRID_CELL),
+      Math.floor((y + GRID_OFFSET) / GRID_CELL),
+    ];
+  }
+  for (let bi = 0; bi < buildingFootprints.length; bi++) {
+    const bf = buildingFootprints[bi];
+    const [c0x, c0y] = gridCell(bf.bbox.minX, bf.bbox.minY);
+    const [c1x, c1y] = gridCell(bf.bbox.maxX, bf.bbox.maxY);
+    for (let cy = c0y; cy <= c1y; cy++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        if (cx < 0 || cy < 0 || cx >= GRID_SIZE || cy >= GRID_SIZE) continue;
+        const k = gridKey(cx, cy);
+        if (!buildingGrid[k]) buildingGrid[k] = [];
+        buildingGrid[k].push(bi);
+      }
+    }
+  }
+
   /**
    * Find building footprints overlapping a polygon. Returns hole rings
    * for earcut subtraction (offset outward by CLEARANCE).
@@ -183,8 +211,27 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       if (p.y > pMaxY) pMaxY = p.y;
     }
 
+    // Collect candidate building indices via spatial grid (deduped)
+    const [c0x, c0y] = gridCell(pMinX, pMinY);
+    const [c1x, c1y] = gridCell(pMaxX, pMaxY);
+    const seen = new Set();
+    const candidates = [];
+    for (let cy = c0y; cy <= c1y; cy++) {
+      for (let cx = c0x; cx <= c1x; cx++) {
+        if (cx < 0 || cy < 0 || cx >= GRID_SIZE || cy >= GRID_SIZE) continue;
+        const bucket = buildingGrid[gridKey(cx, cy)];
+        if (!bucket) continue;
+        for (const bi of bucket) {
+          if (seen.has(bi)) continue;
+          seen.add(bi);
+          candidates.push(bi);
+        }
+      }
+    }
+
     const holes = [];
-    for (const bf of buildingFootprints) {
+    for (const bi of candidates) {
+      const bf = buildingFootprints[bi];
       if (bf.bbox.maxX < pMinX || bf.bbox.minX > pMaxX ||
           bf.bbox.maxY < pMinY || bf.bbox.minY > pMaxY) continue;
 
@@ -215,9 +262,11 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // All buildings are SOLID (no holes/courtyards) for clean 3D printing.
   // Tall buildings get a slight taper for a more realistic look.
   // Buildings too thin to print (< 1.5mm) are skipped.
+  // Building exaggeration scales with vertExag but is capped so even at max
+  // slider (8x) the tallest skyscrapers stay under MAX_BLDG_MM
   const BUILD_EXAG     = Math.min(vertExag * 0.5, 3.0);
-  const MAX_BLDG_MM    = 45;
-  const MIN_BLDG_DIM   = 0.4; // lowered to keep small buildings in dense cities
+  const MAX_BLDG_MM    = 35; // hard cap — keeps tall buildings from looking like spires
+  const MIN_BLDG_DIM   = NOZZLE_MM; // strictly one nozzle width — anything thinner won't print
 
   let buildingCount = 0;
   onProgress?.('Extruding buildings…', 74);
@@ -255,9 +304,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   // ── 6. Parks — with building gaps ───────────────────────────────────────────
-  // Default: roads sit on top of base (BASE → BASE + ROAD_HEIGHT).
-  // Inverted: roads extrude from bottom of base (0) up to BASE + ROAD_HEIGHT,
-  // cutting through the entire black base as white columns.
+  // Default (white base, black roads): roads sit ON TOP of the base.
+  // Invert (black base, white roads): roads punch THROUGH the base, piercing
+  // the entire black slab so the white road network reads from every angle.
   const ROAD_BASE = invertColors ? 0 : BASE;
   const ROAD_SLAB = invertColors ? (BASE + ROAD_HEIGHT) : ROAD_HEIGHT;
 
@@ -318,10 +367,12 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings) {
   // Try full width, then progressively smaller
   const scales = [1.0, 0.6, 0.4, 0.25];
+  // Strict nozzle minimum — half-width must give a road ≥ 0.4mm wide
+  const MIN_HALF_W = 0.2;
 
   for (const scale of scales) {
     const w = halfW * scale;
-    if (w < 0.15) break; // Below printable threshold
+    if (w < MIN_HALF_W) break; // Below printable nozzle width — give up
 
     const poly = bufferLinestring(points, w);
     if (!poly) continue;
