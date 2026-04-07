@@ -348,14 +348,40 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   // ── 9. Trees (premium detail) — small bumps in the road colour ────────────
-  if (premiumDetail && features.trees && features.trees.length > 0) {
+  // Trees are only placed inside park polygons so they don't litter bare base areas.
+  if (premiumDetail && features.trees && features.trees.length > 0 && features.parks.length > 0) {
     onProgress?.('Planting trees…', 90);
     const TREE_R = 0.55;
     const TREE_H = 1.4;
     // Keep trees off the chamfered edge (chamfer = 0.8mm) plus a margin for the tree footprint
     const treeHex = getShapeVertices(MODEL_RADIUS_MM - 0.8 - TREE_R - 0.6, shape);
+
+    // Pre-clip park polygons to hex and compute bboxes for fast lookup
+    const parkPolys = [];
+    for (const feat of features.parks) {
+      const poly = clipToHex(feat.polygon, hexInner);
+      if (!poly || poly.length < 3) continue;
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const p of poly) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+      parkPolys.push({ poly, minX, maxX, minY, maxY });
+    }
+
     for (const tree of features.trees) {
       if (!pointInSimplePolygon({ x: tree.x, y: tree.y }, treeHex)) continue;
+
+      // Must lie inside a park polygon
+      let inPark = false;
+      for (const pk of parkPolys) {
+        if (tree.x < pk.minX || tree.x > pk.maxX || tree.y < pk.minY || tree.y > pk.maxY) continue;
+        if (pointInSimplePolygon({ x: tree.x, y: tree.y }, pk.poly)) { inPark = true; break; }
+      }
+      if (!inPark) continue;
+
       // Skip trees that fall inside any building footprint via the spatial grid
       const [cgx, cgy] = gridCell(tree.x, tree.y);
       let blocked = false;
