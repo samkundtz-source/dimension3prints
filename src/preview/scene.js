@@ -43,7 +43,7 @@ export class SceneManager {
     });
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x08080e);
+    this.renderer.setClearColor(0x87CEEB);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping       = THREE.ACESFilmicToneMapping;
@@ -66,17 +66,15 @@ export class SceneManager {
     this.controls.maxPolarAngle  = Math.PI / 2 + 0.05;
     this.controls.target.set(0, BASE_THICKNESS_REF / 2, 0);
 
-    // Lighting — studio setup tuned for white model with subtle sky gradient
-    // Hemisphere light gives buildings a soft blue→warm-ground gradient that
-    // reads as volumetric depth rather than flat white
-    const hemi = new THREE.HemisphereLight(0xbfd4ff, 0xfff2d8, 0.55);
+    // Lighting — outdoor daylight setup for gray buildings against blue sky
+    const hemi = new THREE.HemisphereLight(0x8ecaff, 0xd4c5a0, 0.7);
     this.scene.add(hemi);
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.22);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
     this.scene.add(ambient);
 
-    // Main key light — warm white from top-right
-    const key = new THREE.DirectionalLight(0xfff4e0, 1.45);
+    // Main sun light — bright white from top-right
+    const key = new THREE.DirectionalLight(0xffffff, 1.6);
     key.position.set(80, 250, 120);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -90,19 +88,19 @@ export class SceneManager {
     this.scene.add(key);
 
     // Cool fill from opposite side
-    const fill = new THREE.DirectionalLight(0xc8dcff, 0.45);
+    const fill = new THREE.DirectionalLight(0xc8dcff, 0.5);
     fill.position.set(-60, 60, -100);
     this.scene.add(fill);
 
     // Rim light from behind for edge definition
-    const rim = new THREE.DirectionalLight(0xffffff, 0.35);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.3);
     rim.position.set(0, 40, -150);
     this.scene.add(rim);
 
-    // Subtle ground plane
+    // Ground plane — light neutral to match sky
     const groundGeo = new THREE.PlaneGeometry(MODEL_RADIUS_MM * 8, MODEL_RADIUS_MM * 8);
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x0a0a12,
+      color: 0x7a9aad,
       roughness: 0.95,
       metalness: 0,
     });
@@ -125,13 +123,13 @@ export class SceneManager {
 
   _buildMaterials() {
     const cfg = {
-      base:     { roughness: 0.6, metalness: 0.0 },
-      terrain:  { roughness: 0.6, metalness: 0.0 },
-      building: { roughness: 0.4, metalness: 0.05 },
-      water:    { roughness: 0.2, metalness: 0.1 },
+      base:     { roughness: 0.55, metalness: 0.0 },
+      terrain:  { roughness: 0.55, metalness: 0.0 },
+      building: { roughness: 0.35, metalness: 0.08 },
+      water:    { roughness: 0.15, metalness: 0.15 },
       park:     { roughness: 0.7, metalness: 0.0 },
-      road:     { roughness: 0.8, metalness: 0.0 },
-      path:     { roughness: 0.8, metalness: 0.0 },
+      road:     { roughness: 0.75, metalness: 0.0 },
+      path:     { roughness: 0.75, metalness: 0.0 },
     };
 
     // Polygon offset per type — higher = pushed further back.

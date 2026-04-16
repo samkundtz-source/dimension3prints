@@ -32,11 +32,12 @@ import { getHexVertices, getShapeVertices } from '../geo/geoMath.js';
 import { clipToHex, bufferLinestring } from '../geo/clipper.js';
 
 // ─── Colours ──────────────────────────────────────────────────────────────────
-// Default: white buildings, black roads. Inverted: black buildings, white roads.
+// Preview uses a neutral gray palette so buildings read with depth and shadow.
+// The exported STL/3MF is uncoloured — slicer assigns filament colours.
 export const FEATURE_COLORS = {
-  base:     0xF0F0F0,
-  terrain:  0xF0F0F0,
-  building: 0xF0F0F0,
+  base:     0xC8C8C8,
+  terrain:  0xC8C8C8,
+  building: 0xB0B0B0,
   water:    0x1A1A1A,
   park:     0x1A1A1A,
   road:     0x1A1A1A,
