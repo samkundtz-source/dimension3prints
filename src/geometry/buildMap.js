@@ -218,6 +218,29 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   /**
+   * True if the polygon's centroid lies inside any building footprint.
+   * Used to skip parks/water that OSM places inside building interiors
+   * (e.g. the arena polygon inside the Colosseum's outer wall).
+   */
+  function centroidInsideAnyBuilding(poly) {
+    let cx = 0, cy = 0;
+    for (const p of poly) { cx += p.x; cy += p.y; }
+    cx /= poly.length;
+    cy /= poly.length;
+    const [gcx, gcy] = gridCell(cx, cy);
+    if (gcx < 0 || gcy < 0 || gcx >= GRID_SIZE || gcy >= GRID_SIZE) return false;
+    const bucket = buildingGrid[gridKey(gcx, gcy)];
+    if (!bucket) return false;
+    for (const bi of bucket) {
+      const bf = buildingFootprints[bi];
+      if (cx < bf.bbox.minX || cx > bf.bbox.maxX ||
+          cy < bf.bbox.minY || cy > bf.bbox.maxY) continue;
+      if (pointInSimplePolygon({ x: cx, y: cy }, bf.polygon)) return true;
+    }
+    return false;
+  }
+
+  /**
    * Find building footprints overlapping a polygon. Returns hole rings
    * for earcut subtraction (offset outward by CLEARANCE).
    */
@@ -331,6 +354,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const poly = clipToHex(feat.polygon, hexInner);
     if (!poly || poly.length < 3) continue;
     if (Math.abs(signedArea2D(poly)) < MIN_AREA_MM2) continue;
+    // Skip water polygons that sit inside a building ring (stops OSM
+    // "pond inside courtyard" and similar features punching holes in the base)
+    if (centroidInsideAnyBuilding(poly)) continue;
     const bldgHoles = findOverlappingBuildings(poly);
     const allHoles  = [...(feat.holes || []), ...bldgHoles];
     // Extrude from bottom (0) to WATER_TOP — sits below base surface
@@ -348,6 +374,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const poly = clipToHex(feat.polygon, hexInner);
     if (!poly || poly.length < 3) continue;
     if (Math.abs(signedArea2D(poly)) < MIN_AREA_MM2) continue;
+    // Skip park polygons that sit inside a building ring
+    // (prevents landuse=grass inside historic structures from showing
+    // as a black slab in the middle of a ring-shaped building).
+    if (centroidInsideAnyBuilding(poly)) continue;
     const bldgHoles = findOverlappingBuildings(poly);
     const allHoles  = [...(feat.holes || []), ...bldgHoles];
     collectExtrudedPolygon(blackAcc, poly, allHoles, ROAD_BASE, ROAD_SLAB);

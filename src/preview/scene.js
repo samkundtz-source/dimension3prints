@@ -4,7 +4,8 @@
  */
 
 import * as THREE from 'three';
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { OrbitControls }    from 'three/examples/jsm/controls/OrbitControls.js';
+import { mergeVertices }    from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FEATURE_COLORS } from '../geometry/buildMap.js';
 import { MODEL_RADIUS_MM } from '../utils/helpers.js';
 
@@ -66,12 +67,17 @@ export class SceneManager {
     this.controls.maxPolarAngle  = Math.PI / 2 + 0.05;
     this.controls.target.set(0, BASE_THICKNESS_REF / 2, 0);
 
-    // Lighting — clean studio setup for white model
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+    // Lighting — studio setup tuned for white model with subtle sky gradient
+    // Hemisphere light gives buildings a soft blue→warm-ground gradient that
+    // reads as volumetric depth rather than flat white
+    const hemi = new THREE.HemisphereLight(0xbfd4ff, 0xfff2d8, 0.55);
+    this.scene.add(hemi);
+
+    const ambient = new THREE.AmbientLight(0xffffff, 0.22);
     this.scene.add(ambient);
 
     // Main key light — warm white from top-right
-    const key = new THREE.DirectionalLight(0xfff8f0, 1.4);
+    const key = new THREE.DirectionalLight(0xfff4e0, 1.45);
     key.position.set(80, 250, 120);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -79,17 +85,18 @@ export class SceneManager {
     key.shadow.camera.far  = 1000;
     key.shadow.camera.left = key.shadow.camera.bottom = -MODEL_RADIUS_MM * 2;
     key.shadow.camera.right = key.shadow.camera.top   =  MODEL_RADIUS_MM * 2;
-    key.shadow.bias = -0.001;
-    key.shadow.normalBias = 0.02;
+    key.shadow.bias = -0.0008;
+    key.shadow.normalBias = 0.025;
+    key.shadow.radius = 6; // softer shadow edges
     this.scene.add(key);
 
     // Cool fill from opposite side
-    const fill = new THREE.DirectionalLight(0xd8e8ff, 0.5);
+    const fill = new THREE.DirectionalLight(0xc8dcff, 0.45);
     fill.position.set(-60, 60, -100);
     this.scene.add(fill);
 
     // Rim light from behind for edge definition
-    const rim = new THREE.DirectionalLight(0xffffff, 0.3);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.35);
     rim.position.set(0, 40, -150);
     this.scene.add(rim);
 
@@ -252,6 +259,19 @@ export class SceneManager {
       obj.material      = matLib[type] ?? matLib.base;
       obj.castShadow    = (type === 'building');
       obj.receiveShadow = (type === 'terrain' || type === 'base');
+
+      // Smooth-shade the building mesh so chamfered top edges read as
+      // a rounded bevel rather than a faceted cut. Merge coincident
+      // vertices first so shared edges actually share normals.
+      if (type === 'building' && !obj.userData._smoothed) {
+        try {
+          const merged = mergeVertices(obj.geometry, 0.01);
+          merged.computeVertexNormals();
+          obj.geometry.dispose();
+          obj.geometry = merged;
+          obj.userData._smoothed = true;
+        } catch { /* non-fatal — leave flat-shaded */ }
+      }
     });
   }
 
