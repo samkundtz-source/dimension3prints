@@ -3,8 +3,8 @@
 /** Hex circumradius in model millimetres — gives 130mm flat-to-flat */
 export const MODEL_RADIUS_MM = 75.06;
 
-/** Solid base plate thickness in mm — thicker for sturdier prints */
-export const BASE_THICKNESS_MM = 2.0;
+/** Solid base plate thickness in mm */
+export const BASE_THICKNESS_MM = 1.5;
 
 /** Elevation sample grid dimension (N×N points) */
 export const TERRAIN_GRID_SIZE = 20; // 400 pts → 4 API calls to OpenTopoData

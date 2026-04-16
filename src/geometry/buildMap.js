@@ -406,7 +406,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // In multi-material slicing, the slicer subtracts this from the white base,
   // producing a real physical divot filled with black filament.
   const MIN_AREA_MM2  = 3.0;
-  const WATER_DEPTH   = 1.0; // mm below base surface — deeper for pronounced water
+  const WATER_DEPTH   = 0.4; // mm below base surface — subtle depression
   const WATER_TOP     = Math.max(BASE - WATER_DEPTH, 0.2); // don't go below 0.2mm
   const WATER_SLAB_H  = WATER_TOP; // extrude from Y=0 to WATER_TOP
 

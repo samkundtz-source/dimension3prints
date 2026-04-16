@@ -8,7 +8,7 @@ import { OrbitControls }    from 'three/examples/jsm/controls/OrbitControls.js';
 import { FEATURE_COLORS } from '../geometry/buildMap.js';
 import { MODEL_RADIUS_MM } from '../utils/helpers.js';
 
-const BASE_THICKNESS_REF = 3;
+const BASE_THICKNESS_REF = 1.5;
 
 export class SceneManager {
   /**
