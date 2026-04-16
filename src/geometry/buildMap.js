@@ -116,7 +116,26 @@ class GeomAccumulator {
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
-export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', invertColors = false, detailedBuildings = false, premiumDetail = false) {
+// Bilinear sample of the elevation grid at an arbitrary (x, y) in mm.
+// Returns mm of terrain elevation above the base plate. 0 if outside grid.
+function sampleTerrainElev(x, y, elevGrid, N, vScale) {
+  if (!elevGrid || N < 2) return 0;
+  const fi = ((x / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
+  const fj = ((y / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
+  if (fi < 0 || fi > N - 1 || fj < 0 || fj > N - 1) return 0;
+  const i = Math.max(0, Math.min(N - 2, Math.floor(fi)));
+  const j = Math.max(0, Math.min(N - 2, Math.floor(fj)));
+  const u = fi - i;
+  const v = fj - j;
+  const e00 = elevGrid[j * N + i];
+  const e10 = elevGrid[j * N + (i + 1)];
+  const e01 = elevGrid[(j + 1) * N + i];
+  const e11 = elevGrid[(j + 1) * N + (i + 1)];
+  const e = e00 * (1 - u) * (1 - v) + e10 * u * (1 - v) + e01 * (1 - u) * v + e11 * u * v;
+  return clamp(e * vScale, 0, 40);
+}
+
+export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false) {
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -276,11 +295,23 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
     const heightM  = parseBuildingHeight(bf.tags, bf.polygon);
     const heightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
+
+    // Terrain-relief mode: lift the building so it sits on the real ground height
+    let baseY = BASE;
+    if (terrainRelief && elevGrid && N > 0) {
+      // Sample elevation at polygon centroid
+      let cx = 0, cy = 0;
+      for (const p of bf.polygon) { cx += p.x; cy += p.y; }
+      cx /= bf.polygon.length;
+      cy /= bf.polygon.length;
+      baseY = BASE + sampleTerrainElev(cx, cy, elevGrid, N, vScale);
+    }
+
     if (detailedBuildings) {
-      collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, BASE, heightMM, heightM);
+      collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
     } else {
-      // Simple block extrusion
-      collectExtrudedPolygon(buildingAcc, bf.polygon, [], BASE, heightMM);
+      // Smooth (beveled-top) block extrusion
+      collectBeveledBuilding(buildingAcc, bf.polygon, baseY, heightMM);
     }
     buildingCount++;
   }
@@ -308,11 +339,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   // ── 6. Parks — with building gaps ───────────────────────────────────────────
-  // Default (white base, black roads): roads sit ON TOP of the base.
-  // Invert (black base, white roads): roads punch THROUGH the base, piercing
-  // the entire black slab so the white road network reads from every angle.
-  const ROAD_BASE = invertColors ? 0 : BASE;
-  const ROAD_SLAB = invertColors ? (BASE + ROAD_HEIGHT) : ROAD_HEIGHT;
+  // Roads and parks sit ON TOP of the base plate as a thin black layer.
+  const ROAD_BASE = BASE;
+  const ROAD_SLAB = ROAD_HEIGHT;
 
   onProgress?.('Building parks…', 80);
   for (const feat of features.parks) {
@@ -665,6 +694,104 @@ function collectTerrainMesh(acc, elevGrid, N, hexVerts, vScale) {
       const a = j * N + i, b = a + 1, c = a + N, d = c + 1;
       idx.push(a, b, c,  b, d, c);
     }
+  }
+
+  acc.add(pos, idx);
+}
+
+// Beveled-top building extrusion — produces a small chamfer at the top edge
+// for a softer, more finished look instead of a hard cube corner. Holes not
+// supported (buildings are always solid). Falls back to a plain block if the
+// inset produces a degenerate ring (tiny or self-intersecting footprint).
+function collectBeveledBuilding(acc, polygon, baseY, heightMM) {
+  const BEVEL_MAX = 0.35; // mm — subtle chamfer, prints cleanly on a 0.4mm nozzle
+  const ring = deduplicateRing(polygon);
+  if (ring.length < 3) {
+    return collectExtrudedPolygon(acc, polygon, [], baseY, heightMM);
+  }
+  const outerCCW = ensureCCW(ring);
+  const n = outerCCW.length;
+
+  // Compute min distance from centroid to any edge → cap bevel so it can't collapse the shape
+  let cx = 0, cy = 0;
+  for (const p of outerCCW) { cx += p.x; cy += p.y; }
+  cx /= n; cy /= n;
+  let minR = Infinity;
+  for (const p of outerCCW) {
+    const d = Math.hypot(p.x - cx, p.y - cy);
+    if (d < minR) minR = d;
+  }
+  const bevel = Math.min(BEVEL_MAX, heightMM * 0.18, minR * 0.2);
+
+  if (bevel < 0.15) {
+    // Shape is too small to bevel cleanly — fall back to hard-edged block
+    return collectExtrudedPolygon(acc, polygon, [], baseY, heightMM);
+  }
+
+  // Build inset top ring by moving each vertex toward the centroid by `bevel`.
+  // Works well for convex-ish building footprints (the common case).
+  const insetRing = outerCCW.map((p) => {
+    const dx = cx - p.x, dy = cy - p.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const t = Math.min(bevel / len, 0.45);
+    return { x: p.x + dx * t, y: p.y + dy * t };
+  });
+
+  // Triangulate the inset top cap
+  const flatTop = [];
+  for (const p of insetRing) { flatTop.push(p.x, p.y); }
+  const topTris = earcut(flatTop, [], 2);
+  if (topTris.length === 0 || Math.abs(earcut.deviation(flatTop, [], 2, topTris)) > 0.5) {
+    return collectExtrudedPolygon(acc, polygon, [], baseY, heightMM);
+  }
+
+  // Triangulate the bottom cap (full outer)
+  const flatBot = [];
+  for (const p of outerCCW) { flatBot.push(p.x, p.y); }
+  const botTris = earcut(flatBot, [], 2);
+  if (botTris.length === 0) {
+    return collectExtrudedPolygon(acc, polygon, [], baseY, heightMM);
+  }
+
+  const topY      = baseY + heightMM;
+  const shoulderY = topY - bevel;
+  const pos = [];
+  const idx = [];
+
+  // Vertex layout:
+  //   [0..n-1]       bottom outer ring (baseY)
+  //   [n..2n-1]      shoulder ring (shoulderY, full XY)
+  //   [2n..3n-1]     inset top ring (topY, inset XY)
+  const offBot      = 0;
+  const offShoulder = n;
+  const offTop      = 2 * n;
+
+  for (const p of outerCCW) pos.push(p.x, baseY,      -p.y);
+  for (const p of outerCCW) pos.push(p.x, shoulderY,  -p.y);
+  for (const p of insetRing) pos.push(p.x, topY,      -p.y);
+
+  // Bottom cap (reversed so it faces down)
+  for (let t = 0; t < botTris.length; t += 3) {
+    idx.push(offBot + botTris[t + 2], offBot + botTris[t + 1], offBot + botTris[t]);
+  }
+
+  // Top cap
+  for (const t of topTris) idx.push(offTop + t);
+
+  // Vertical walls (base → shoulder)
+  for (let i = 0; i < n; i++) {
+    const ni = (i + 1) % n;
+    const bl = offBot + i,      br = offBot + ni;
+    const tl = offShoulder + i, tr = offShoulder + ni;
+    idx.push(bl, br, tr,  bl, tr, tl);
+  }
+
+  // Bevel slope (shoulder → top inset)
+  for (let i = 0; i < n; i++) {
+    const ni = (i + 1) % n;
+    const bl = offShoulder + i, br = offShoulder + ni;
+    const tl = offTop + i,      tr = offTop + ni;
+    idx.push(bl, br, tr,  bl, tr, tl);
   }
 
   acc.add(pos, idx);

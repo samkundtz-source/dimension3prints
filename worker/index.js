@@ -67,13 +67,13 @@ async function handleCreateCheckout(request, env) {
     return jsonResponse({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { lat, lng, radius, verticalScale, elevation, invertColors, colorMode, region } = body;
+  const { lat, lng, radius, verticalScale, elevation, terrainRelief, region } = body;
   if (lat == null || lng == null || radius == null) {
     return jsonResponse({ error: 'Missing location data' }, 400);
   }
 
-  const unitAmount = invertColors ? 4000 : 3500;
-  const modelDesc  = `3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x | ${invertColors ? 'Inverted' : 'Standard'} colors`;
+  const unitAmount = 3500; // flat $35
+  const modelDesc  = `3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x${terrainRelief ? ' | Terrain relief' : ''}`;
   const shipping   = getShippingForRegion(region || 'US');
 
   const shippingOptions = shipping.rates.map((r) => ({
@@ -115,9 +115,8 @@ async function handleCreateCheckout(request, env) {
       radius:        String(radius),
       verticalScale: String(verticalScale),
       elevation:     String(elevation),
-      invertColors:  String(invertColors),
-      colorMode:     colorMode || 'standard',
-      region:        region    || 'US',
+      terrainRelief: String(terrainRelief || false),
+      region:        region || 'US',
     },
     success_url: `${origin}/success.html?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url:  `${origin}/app.html`,
@@ -216,8 +215,7 @@ async function handleAdminOrders(request, env) {
         radius:        parseFloat(s.metadata?.radius) || 1,
         verticalScale: parseFloat(s.metadata?.verticalScale) || 3,
         elevation:     s.metadata?.elevation === 'true',
-        invertColors:  s.metadata?.invertColors === 'true',
-        colorMode:     s.metadata?.colorMode || 'standard',
+        terrainRelief: s.metadata?.terrainRelief === 'true',
       },
     }));
 

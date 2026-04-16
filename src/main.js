@@ -23,7 +23,7 @@ const PIN_ICON = L.divIcon({
 
 import { createProjection, getHexVerticesGeo, getHexVertices, getShapeVertices, getShapeVerticesGeo } from './geo/geoMath.js';
 import { geocode, fetchOSMData, parseOSMData, fetchElevation } from './geo/osmData.js';
-import { buildMapModel, setInvertedColors } from './geometry/buildMap.js';
+import { buildMapModel } from './geometry/buildMap.js';
 import { SceneManager }  from './preview/scene.js';
 import { exportSTL, export3MF } from './export/exporters.js';
 import { MODEL_RADIUS_MM, TERRAIN_GRID_SIZE } from './utils/helpers.js';
@@ -246,13 +246,12 @@ async function generate() {
 
     // 5. Build 3D model
     setStatus('Building 3D model...', 60);
-    const invertColors      = el('invert-colors').checked;
     const bathymetry        = el('bathymetry')?.checked !== false;
     const detailedBuildings = el('detailed-buildings')?.checked || false;
     const premiumDetail     = el('premium-detail')?.checked || false;
-    setInvertedColors(invertColors);
+    const terrainRelief     = el('terrain-relief')?.checked || false;
     const featuresToBuild = { ...features, water: bathymetry ? features.water : [] };
-    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, invertColors, detailedBuildings, premiumDetail);
+    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, premiumDetail, terrainRelief);
     const group = result.group;
     const modelStats = result.stats;
 
@@ -273,7 +272,7 @@ async function generate() {
     scene.setModel(group);
 
     // Update legend
-    updateLegend(invertColors);
+    updateLegend();
 
     el('order-print').disabled = false;
     el('export-stl').disabled = false;
@@ -294,22 +293,15 @@ async function generate() {
 
 // ─── Legend update ────────────────────────────────────────────────────────
 
-function updateLegend(inverted) {
+function updateLegend() {
   const dotBldg  = el('legend-dot-bldg');
   const dotRoad  = el('legend-dot-road');
   const lblBldg  = el('legend-label-bldg');
   const lblRoad  = el('legend-label-road');
-  if (inverted) {
-    dotBldg.style.background = '#1A1A1A';
-    dotRoad.style.background = '#F0F0F0';
-    lblBldg.textContent = 'Base / Buildings (dark)';
-    lblRoad.textContent = 'Roads / Parks / Water (light)';
-  } else {
-    dotBldg.style.background = '#F0F0F0';
-    dotRoad.style.background = '#1A1A1A';
-    lblBldg.textContent = 'Buildings / Base';
-    lblRoad.textContent = 'Roads / Parks / Water';
-  }
+  dotBldg.style.background = '#F0F0F0';
+  dotRoad.style.background = '#1A1A1A';
+  lblBldg.textContent = 'Buildings / Base';
+  lblRoad.textContent = 'Roads / Parks / Water';
 }
 
 // ─── Model stats ─────────────────────────────────────────────────────────────
@@ -399,8 +391,7 @@ async function doOrderPrint() {
         radius: parseFloat(el('radius-slider').value),
         verticalScale: getVertExag(),
         elevation: el('use-elevation').checked,
-        invertColors: el('invert-colors').checked,
-        colorMode: el('invert-colors').checked ? 'inverted' : 'standard',
+        terrainRelief: el('terrain-relief')?.checked || false,
         region,
       }),
     });
@@ -475,15 +466,8 @@ function initControls() {
     el('vscale-value').textContent = `${vscaleSlider.value}x`;
   });
 
-  // Invert colors → update price label ($35 → $40)
-  const invertEl   = el('invert-colors');
   const priceLabel = el('order-price-label');
-  function updatePriceLabel() {
-    if (!priceLabel) return;
-    priceLabel.textContent = invertEl.checked ? 'Order Print — $40' : 'Order Print — $35';
-  }
-  invertEl?.addEventListener('change', updatePriceLabel);
-  updatePriceLabel();
+  if (priceLabel) priceLabel.textContent = 'Order Print — $35';
 
   // Generate
   el('generate-btn').addEventListener('click', generate);
@@ -565,9 +549,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (params.has('elevation')) {
           el('use-elevation').checked = params.get('elevation') === 'true';
         }
-        // Set invert
-        if (params.has('invert')) {
-          el('invert-colors').checked = params.get('invert') === 'true';
+        // Set terrain relief
+        if (params.has('terrainRelief')) {
+          const tr = el('terrain-relief');
+          if (tr) tr.checked = params.get('terrainRelief') === 'true';
         }
         // Select location and enable generate button
         selectLocation(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`);

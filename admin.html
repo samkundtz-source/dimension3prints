@@ -278,7 +278,7 @@
                   <div class="detail-row"><span class="detail-label">Radius: </span><span class="detail-val">${m.radius} km</span></div>
                   <div class="detail-row"><span class="detail-label">Scale: </span><span class="detail-val">${m.verticalScale}x</span></div>
                   <div class="detail-row"><span class="detail-label">Elevation: </span><span class="detail-val">${m.elevation ? 'Yes' : 'No'}</span></div>
-                  <div class="detail-row"><span class="detail-label">Colors: </span><span class="detail-val">${m.invertColors ? 'Inverted' : 'Standard'}</span></div>
+                  <div class="detail-row"><span class="detail-label">Terrain relief: </span><span class="detail-val">${m.terrainRelief ? 'Yes' : 'No'}</span></div>
                 </div>
               </div>
               <div class="order-actions">
@@ -306,7 +306,7 @@
       const params = new URLSearchParams({
         lat: m.lat, lng: m.lng, radius: m.radius,
         scale: m.verticalScale, elevation: m.elevation,
-        invert: m.invertColors, admin: '1',
+        terrainRelief: m.terrainRelief, admin: '1',
       });
       window.open('/app.html?' + params.toString(), '_blank');
     }
