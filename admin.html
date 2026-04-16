@@ -75,7 +75,8 @@
     }
     .order-header:hover { background: var(--bg-elevated); }
     .order-left { display: flex; align-items: center; gap: 16px; }
-    .order-num { font-size: 14px; font-weight: 600; font-family: var(--font-mono); }
+    .order-id { font-size: 18px; font-weight: 700; font-family: var(--font-mono); color: #fff; letter-spacing: 0.04em; }
+    .order-num { font-size: 11px; font-weight: 500; font-family: var(--font-mono); color: var(--text-muted); }
     .order-date { font-size: 12px; color: var(--text-muted); }
     .order-amount { font-size: 16px; font-weight: 700; font-family: var(--font-mono); }
     .order-right { display: flex; align-items: center; gap: 12px; }
@@ -242,6 +243,7 @@
         const date = new Date(o.created * 1000);
         const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
         const amount = '$' + (o.amount / 100).toFixed(2);
+        const orderId = o.orderId || ('C3D-' + o.id.slice(-4).toUpperCase());
         const shortId = o.id.slice(-8).toUpperCase();
         const addr = o.shipping;
         const addrStr = addr ? `${addr.line1}${addr.line2 ? ', ' + addr.line2 : ''}, ${addr.city}, ${addr.state} ${addr.postal}, ${addr.country}` : 'No address';
@@ -251,6 +253,7 @@
           <div class="order-card">
             <div class="order-header" onclick="toggleOrder(${i})">
               <div class="order-left">
+                <span class="order-id">${orderId}</span>
                 <span class="order-num">#${shortId}</span>
                 <span class="order-date">${dateStr}</span>
                 <span style="font-size:12px;color:var(--text-muted)">${o.name || o.email}</span>
@@ -302,11 +305,14 @@
 
     // Open the main site with order params pre-filled so you can regenerate & export
     function openInGenerator(i) {
-      const m = orders[i].model;
+      const o = orders[i];
+      const m = o.model;
+      const orderId = o.orderId || ('C3D-' + o.id.slice(-4).toUpperCase());
       const params = new URLSearchParams({
         lat: m.lat, lng: m.lng, radius: m.radius,
         scale: m.verticalScale, elevation: m.elevation,
         terrainRelief: m.terrainRelief, admin: '1',
+        orderId: orderId,
       });
       window.open('/app.html?' + params.toString(), '_blank');
     }

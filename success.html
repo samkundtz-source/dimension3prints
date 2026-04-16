@@ -96,6 +96,10 @@
       You'll receive a shipping confirmation email once it's on its way.
     </p>
     <div class="info-box">
+      <div class="info-row" id="order-id-row" style="display:none">
+        <span class="info-label">Order Number</span>
+        <span class="info-value" id="order-id-val" style="font-size:18px;letter-spacing:0.06em;font-family:'SF Mono','Consolas',monospace">—</span>
+      </div>
       <div class="info-row">
         <span class="info-label">Status</span>
         <span class="info-value">Processing</span>
@@ -116,5 +120,24 @@
       Create Another Model
     </a>
   </div>
+  <script>
+    (async () => {
+      const params = new URLSearchParams(window.location.search);
+      const sessionId = params.get('session_id');
+      if (!sessionId) return;
+      try {
+        const resp = await fetch('/api/order-info', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sessionId }),
+        });
+        const data = await resp.json();
+        if (data.orderId) {
+          document.getElementById('order-id-val').textContent = data.orderId;
+          document.getElementById('order-id-row').style.display = '';
+        }
+      } catch {}
+    })();
+  </script>
 </body>
 </html>

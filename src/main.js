@@ -37,6 +37,7 @@ let scene           = null;
 
 let selectedCenter  = null;   // { lat, lng }
 let   currentShape  = 'hexagon';
+let   activeOrderId = '';      // order ID for engraving on base bottom
 let generating      = false;
 let generateId      = 0;      // increments each run — stale runs bail out
 let lastGenerateTime = 0;
@@ -256,7 +257,7 @@ async function generate() {
     const premiumDetail     = el('premium-detail')?.checked || false;
     const terrainRelief     = el('terrain-relief')?.checked || false;
     const featuresToBuild = { ...features, water: bathymetry ? features.water : [] };
-    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, premiumDetail, terrainRelief);
+    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, premiumDetail, terrainRelief, activeOrderId);
     const group = result.group;
     const modelStats = result.stats;
 
@@ -584,11 +585,16 @@ document.addEventListener('DOMContentLoaded', () => {
         selectLocation(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
         el('generate-btn').disabled = false;
 
+        // Read order ID if passed from admin
+        if (params.has('orderId')) {
+          activeOrderId = params.get('orderId');
+        }
+
         // If admin mode, auto-show export buttons
         if (params.get('admin') === '1') {
           el('export-stl').style.display = '';
           el('export-3mf').style.display = '';
-          setStatus('Admin mode — generate model then export', 0);
+          setStatus(`Admin mode — Order ${activeOrderId || '?'} — generate then export`, 0);
         }
       }, 500);
     }

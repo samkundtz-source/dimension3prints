@@ -44,6 +44,15 @@ function encodeStripeForm(obj, prefix = '', out = []) {
   return out;
 }
 
+/** Generate a short order ID like "C3D-A7K2" */
+function generateOrderId() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // no 0/O/1/I to avoid confusion
+  let id = '';
+  const arr = crypto.getRandomValues(new Uint8Array(4));
+  for (let i = 0; i < 4; i++) id += chars[arr[i] % chars.length];
+  return `C3D-${id}`;
+}
+
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -72,8 +81,9 @@ async function handleCreateCheckout(request, env) {
     return jsonResponse({ error: 'Missing location data' }, 400);
   }
 
+  const orderId    = generateOrderId();
   const unitAmount = 3500; // flat $35
-  const modelDesc  = `3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x${terrainRelief ? ' | Terrain relief' : ''}`;
+  const modelDesc  = `${orderId} — 3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x${terrainRelief ? ' | Terrain relief' : ''}`;
   const shipping   = getShippingForRegion(region || 'US');
 
   const shippingOptions = shipping.rates.map((r) => ({
@@ -110,6 +120,7 @@ async function handleCreateCheckout(request, env) {
     shipping_address_collection: { allowed_countries: shipping.countries },
     shipping_options: shippingOptions,
     metadata: {
+      orderId,
       lat:           String(lat),
       lng:           String(lng),
       radius:        String(radius),
@@ -144,6 +155,28 @@ async function handleCreateCheckout(request, env) {
   }
 
   return jsonResponse({ url: session.url });
+}
+
+// ─── Public order info (just orderId — no sensitive data) ───────────────────
+
+async function handleOrderInfo(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+  if (!env.STRIPE_SECRET_KEY)    return jsonResponse({ error: 'Not configured' }, 500);
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+
+  if (!body.sessionId) return jsonResponse({ error: 'Missing sessionId' }, 400);
+
+  const resp = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(body.sessionId)}`, {
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+  });
+  if (!resp.ok) return jsonResponse({ error: 'Session not found' }, 404);
+  const session = await resp.json();
+
+  return jsonResponse({
+    orderId: session.metadata?.orderId || null,
+  });
 }
 
 // ─── Admin endpoints ────────────────────────────────────────────────────────
@@ -192,6 +225,7 @@ async function handleAdminOrders(request, env) {
     .filter((s) => s.payment_status === 'paid')
     .map((s) => ({
       id:             s.id,
+      orderId:        s.metadata?.orderId || s.id.slice(-6).toUpperCase(),
       paymentIntent:  s.payment_intent,
       created:        s.created,
       amount:         s.amount_total,
@@ -272,6 +306,7 @@ export default {
 
     switch (url.pathname) {
       case '/api/create-checkout':    return handleCreateCheckout(request, env);
+      case '/api/order-info':         return handleOrderInfo(request, env);
       case '/api/admin-verify':       return handleAdminVerify(request, env);
       case '/api/admin-orders':       return handleAdminOrders(request, env);
       case '/api/admin-update-order': return handleAdminUpdateOrder(request, env);
