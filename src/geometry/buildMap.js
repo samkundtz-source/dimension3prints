@@ -218,24 +218,48 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   /**
-   * True if the polygon's centroid lies inside any building footprint.
-   * Used to skip parks/water that OSM places inside building interiors
-   * (e.g. the arena polygon inside the Colosseum's outer wall).
+   * True if the polygon is fully enclosed inside any building's bounding box.
+   * This catches ring-shaped buildings (e.g. the Colosseum) where an inner
+   * park/water polygon sits in the hollow middle — the centroid is NOT inside
+   * the thin wall polygon, but the park's bbox IS inside the building's bbox.
+   * Also checks point-in-polygon as a secondary test for non-ring buildings.
    */
-  function centroidInsideAnyBuilding(poly) {
+  function enclosedByAnyBuilding(poly) {
+    // Compute the polygon's own bounding box
+    let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
+    for (const p of poly) {
+      if (p.x < pMinX) pMinX = p.x;
+      if (p.x > pMaxX) pMaxX = p.x;
+      if (p.y < pMinY) pMinY = p.y;
+      if (p.y > pMaxY) pMaxY = p.y;
+    }
+
+    // Check ALL building footprints — a ring building's bbox encloses the
+    // inner polygon even though the spatial grid might not match centroid cells.
+    for (const bf of buildingFootprints) {
+      // Test 1: Is this polygon's bbox fully inside the building's bbox?
+      if (bf.bbox.minX <= pMinX && bf.bbox.maxX >= pMaxX &&
+          bf.bbox.minY <= pMinY && bf.bbox.maxY >= pMaxY) {
+        return true;
+      }
+    }
+
+    // Test 2: Centroid inside any building polygon (for solid non-ring buildings)
     let cx = 0, cy = 0;
     for (const p of poly) { cx += p.x; cy += p.y; }
     cx /= poly.length;
     cy /= poly.length;
     const [gcx, gcy] = gridCell(cx, cy);
-    if (gcx < 0 || gcy < 0 || gcx >= GRID_SIZE || gcy >= GRID_SIZE) return false;
-    const bucket = buildingGrid[gridKey(gcx, gcy)];
-    if (!bucket) return false;
-    for (const bi of bucket) {
-      const bf = buildingFootprints[bi];
-      if (cx < bf.bbox.minX || cx > bf.bbox.maxX ||
-          cy < bf.bbox.minY || cy > bf.bbox.maxY) continue;
-      if (pointInSimplePolygon({ x: cx, y: cy }, bf.polygon)) return true;
+    if (gcx >= 0 && gcy >= 0 && gcx < GRID_SIZE && gcy < GRID_SIZE) {
+      const bucket = buildingGrid[gridKey(gcx, gcy)];
+      if (bucket) {
+        for (const bi of bucket) {
+          const bf = buildingFootprints[bi];
+          if (cx < bf.bbox.minX || cx > bf.bbox.maxX ||
+              cy < bf.bbox.minY || cy > bf.bbox.maxY) continue;
+          if (pointInSimplePolygon({ x: cx, y: cy }, bf.polygon)) return true;
+        }
+      }
     }
     return false;
   }
@@ -356,7 +380,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     if (Math.abs(signedArea2D(poly)) < MIN_AREA_MM2) continue;
     // Skip water polygons that sit inside a building ring (stops OSM
     // "pond inside courtyard" and similar features punching holes in the base)
-    if (centroidInsideAnyBuilding(poly)) continue;
+    if (enclosedByAnyBuilding(poly)) continue;
     const bldgHoles = findOverlappingBuildings(poly);
     const allHoles  = [...(feat.holes || []), ...bldgHoles];
     // Extrude from bottom (0) to WATER_TOP — sits below base surface
@@ -377,7 +401,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     // Skip park polygons that sit inside a building ring
     // (prevents landuse=grass inside historic structures from showing
     // as a black slab in the middle of a ring-shaped building).
-    if (centroidInsideAnyBuilding(poly)) continue;
+    if (enclosedByAnyBuilding(poly)) continue;
     const bldgHoles = findOverlappingBuildings(poly);
     const allHoles  = [...(feat.holes || []), ...bldgHoles];
     collectExtrudedPolygon(blackAcc, poly, allHoles, ROAD_BASE, ROAD_SLAB);
