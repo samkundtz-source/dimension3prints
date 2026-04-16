@@ -30,6 +30,7 @@ const OVERPASS_SERVERS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.openstreetmap.ru/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
 ];
 
 /**
@@ -80,11 +81,15 @@ export async function fetchOSMData(bbox, onProgress) {
       const host = server.replace('https://', '').split('/')[0];
       onProgress?.(`Querying ${host}…`, 12);
 
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30000); // 30s per server
       const resp = await fetch(server, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: `data=${encodeURIComponent(query)}`,
+        signal: controller.signal,
       });
+      clearTimeout(timeout);
 
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 

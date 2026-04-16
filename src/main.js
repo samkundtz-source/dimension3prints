@@ -38,6 +38,7 @@ let scene           = null;
 let selectedCenter  = null;   // { lat, lng }
 const currentShape  = 'hexagon';
 let generating      = false;
+let generateAbort   = null;   // AbortController for current generation
 let lastGenerateTime = 0;
 let searchDebounceTimer = null;
 
@@ -92,8 +93,11 @@ function selectLocation(lat, lng, label) {
   // Draw shape outline
   updateShapeOverlay();
 
-  // Enable generate
-  el('generate-btn').disabled = false;
+  // Always enable generate — even if a previous generation is still running.
+  // Clicking Generate while one is in-flight will abort the old and start fresh.
+  const genBtn = el('generate-btn');
+  genBtn.disabled = false;
+  genBtn.classList.remove('generating');
 
   setStatus(`Location: ${label}`, 5);
 }
@@ -178,7 +182,12 @@ async function doSearch() {
 // ─── Generation pipeline ──────────────────────────────────────────────────────
 
 async function generate() {
-  if (!selectedCenter || generating) return;
+  if (!selectedCenter) return;
+
+  // If already generating, abort the previous run
+  if (generating && generateAbort) {
+    generateAbort.abort();
+  }
 
   // Rate limit: minimum 3 seconds between generations
   const now = Date.now();
@@ -188,6 +197,8 @@ async function generate() {
   }
   lastGenerateTime = now;
   generating = true;
+  generateAbort = new AbortController();
+  const thisRun = generateAbort; // capture for stale check
 
   const genBtn = el('generate-btn');
   genBtn.disabled = true;
@@ -282,12 +293,18 @@ async function generate() {
     updateModelStats(modelStats);
     setStatus(`Done — ${modelStats.buildings.toLocaleString()} buildings · ${modelStats.roads.toLocaleString()} roads`, 100);
   } catch (err) {
+    // Don't show error if this run was intentionally aborted
+    if (thisRun.signal.aborted) return;
     console.error('Generation error:', err);
     setStatus('Error: ' + err.message, 0);
   } finally {
-    genBtn.disabled = false;
+    // Only reset state if this is still the active run
+    if (generateAbort === thisRun) {
+      generating = false;
+      generateAbort = null;
+    }
+    genBtn.disabled = !selectedCenter;
     genBtn.classList.remove('generating');
-    generating = false;
   }
 }
 
