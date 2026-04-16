@@ -1,0 +1,57 @@
+{
+  "osmWayIds": {
+    "way/263884958": "burjKhalifa",
+    "way/34633854": "empireStateBuilding",
+    "way/271825422": "oneWorldTradeCenter",
+    "way/58528042": "willisTower",
+    "way/29095498": "cnTower",
+    "way/57866973": "taipei101",
+    "way/29176088": "petronasTowers",
+    "way/144455043": "shanghaiTower",
+    "way/185031673": "lotteWorldTower",
+    "way/154414489": "tokyoSkytree"
+  },
+
+  "osmRelationIds": {},
+
+  "wikidataIds": {
+    "Q12495": "burjKhalifa",
+    "Q9188": "empireStateBuilding",
+    "Q18686": "oneWorldTradeCenter",
+    "Q131454": "willisTower",
+    "Q1064": "cnTower",
+    "Q128428": "taipei101",
+    "Q1332478": "petronasTowers",
+    "Q632397": "shanghaiTower",
+    "Q489301": "lotteWorldTower",
+    "Q494895": "tokyoSkytree"
+  },
+
+  "knownNames": {
+    "burj khalifa": "burjKhalifa",
+    "empire state building": "empireStateBuilding",
+    "one world trade center": "oneWorldTradeCenter",
+    "1 world trade center": "oneWorldTradeCenter",
+    "1 wtc": "oneWorldTradeCenter",
+    "freedom tower": "oneWorldTradeCenter",
+    "willis tower": "willisTower",
+    "sears tower": "willisTower",
+    "cn tower": "cnTower",
+    "taipei 101": "taipei101",
+    "taipei101": "taipei101",
+    "petronas towers": "petronasTowers",
+    "petronas twin towers": "petronasTowers",
+    "shanghai tower": "shanghaiTower",
+    "lotte world tower": "lotteWorldTower",
+    "tokyo skytree": "tokyoSkytree",
+    "skytree": "tokyoSkytree"
+  },
+
+  "landmarkTags": [
+    { "tourism": "attraction", "building": "*" },
+    { "landmark": "yes" },
+    { "historic": "monument" },
+    { "building": "tower", "tourism": "*" },
+    { "man_made": "tower", "tourism": "attraction" }
+  ]
+}
