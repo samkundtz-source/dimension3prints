@@ -38,7 +38,7 @@ let scene           = null;
 let selectedCenter  = null;   // { lat, lng }
 const currentShape  = 'hexagon';
 let generating      = false;
-let generateAbort   = null;   // AbortController for current generation
+let generateId      = 0;      // increments each run — stale runs bail out
 let lastGenerateTime = 0;
 let searchDebounceTimer = null;
 
@@ -184,11 +184,6 @@ async function doSearch() {
 async function generate() {
   if (!selectedCenter) return;
 
-  // If already generating, abort the previous run
-  if (generating && generateAbort) {
-    generateAbort.abort();
-  }
-
   // Rate limit: minimum 3 seconds between generations
   const now = Date.now();
   if (now - lastGenerateTime < 3000) {
@@ -197,8 +192,7 @@ async function generate() {
   }
   lastGenerateTime = now;
   generating = true;
-  generateAbort = new AbortController();
-  const thisRun = generateAbort; // capture for stale check
+  const thisRunId = ++generateId; // tag this run so stale ones can bail
 
   const genBtn = el('generate-btn');
   genBtn.disabled = true;
@@ -293,15 +287,15 @@ async function generate() {
     updateModelStats(modelStats);
     setStatus(`Done — ${modelStats.buildings.toLocaleString()} buildings · ${modelStats.roads.toLocaleString()} roads`, 100);
   } catch (err) {
-    // Don't show error if this run was intentionally aborted
-    if (thisRun.signal.aborted) return;
-    console.error('Generation error:', err);
-    setStatus('Error: ' + err.message, 0);
+    // Only show error if this is still the active run
+    if (thisRunId === generateId) {
+      console.error('Generation error:', err);
+      setStatus('Error: ' + err.message, 0);
+    }
   } finally {
-    // Only reset state if this is still the active run
-    if (generateAbort === thisRun) {
+    // Only reset generating flag if this is still the active run
+    if (thisRunId === generateId) {
       generating = false;
-      generateAbort = null;
     }
     genBtn.disabled = !selectedCenter;
     genBtn.classList.remove('generating');

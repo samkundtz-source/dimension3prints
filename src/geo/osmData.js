@@ -99,8 +99,9 @@ export async function fetchOSMData(bbox, onProgress) {
       console.log(`[Overpass] ${json.elements.length} raw elements from ${host}`);
       return json;
     } catch (err) {
-      console.warn(`[Overpass] ${server} failed:`, err.message);
-      lastErr = err;
+      const msg = err.name === 'AbortError' ? 'Request timed out (30s)' : err.message;
+      console.warn(`[Overpass] ${server} failed:`, msg);
+      lastErr = new Error(msg);
     }
   }
   throw new Error(`All Overpass servers failed. Last error: ${lastErr?.message}`);
