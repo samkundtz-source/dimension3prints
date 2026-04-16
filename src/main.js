@@ -209,6 +209,7 @@ async function generate() {
     const radiusMeters = getRadiusMeters();
     const vertExag     = getVertExag();
     const useElevation = el('use-elevation').checked;
+    const terrainRelief = el('terrain-relief')?.checked || false;
 
     // 1. Projection + shape
     const projection = createProjection(lat, lng, radiusMeters);
@@ -232,9 +233,9 @@ async function generate() {
     ].join(' · ');
     setStatus(`Parsed: ${counts}`, 35);
 
-    // 4. Elevation (optional)
+    // 4. Elevation (optional — forced on when terrain relief is enabled)
     let elevGrid = null;
-    if (useElevation) {
+    if (useElevation || terrainRelief) {
       setStatus('Fetching elevation data...', 37);
       try {
         elevGrid = await fetchElevation(
@@ -255,7 +256,6 @@ async function generate() {
     const bathymetry        = el('bathymetry')?.checked !== false;
     const detailedBuildings = el('detailed-buildings')?.checked || false;
     const premiumDetail     = el('premium-detail')?.checked || false;
-    const terrainRelief     = el('terrain-relief')?.checked || false;
     const featuresToBuild = { ...features, water: bathymetry ? features.water : [] };
     const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, premiumDetail, terrainRelief, activeOrderId);
     const group = result.group;

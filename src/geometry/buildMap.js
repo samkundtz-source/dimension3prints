@@ -166,6 +166,22 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const ROAD_HEIGHT = NOZZLE_MM * 0.75; // 0.3mm — 1.5 layers at 0.2mm layer height
   const CLEARANCE   = 1.4; // generous gap around buildings to prevent clipping
 
+  // ── Terrain-aware base Y helper ──────────────────────────────────────────
+  // Returns the Y position for any feature, sitting on the terrain when relief is on.
+  const canRelief = terrainRelief && elevGrid && N > 0;
+  function terrainBaseY(cx, cy) {
+    if (!canRelief) return BASE;
+    return BASE + sampleTerrainElev(cx, cy, elevGrid, N, vScale);
+  }
+  function polyTerrainBaseY(poly) {
+    if (!canRelief) return BASE;
+    let cx = 0, cy = 0;
+    for (const p of poly) { cx += p.x; cy += p.y; }
+    cx /= poly.length;
+    cy /= poly.length;
+    return BASE + sampleTerrainElev(cx, cy, elevGrid, N, vScale);
+  }
+
   // ── 3. Pre-collect building footprints ────────────────────────────────────
   // Buildings are generated FIRST so roads can fit around them.
   onProgress?.('Collecting building footprints…', 70);
@@ -396,15 +412,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const heightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
 
     // Terrain-relief mode: lift the building so it sits on the real ground height
-    let baseY = BASE;
-    if (terrainRelief && elevGrid && N > 0) {
-      // Sample elevation at polygon centroid
-      let cx = 0, cy = 0;
-      for (const p of bf.polygon) { cx += p.x; cy += p.y; }
-      cx /= bf.polygon.length;
-      cy /= bf.polygon.length;
-      baseY = BASE + sampleTerrainElev(cx, cy, elevGrid, N, vScale);
-    }
+    const baseY = polyTerrainBaseY(bf.polygon);
 
     if (detailedBuildings) {
       // ── 3-tier building generation system ──────────────────────────────
@@ -445,7 +453,6 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
   // ── 5. Water (black slab on top of base) ─────────────────────────────────
   const MIN_AREA_MM2    = 3.0;
-  const WATER_SLAB_BASE = BASE;
   const WATER_SLAB_H    = NOZZLE_MM * 0.375; // 0.15mm — thinner than roads
 
   let waterCount = 0;
@@ -458,7 +465,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     if (enclosedByAnyBuilding(poly)) continue;
     const bldgHoles = findOverlappingBuildings(poly);
     const allHoles  = [...(feat.holes || []), ...bldgHoles];
-    collectExtrudedPolygon(blackAcc, poly, allHoles, WATER_SLAB_BASE, WATER_SLAB_H);
+    const waterBaseY = polyTerrainBaseY(poly);
+    collectExtrudedPolygon(blackAcc, poly, allHoles, waterBaseY, WATER_SLAB_H);
     let wMinX = Infinity, wMaxX = -Infinity, wMinY = Infinity, wMaxY = -Infinity;
     for (const p of poly) {
       if (p.x < wMinX) wMinX = p.x; if (p.x > wMaxX) wMaxX = p.x;
@@ -486,7 +494,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       if (!clipped || clipped.length < 3) continue;
       if (enclosedByAnyBuilding(clipped)) continue;
       const bldgHoles = findOverlappingBuildings(clipped);
-      collectExtrudedPolygon(blackAcc, clipped, bldgHoles, WATER_SLAB_BASE, WATER_SLAB_H);
+      const wwBaseY = polyTerrainBaseY(clipped);
+      collectExtrudedPolygon(blackAcc, clipped, bldgHoles, wwBaseY, WATER_SLAB_H);
       let wMinX = Infinity, wMaxX = -Infinity, wMinY = Infinity, wMaxY = -Infinity;
       for (const p of clipped) {
         if (p.x < wMinX) wMinX = p.x; if (p.x > wMaxX) wMaxX = p.x;
@@ -498,7 +507,6 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   // ── 6. Parks — with building gaps ───────────────────────────────────────────
-  const ROAD_BASE   = BASE;
   const ROAD_SLAB   = ROAD_HEIGHT;
 
   onProgress?.('Building parks…', 80);
@@ -512,7 +520,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     if (enclosedByAnyBuilding(poly)) continue;
     const bldgHoles = findOverlappingBuildings(poly);
     const allHoles  = [...(feat.holes || []), ...bldgHoles];
-    collectExtrudedPolygon(blackAcc, poly, allHoles, ROAD_BASE, ROAD_SLAB);
+    const parkBaseY = polyTerrainBaseY(poly);
+    collectExtrudedPolygon(blackAcc, poly, allHoles, parkBaseY, ROAD_SLAB);
   }
 
   // ── 7. Roads — at base bottom, shrink around buildings ────────────────────
@@ -523,7 +532,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const realW = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.residential);
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW = Math.max(realW, minW);
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, ROAD_BASE, ROAD_SLAB, findOverlappingBuildings);
+    // Sample terrain at road midpoint
+    const roadMid = feat.points[Math.floor(feat.points.length / 2)];
+    const roadBaseY = roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE;
+    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, ROAD_SLAB, findOverlappingBuildings);
     roadCount++;
   }
 
@@ -534,7 +546,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const realW = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.path);
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.path;
     const halfW = Math.max(realW, minW);
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, ROAD_BASE, ROAD_SLAB, findOverlappingBuildings);
+    const pathMid = feat.points[Math.floor(feat.points.length / 2)];
+    const pathBaseY = pathMid ? terrainBaseY(pathMid.x, pathMid.y) : BASE;
+    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, pathBaseY, ROAD_SLAB, findOverlappingBuildings);
     roadCount++;
   }
 
@@ -590,7 +604,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
         }
       }
       if (blocked) continue;
-      collectTreeBump(blackAcc, tree.x, tree.y, BASE, TREE_H, TREE_R);
+      const treeBaseY = terrainBaseY(tree.x, tree.y);
+      collectTreeBump(blackAcc, tree.x, tree.y, treeBaseY, TREE_H, TREE_R);
     }
   }
 
