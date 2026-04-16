@@ -1054,64 +1054,500 @@ function collectExtrudedPolygon(acc, polygon, holes, baseY, heightMM) {
   } catch (_) {}
 }
 
-// ─── Detailed building variants ──────────────────────────────────────────────
-// Detection uses REAL-WORLD height (metres), not print-mm — print height is
-// distorted by BUILD_EXAG and the MIN_BUILDING_HEIGHT floor, so a true 4 m
-// bungalow and a 25 m apartment block would otherwise look identical.
-//
-// House (≤ 8 m, or building tag is house-like): walls + ridge gable roof
-// Skyscraper (≥ 35 m, or tag is tower-like): block + setback crown + nub
-// Mid-rise: plain block
+// ─── Comprehensive Procedural Building System ────────────────────────────────
+// 7 building classes with rule-based architectural details, window banding,
+// setbacks, parapets, facade offsets, spires, and landmark features.
+// Classification uses REAL-WORLD height (metres) + OSM tags + footprint area.
+// All geometry is solid and watertight for clean 3D printing.
 
-const HOUSE_REAL_M = 8;
-const TOWER_REAL_M = 35;
+// ── Building class constants ─────────────────────────────────────────────────
+const CLASS_RESIDENTIAL_LOW  = 0; // houses, bungalows — ≤ 10m
+const CLASS_RESIDENTIAL_MID  = 1; // apartments, row houses — 10–25m
+const CLASS_OFFICE_TOWER     = 2; // office/commercial — 25–80m
+const CLASS_PODIUM_TOWER     = 3; // wide base + slender tower — 30–80m+
+const CLASS_INDUSTRIAL       = 4; // warehouses, factories — flat + boxy
+const CLASS_LANDMARK         = 5; // signature towers — tallest / tagged
+const CLASS_CIVIC            = 6; // churches, govt, hospitals — moderate + crowned
+const CLASS_FILLER           = 7; // generic / unclassifiable
 
-const HOUSE_TAGS = new Set([
+const RESIDENTIAL_LOW_TAGS = new Set([
   'house', 'detached', 'semidetached_house', 'bungalow', 'cabin',
-  'farm', 'static_caravan',
+  'farm', 'static_caravan', 'terrace', 'hut', 'shed',
 ]);
-const TOWER_TAGS = new Set([
-  'office', 'commercial', 'hotel', 'apartments',
-  'cathedral', 'tower', 'skyscraper',
+const RESIDENTIAL_MID_TAGS = new Set([
+  'apartments', 'residential', 'dormitory',
+]);
+const OFFICE_TAGS = new Set([
+  'office', 'commercial', 'hotel',
+]);
+const INDUSTRIAL_TAGS = new Set([
+  'industrial', 'warehouse', 'storage_tank', 'hangar', 'factory',
+  'manufacture', 'garage', 'garages', 'carport',
+]);
+const LANDMARK_TAGS = new Set([
+  'cathedral', 'temple', 'mosque', 'tower', 'skyscraper',
+]);
+const CIVIC_TAGS = new Set([
+  'church', 'chapel', 'hospital', 'school', 'university',
+  'government', 'public', 'civic', 'library', 'museum',
 ]);
 
-function isHouseLike(tags, heightM) {
-  const t = tags?.building;
-  if (t && HOUSE_TAGS.has(t)) return true;
-  return heightM <= HOUSE_REAL_M;
+/**
+ * Classify a building into one of 7+ classes based on tags, real height,
+ * and footprint area (in model-mm²).
+ */
+function classifyBuilding(tags, heightM, polygon) {
+  const t = tags?.building || 'yes';
+  const area = polygon ? Math.abs(signedArea2D(polygon)) : 50;
+  const frac = polygon ? deterministicFrac(polygon) : 0.5;
+
+  // Explicit landmark tags always win
+  if (LANDMARK_TAGS.has(t)) return CLASS_LANDMARK;
+  // Very tall buildings (≥50m real) are landmarks
+  if (heightM >= 50) return CLASS_LANDMARK;
+
+  // Industrial
+  if (INDUSTRIAL_TAGS.has(t)) return CLASS_INDUSTRIAL;
+
+  // Civic / religious
+  if (CIVIC_TAGS.has(t)) return CLASS_CIVIC;
+
+  // Residential low
+  if (RESIDENTIAL_LOW_TAGS.has(t) || heightM <= 10) return CLASS_RESIDENTIAL_LOW;
+
+  // Office tower
+  if (OFFICE_TAGS.has(t) && heightM >= 25) return CLASS_OFFICE_TOWER;
+
+  // Podium tower: large footprint + tall = podium with slender tower on top
+  if (heightM >= 30 && area > 150) {
+    return frac > 0.4 ? CLASS_PODIUM_TOWER : CLASS_OFFICE_TOWER;
+  }
+
+  // Residential mid-rise
+  if (RESIDENTIAL_MID_TAGS.has(t) || (heightM > 10 && heightM <= 25)) {
+    return CLASS_RESIDENTIAL_MID;
+  }
+
+  // Office tower for tall unclassified
+  if (heightM > 25) return CLASS_OFFICE_TOWER;
+
+  // Generic filler
+  return CLASS_FILLER;
 }
 
-function isTowerLike(tags, heightM) {
-  if (heightM >= TOWER_REAL_M) return true;
-  const t = tags?.building;
-  return !!(t && TOWER_TAGS.has(t) && heightM >= 25);
-}
-
+/**
+ * Master dispatcher for detailed building generation.
+ * Routes to class-specific generators based on classification.
+ */
 function collectDetailedBuilding(acc, polygon, tags, baseY, totalH, heightM) {
-  // Houses stay as plain flat-topped blocks — pitched roofs were producing
-  // odd silhouettes on small/irregular footprints, so just leave them alone.
-  if (isHouseLike(tags, heightM)) {
+  const cls = classifyBuilding(tags, heightM, polygon);
+
+  switch (cls) {
+    case CLASS_RESIDENTIAL_LOW:
+      collectResidentialLow(acc, polygon, tags, baseY, totalH, heightM);
+      break;
+    case CLASS_RESIDENTIAL_MID:
+      collectResidentialMid(acc, polygon, tags, baseY, totalH, heightM);
+      break;
+    case CLASS_OFFICE_TOWER:
+      collectOfficeTower(acc, polygon, tags, baseY, totalH, heightM);
+      break;
+    case CLASS_PODIUM_TOWER:
+      collectPodiumTower(acc, polygon, tags, baseY, totalH, heightM);
+      break;
+    case CLASS_INDUSTRIAL:
+      collectIndustrial(acc, polygon, tags, baseY, totalH, heightM);
+      break;
+    case CLASS_LANDMARK:
+      collectLandmark(acc, polygon, tags, baseY, totalH, heightM);
+      break;
+    case CLASS_CIVIC:
+      collectCivic(acc, polygon, tags, baseY, totalH, heightM);
+      break;
+    default:
+      collectFiller(acc, polygon, tags, baseY, totalH, heightM);
+      break;
+  }
+}
+
+// ── Window banding ───────────────────────────────────────────────────────────
+// Adds horizontal groove lines on building facades to suggest floor divisions.
+// Each band is a thin recessed strip created by two stacked extrusions with
+// a slight inset between them (simulates window rows at print scale).
+
+/**
+ * Generate a building with horizontal window bands on the facade.
+ * Splits the building into alternating full-width floors and slightly
+ * inset band strips, creating a ribbed facade effect.
+ *
+ * @param {number} bandCount  - number of window bands (floor divisions)
+ * @param {number} insetScale - how much to shrink bands (0.92 = 8% inset)
+ * @param {number} bandFrac   - fraction of floor height used by band strip
+ */
+function collectBandedBuilding(acc, polygon, baseY, totalH, bandCount, insetScale = 0.93, bandFrac = 0.25) {
+  if (bandCount <= 0 || totalH < 1.0) {
     collectExtrudedPolygon(acc, polygon, [], baseY, totalH);
     return;
   }
 
-  if (isTowerLike(tags, heightM)) {
-    // Skyscraper: shaft + 0.85x crown + 0.55x nub
-    const crownH = Math.min(2.0, totalH * 0.12);
-    const nubH   = 0.7;
-    const bodyH  = totalH - crownH - nubH;
-    collectExtrudedPolygon(acc, polygon, [], baseY, bodyH);
-    const setback = shrinkToCentroid(polygon, 0.85);
-    if (setback) {
-      collectExtrudedPolygon(acc, setback, [], baseY + bodyH, crownH);
-      const nub = shrinkToCentroid(polygon, 0.55);
-      if (nub) collectExtrudedPolygon(acc, nub, [], baseY + bodyH + crownH, nubH);
+  const floorH = totalH / bandCount;
+  const bandH = floorH * bandFrac;
+  const solidH = floorH - bandH;
+  const inset = shrinkToCentroid(polygon, insetScale);
+
+  let y = baseY;
+  for (let i = 0; i < bandCount; i++) {
+    // Solid floor slab (full width)
+    collectExtrudedPolygon(acc, polygon, [], y, solidH);
+    y += solidH;
+    // Inset window band (slightly recessed)
+    if (inset && bandH > 0.05) {
+      collectExtrudedPolygon(acc, inset, [], y, bandH);
+    } else {
+      collectExtrudedPolygon(acc, polygon, [], y, bandH);
     }
+    y += bandH;
+  }
+}
+
+// ── Parapet / crown cap ──────────────────────────────────────────────────────
+// A thin slab on top that's slightly wider than the roof, giving a capped look.
+
+function collectParapet(acc, polygon, topY, parapetH, overhang = 1.02) {
+  const wider = shrinkToCentroid(polygon, overhang);
+  if (wider) {
+    collectExtrudedPolygon(acc, wider, [], topY, parapetH);
+  } else {
+    collectExtrudedPolygon(acc, polygon, [], topY, parapetH);
+  }
+}
+
+// ── Per-class generators ─────────────────────────────────────────────────────
+
+/**
+ * CLASS 0: Residential Low (houses, bungalows, ≤10m)
+ * Simple block with optional pitched roof via gable/hip.
+ * Small footprints get a plain block to avoid degenerate roof geometry.
+ */
+function collectResidentialLow(acc, polygon, tags, baseY, totalH, heightM) {
+  const frac = deterministicFrac(polygon);
+  const dim = minBBoxDimension(polygon);
+
+  // Very small buildings: plain block
+  if (dim < 1.5 || totalH < 1.0) {
+    collectExtrudedPolygon(acc, polygon, [], baseY, totalH);
     return;
   }
 
-  // Mid-rise: plain block
-  collectExtrudedPolygon(acc, polygon, [], baseY, totalH);
+  // 60% chance of gable roof on houses
+  if (frac > 0.4 && dim > 2.0) {
+    const roofH = Math.min(totalH * 0.3, 1.5);
+    const wallH = totalH - roofH;
+    collectExtrudedPolygon(acc, polygon, [], baseY, wallH);
+    collectGableHipRoof(acc, polygon, baseY + wallH, roofH);
+  } else {
+    // Flat-topped block
+    collectExtrudedPolygon(acc, polygon, [], baseY, totalH);
+  }
+}
+
+/**
+ * CLASS 1: Residential Mid-Rise (apartments, 10–25m)
+ * Banded facade with 3–8 floors. Optional parapet cap.
+ */
+function collectResidentialMid(acc, polygon, tags, baseY, totalH, heightM) {
+  const frac = deterministicFrac(polygon);
+  const floors = Math.max(2, Math.min(8, Math.round(heightM / 3.2)));
+  const bands = Math.max(2, Math.min(6, floors - 1));
+
+  // Main body with window bands
+  const parapetH = Math.min(0.3, totalH * 0.04);
+  const bodyH = totalH - parapetH;
+  collectBandedBuilding(acc, polygon, baseY, bodyH, bands, 0.94, 0.2);
+
+  // Parapet cap
+  if (frac > 0.3) {
+    collectParapet(acc, polygon, baseY + bodyH, parapetH, 1.01);
+  } else {
+    collectExtrudedPolygon(acc, polygon, [], baseY + bodyH, parapetH);
+  }
+}
+
+/**
+ * CLASS 2: Office Tower (25–80m)
+ * Banded facade, setback crown, optional mechanical penthouse.
+ */
+function collectOfficeTower(acc, polygon, tags, baseY, totalH, heightM) {
+  const frac = deterministicFrac(polygon);
+  const floors = Math.max(4, Math.min(20, Math.round(heightM / 3.5)));
+
+  // Crown + penthouse proportions
+  const crownH = Math.min(1.5, totalH * 0.08);
+  const pentH = frac > 0.5 ? Math.min(0.6, totalH * 0.04) : 0;
+  const bodyH = totalH - crownH - pentH;
+  const bands = Math.max(3, Math.min(12, floors - 2));
+
+  // Main shaft with window banding
+  collectBandedBuilding(acc, polygon, baseY, bodyH, bands, 0.92, 0.28);
+
+  // Setback crown
+  const crown = shrinkToCentroid(polygon, 0.88);
+  if (crown) {
+    collectExtrudedPolygon(acc, crown, [], baseY + bodyH, crownH);
+  } else {
+    collectExtrudedPolygon(acc, polygon, [], baseY + bodyH, crownH);
+  }
+
+  // Mechanical penthouse (smaller box on top)
+  if (pentH > 0) {
+    const pent = shrinkToCentroid(polygon, 0.55);
+    if (pent) {
+      collectExtrudedPolygon(acc, pent, [], baseY + bodyH + crownH, pentH);
+    }
+  }
+}
+
+/**
+ * CLASS 3: Podium Tower (wide base + slender tower on top)
+ * Bottom 30% is full-footprint podium, top 70% is a setback tower.
+ */
+function collectPodiumTower(acc, polygon, tags, baseY, totalH, heightM) {
+  const frac = deterministicFrac(polygon);
+
+  // Podium: 25–35% of total height, full footprint
+  const podiumFrac = 0.25 + frac * 0.1;
+  const podiumH = totalH * podiumFrac;
+  const towerH = totalH - podiumH;
+
+  // Podium body with light banding
+  const podiumBands = Math.max(1, Math.round(podiumH / 2.0));
+  collectBandedBuilding(acc, polygon, baseY, podiumH, podiumBands, 0.95, 0.15);
+
+  // Tower: shrink to 60-75% of footprint, centered
+  const towerScale = 0.6 + frac * 0.15;
+  const tower = shrinkToCentroid(polygon, towerScale);
+  if (tower) {
+    // Tower body with denser banding
+    const towerBands = Math.max(3, Math.round(towerH / 1.5));
+    const crownH = Math.min(1.0, towerH * 0.08);
+    collectBandedBuilding(acc, tower, baseY + podiumH, towerH - crownH, towerBands, 0.92, 0.3);
+
+    // Tower crown
+    const towerCrown = shrinkToCentroid(tower, 0.9);
+    if (towerCrown) {
+      collectExtrudedPolygon(acc, towerCrown, [], baseY + podiumH + towerH - crownH, crownH);
+    }
+  } else {
+    // Fallback: just extend the podium
+    collectBandedBuilding(acc, polygon, baseY + podiumH, towerH, 4, 0.92, 0.25);
+  }
+}
+
+/**
+ * CLASS 4: Industrial (warehouses, factories)
+ * Flat-topped, boxy, no ornamentation. Occasional stepped roofline.
+ */
+function collectIndustrial(acc, polygon, tags, baseY, totalH, heightM) {
+  const frac = deterministicFrac(polygon);
+
+  if (frac > 0.6 && totalH > 2.0) {
+    // Stepped roof: two levels at different heights
+    const mainH = totalH * (0.7 + frac * 0.15);
+    const stepH = totalH;
+    const stepPoly = shrinkToCentroid(polygon, 0.65);
+    collectExtrudedPolygon(acc, polygon, [], baseY, mainH);
+    if (stepPoly) {
+      collectExtrudedPolygon(acc, stepPoly, [], baseY + mainH, stepH - mainH);
+    }
+  } else {
+    // Plain box
+    collectExtrudedPolygon(acc, polygon, [], baseY, totalH);
+  }
+}
+
+/**
+ * CLASS 5: Landmark / Signature Tower (tallest buildings, cathedrals, etc.)
+ * Tiered setbacks, vertical ribs implied by facade offsets,
+ * spire/antenna on top. The most architecturally detailed class.
+ */
+function collectLandmark(acc, polygon, tags, baseY, totalH, heightM) {
+  const frac = deterministicFrac(polygon);
+  const t = tags?.building || 'yes';
+  const isReligious = (t === 'cathedral' || t === 'temple' || t === 'mosque' || t === 'church');
+
+  if (isReligious) {
+    collectReligiousLandmark(acc, polygon, tags, baseY, totalH, heightM);
+    return;
+  }
+
+  // ── Secular landmark tower with tiered setbacks ────────────────────────
+  // Split into 3-4 tiers of decreasing footprint, plus spire
+
+  const tierCount = totalH > 25 ? (frac > 0.5 ? 4 : 3) : 2;
+  const spireH = Math.min(2.5, totalH * 0.12);
+  const bodyH = totalH - spireH;
+
+  // Generate tier heights and scales (bottom-up)
+  const tiers = [];
+  let remainH = bodyH;
+  let currentScale = 1.0;
+  for (let i = 0; i < tierCount; i++) {
+    const isLast = (i === tierCount - 1);
+    const tierFrac = isLast ? 1.0 : (0.35 + frac * 0.15);
+    const h = isLast ? remainH : remainH * tierFrac;
+    tiers.push({ h, scale: currentScale });
+    remainH -= h;
+    currentScale *= (0.78 + frac * 0.08); // each tier shrinks 14-22%
+  }
+
+  // Build tiers bottom-up with window banding
+  let y = baseY;
+  for (let i = 0; i < tiers.length; i++) {
+    const tier = tiers[i];
+    const tierPoly = tier.scale < 0.99 ? shrinkToCentroid(polygon, tier.scale) : polygon;
+    const bands = Math.max(2, Math.round(tier.h / 1.8));
+    if (tierPoly) {
+      collectBandedBuilding(acc, tierPoly, y, tier.h, bands, 0.90, 0.3);
+    } else {
+      collectExtrudedPolygon(acc, polygon, [], y, tier.h);
+    }
+    y += tier.h;
+  }
+
+  // Spire: narrow tapered column on top
+  if (spireH > 0.3) {
+    collectSpire(acc, polygon, y, spireH, frac);
+  }
+}
+
+/**
+ * Religious landmark: nave + central tower/dome suggestion
+ */
+function collectReligiousLandmark(acc, polygon, tags, baseY, totalH, heightM) {
+  const frac = deterministicFrac(polygon);
+
+  // Main nave body (85% height)
+  const naveH = totalH * 0.75;
+  const towerH = totalH - naveH;
+
+  collectBandedBuilding(acc, polygon, baseY, naveH, Math.max(2, Math.round(naveH / 2.5)), 0.95, 0.15);
+
+  // Central tower / steeple
+  const tower = shrinkToCentroid(polygon, 0.45);
+  if (tower) {
+    const towerBody = towerH * 0.6;
+    const spireH = towerH * 0.4;
+    collectExtrudedPolygon(acc, tower, [], baseY + naveH, towerBody);
+    collectSpire(acc, tower, baseY + naveH + towerBody, spireH, frac);
+  } else {
+    collectExtrudedPolygon(acc, polygon, [], baseY + naveH, towerH);
+  }
+}
+
+/**
+ * Spire / antenna: a narrow tapered prism rising from the polygon centroid.
+ * Creates a hexagonal prism that tapers to ~15% at the top.
+ */
+function collectSpire(acc, polygon, baseY, height, frac) {
+  // Find centroid
+  let cx = 0, cy = 0;
+  for (const p of polygon) { cx += p.x; cy += p.y; }
+  cx /= polygon.length; cy /= polygon.length;
+
+  // Base radius: ~20-30% of polygon's min dimension
+  const dim = minBBoxDimension(polygon);
+  const baseR = dim * (0.15 + frac * 0.1);
+  const topR = baseR * 0.15; // sharp taper
+  const segs = 6;
+
+  const pos = [];
+  const idx = [];
+
+  // Bottom center, top center
+  pos.push(cx, baseY, -cy);                  // 0
+  pos.push(cx, baseY + height, -cy);         // 1
+
+  // Bottom ring
+  const ringB = 2;
+  for (let i = 0; i < segs; i++) {
+    const a = (i / segs) * Math.PI * 2;
+    pos.push(cx + Math.cos(a) * baseR, baseY, -(cy + Math.sin(a) * baseR));
+  }
+
+  // Top ring
+  const ringT = ringB + segs;
+  for (let i = 0; i < segs; i++) {
+    const a = (i / segs) * Math.PI * 2;
+    pos.push(cx + Math.cos(a) * topR, baseY + height, -(cy + Math.sin(a) * topR));
+  }
+
+  // Bottom fan
+  for (let i = 0; i < segs; i++) {
+    idx.push(0, ringB + (i + 1) % segs, ringB + i);
+  }
+  // Top fan
+  for (let i = 0; i < segs; i++) {
+    idx.push(1, ringT + i, ringT + (i + 1) % segs);
+  }
+  // Side walls
+  for (let i = 0; i < segs; i++) {
+    const a = ringB + i, b = ringB + (i + 1) % segs;
+    const c = ringT + (i + 1) % segs, d = ringT + i;
+    idx.push(a, b, c, a, c, d);
+  }
+
+  acc.add(pos, idx);
+}
+
+/**
+ * CLASS 6: Civic (churches, hospitals, schools, government)
+ * Moderate height with crown / cornice detail and optional cupola.
+ */
+function collectCivic(acc, polygon, tags, baseY, totalH, heightM) {
+  const frac = deterministicFrac(polygon);
+
+  // Body with subtle banding
+  const corniceH = Math.min(0.4, totalH * 0.06);
+  const bodyH = totalH - corniceH;
+  const bands = Math.max(2, Math.min(5, Math.round(heightM / 4)));
+
+  collectBandedBuilding(acc, polygon, baseY, bodyH, bands, 0.95, 0.18);
+
+  // Cornice cap (slightly wider than body)
+  collectParapet(acc, polygon, baseY + bodyH, corniceH, 1.03);
+
+  // 40% chance of a small cupola on top
+  if (frac > 0.6 && totalH > 3.0) {
+    const cupola = shrinkToCentroid(polygon, 0.3);
+    if (cupola) {
+      const cupolaH = Math.min(1.0, totalH * 0.08);
+      collectExtrudedPolygon(acc, cupola, [], baseY + totalH, cupolaH);
+    }
+  }
+}
+
+/**
+ * CLASS 7: Generic Filler (unclassified buildings)
+ * Light banding for height > 2mm, otherwise plain block.
+ */
+function collectFiller(acc, polygon, tags, baseY, totalH, heightM) {
+  if (totalH < 2.0) {
+    collectExtrudedPolygon(acc, polygon, [], baseY, totalH);
+    return;
+  }
+
+  const frac = deterministicFrac(polygon);
+  const bands = Math.max(1, Math.min(4, Math.round(totalH / 2.5)));
+
+  // 50% chance of banded vs plain block
+  if (frac > 0.5) {
+    collectBandedBuilding(acc, polygon, baseY, totalH, bands, 0.94, 0.2);
+  } else {
+    // Plain block with parapet
+    const parapetH = Math.min(0.25, totalH * 0.05);
+    collectExtrudedPolygon(acc, polygon, [], baseY, totalH - parapetH);
+    collectParapet(acc, polygon, baseY + totalH - parapetH, parapetH, 1.01);
+  }
 }
 
 /** Shrink polygon toward its centroid by `scale` (1.0 = no change). */
