@@ -36,16 +36,13 @@ import { landmarkRegistry, generateLandmarkBuilding } from './landmarkPresets.js
 // Preview uses a neutral gray palette so buildings read with depth and shadow.
 // The exported STL/3MF is uncoloured — slicer assigns filament colours.
 export const FEATURE_COLORS = {
-  base:      0xC8C8C8,
-  terrain:   0xC8C8C8,
-  building:  0xB0B0B0,
-  water:     0x1A1A1A,
-  park:      0x1A1A1A,
-  road:      0x1A1A1A,
-  path:      0x1A1A1A,
-  // Debug tier colors (only used when debugTiers is enabled)
-  landmark:  0xCC3333,  // red — tier 1 landmark preset
-  tallTower: 0xE88833,  // orange — tier 2 generic tall-tower
+  base:     0xC8C8C8,
+  terrain:  0xC8C8C8,
+  building: 0xB0B0B0,
+  water:    0x1A1A1A,
+  park:     0x1A1A1A,
+  road:     0x1A1A1A,
+  path:     0x1A1A1A,
 };
 
 export function setInvertedColors(inverted) {
@@ -140,7 +137,7 @@ function sampleTerrainElev(x, y, elevGrid, N, vScale) {
   return clamp(e * vScale, 0, 40);
 }
 
-export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '', debugTiers = false) {
+export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '') {
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -152,11 +149,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
   // ── 3 combined accumulators — everything merges into these ────────────────
   const baseAcc     = new GeomAccumulator();  // base plate + terrain → white
-  const buildingAcc = new GeomAccumulator();  // all buildings → white (standard tier)
+  const buildingAcc = new GeomAccumulator();  // all buildings → white
   const blackAcc    = new GeomAccumulator();  // roads + paths + parks + water → black
-  // Debug tier accumulators (only used when debugTiers is on)
-  const landmarkAcc  = debugTiers ? new GeomAccumulator() : null;  // red — tier 1
-  const tallTowerAcc = debugTiers ? new GeomAccumulator() : null;  // orange — tier 2
 
   // ── 1. Base plate ─────────────────────────────────────────────────────────
   onProgress?.('Building base plate…', 65);
@@ -421,11 +415,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
       if (tierResult.tier === 'landmark' && tierResult.presetName) {
         // ── Tier 1: Landmark with preset geometry ────────────────────
-        const targetAcc = debugTiers ? landmarkAcc : buildingAcc;
-        landmarkCtx.acc = targetAcc;
+        landmarkCtx.acc = buildingAcc;
         const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
         if (!applied) {
-          // Preset not found — fallback to standard detailed
           collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
           standardCount++;
         } else {
@@ -433,9 +425,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
         }
       } else if (tierResult.tier === 'tall-tower') {
         // ── Tier 2: Generic tall-tower (≥100m, no preset) ───────────
-        // Simple tapered box with mild setbacks — NO iconic massing
-        const targetAcc = debugTiers ? tallTowerAcc : buildingAcc;
-        collectGenericTallTower(targetAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+        collectGenericTallTower(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
         tallTowerCount++;
       } else {
         // ── Tier 3: Standard class-based generation ─────────────────
@@ -621,14 +611,6 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   if (baseMesh) group.add(baseMesh);
   if (bldgMesh) group.add(bldgMesh);
   if (roadMesh) group.add(roadMesh);
-
-  // Debug tier meshes (red landmarks, orange tall-towers)
-  if (debugTiers) {
-    const lmMesh = landmarkAcc?.build('landmark');
-    const ttMesh = tallTowerAcc?.build('tallTower');
-    if (lmMesh) group.add(lmMesh);
-    if (ttMesh) group.add(ttMesh);
-  }
 
   onProgress?.('Model ready.', 95);
   return {

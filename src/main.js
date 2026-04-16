@@ -256,9 +256,8 @@ async function generate() {
     const detailedBuildings = el('detailed-buildings')?.checked || false;
     const premiumDetail     = el('premium-detail')?.checked || false;
     const terrainRelief     = el('terrain-relief')?.checked || false;
-    const debugTiers        = el('debug-tiers')?.checked || false;
     const featuresToBuild = { ...features, water: bathymetry ? features.water : [] };
-    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, premiumDetail, terrainRelief, activeOrderId, debugTiers);
+    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, premiumDetail, terrainRelief, activeOrderId);
     const group = result.group;
     const modelStats = result.stats;
 

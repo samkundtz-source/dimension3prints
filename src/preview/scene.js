@@ -123,16 +123,13 @@ export class SceneManager {
 
   _buildMaterials() {
     const cfg = {
-      base:      { roughness: 0.55, metalness: 0.0 },
-      terrain:   { roughness: 0.55, metalness: 0.0 },
-      building:  { roughness: 0.35, metalness: 0.08 },
-      water:     { roughness: 0.15, metalness: 0.15 },
-      park:      { roughness: 0.7, metalness: 0.0 },
-      road:      { roughness: 0.75, metalness: 0.0 },
-      path:      { roughness: 0.75, metalness: 0.0 },
-      // Debug tier colors
-      landmark:  { roughness: 0.3, metalness: 0.1 },
-      tallTower: { roughness: 0.3, metalness: 0.1 },
+      base:     { roughness: 0.55, metalness: 0.0 },
+      terrain:  { roughness: 0.55, metalness: 0.0 },
+      building: { roughness: 0.35, metalness: 0.08 },
+      water:    { roughness: 0.15, metalness: 0.15 },
+      park:     { roughness: 0.7, metalness: 0.0 },
+      road:     { roughness: 0.75, metalness: 0.0 },
+      path:     { roughness: 0.75, metalness: 0.0 },
     };
 
     // Polygon offset per type — higher = pushed further back.
@@ -257,7 +254,7 @@ export class SceneManager {
       if (!obj.isMesh) return;
       const type = obj.userData.featureType || 'base';
       obj.material      = matLib[type] ?? matLib.base;
-      obj.castShadow    = (type === 'building' || type === 'landmark' || type === 'tallTower');
+      obj.castShadow    = (type === 'building');
       obj.receiveShadow = (type === 'terrain' || type === 'base');
 
     });

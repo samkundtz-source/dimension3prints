@@ -146,61 +146,53 @@ const registry = new LandmarkRegistry();
 export const LANDMARK_PRESETS = {
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Burj Khalifa -- Y-shaped trilobal tower with 27 progressive setback stages
+  // Burj Khalifa -- slender stepped tower with needle spire
+  // The real building is a Y-shaped plan that stays relatively wide through
+  // its lower 60%, then the 3 wings retract at key setback levels while the
+  // central core continues upward. At print scale (~75mm model radius for a
+  // 1km capture) the footprint is tiny, so we use just 5 visible setback
+  // tiers to keep the silhouette clean and the geometry printable, plus a
+  // tall needle spire for the top ~25%.
   // ──────────────────────────────────────────────────────────────────────────
   burjKhalifa: {
     name: 'Burj Khalifa',
     generate(ctx, acc, polygon, baseY, totalH, heightM) {
       const {
         collectExtrudedPolygon, shrinkToCentroid,
-        minBBoxDimension, deterministicFrac,
+        minBBoxDimension,
       } = ctx;
 
-      // 27-stage height curve (fraction of total height where each setback begins)
-      const heightCurve = [
-        0, 0.04, 0.08, 0.12, 0.16, 0.20, 0.24, 0.28,
-        0.32, 0.36, 0.40, 0.44, 0.48, 0.52, 0.56, 0.60,
-        0.62, 0.64, 0.66, 0.68, 0.70, 0.73, 0.76, 0.80,
-        0.84, 0.88, 0.92,
+      // The real Burj Khalifa's spire (above the top occupied floor at ~585m)
+      // is roughly 244m of the 828m total = ~29%. We use ~25% for the spire.
+      const spireFrac = 0.25;
+      const bodyH  = totalH * (1.0 - spireFrac);
+      const spireH = totalH * spireFrac;
+
+      // 5 setback tiers — the building stays nearly full-width for the
+      // bottom section, then steps in at key heights. Scale values are
+      // much more conservative than before to avoid the pyramid look.
+      const tiers = [
+        { hFrac: 0.35, scale: 1.00 },  // lower body — full Y-shaped footprint
+        { hFrac: 0.20, scale: 0.92 },  // first wing retraction
+        { hFrac: 0.15, scale: 0.82 },  // second wing retraction
+        { hFrac: 0.18, scale: 0.68 },  // third retraction — core + partial wings
+        { hFrac: 0.12, scale: 0.50 },  // top section — mostly core
       ];
 
-      // Corresponding footprint scale factors (1.0 = full OSM footprint)
-      const scaleCurve = [
-        1.00, 0.98, 0.96, 0.94, 0.92, 0.90, 0.88, 0.86,
-        0.84, 0.82, 0.79, 0.76, 0.73, 0.70, 0.67, 0.64,
-        0.60, 0.56, 0.52, 0.48, 0.44, 0.40, 0.36, 0.32,
-        0.28, 0.24, 0.20,
-      ];
-
-      const spireStart = 0.85; // spire covers top ~15% of total height
-      const bodyH = totalH * spireStart;
-      const spireH = totalH - bodyH;
-      const frac = deterministicFrac(polygon);
-
-      // Extrude each setback stage as a shrunk slice of the original footprint.
-      // Alternating inset/outset ribbing is achieved by toggling the scale
-      // slightly between adjacent stages.
-      for (let i = 0; i < heightCurve.length; i++) {
-        const hFrac0 = heightCurve[i];
-        const hFrac1 = i + 1 < heightCurve.length ? heightCurve[i + 1] : spireStart;
-
-        // Stage vertical span (clamped to body height)
-        const y0 = baseY + hFrac0 * bodyH;
-        const y1 = baseY + hFrac1 * bodyH;
-        const stageH = y1 - y0;
-        if (stageH < 0.01) continue;
-
-        // Alternate ribbing: odd stages get a slight extra inset
-        const ribScale = (i % 2 === 0) ? 1.0 : 0.97;
-        const scale = scaleCurve[i] * ribScale;
-
-        const stagePoly = shrinkToCentroid(polygon, scale);
-        if (stagePoly) {
-          collectExtrudedPolygon(acc, stagePoly, [], y0, stageH);
+      let y = baseY;
+      for (const tier of tiers) {
+        const tierH = bodyH * tier.hFrac;
+        if (tierH < 0.02) continue;
+        const tierPoly = tier.scale < 0.99
+          ? shrinkToCentroid(polygon, tier.scale)
+          : polygon;
+        if (tierPoly) {
+          collectExtrudedPolygon(acc, tierPoly, [], y, tierH);
         }
+        y += tierH;
       }
 
-      // Needle spire -- hexagonal tapered prism from the centroid
+      // Needle spire — tall hexagonal tapered prism from centroid
       if (spireH > 0.2) {
         let cx = 0, cy = 0;
         for (const p of polygon) { cx += p.x; cy += p.y; }
@@ -208,49 +200,32 @@ export const LANDMARK_PRESETS = {
         cy /= polygon.length;
 
         const dim = minBBoxDimension(polygon);
-        const baseR = dim * 0.12;
-        const topR = baseR * 0.08; // very sharp taper
-        const segs = 6;
-        const pos = [];
-        const idx = [];
+        const baseR = dim * 0.18;  // spire base ~18% of footprint width
+        const topR  = baseR * 0.05; // very sharp needle point
+        const segs  = 6;
+        const pos   = [];
+        const idx   = [];
 
-        // Two center vertices (bottom / top of spire)
-        pos.push(cx, baseY + bodyH, -cy);              // v0 = bottom center
-        pos.push(cx, baseY + bodyH + spireH, -cy);     // v1 = top center
+        pos.push(cx, y, -cy);                // v0 = bottom center
+        pos.push(cx, y + spireH, -cy);       // v1 = top center
 
-        // Bottom ring (v2 .. v2+segs-1)
         const ringB = 2;
         for (let s = 0; s < segs; s++) {
           const a = (Math.PI * 2 * s) / segs;
-          pos.push(cx + Math.cos(a) * baseR, baseY + bodyH, -(cy + Math.sin(a) * baseR));
+          pos.push(cx + Math.cos(a) * baseR, y, -(cy + Math.sin(a) * baseR));
         }
-
-        // Top ring (v2+segs .. v2+2*segs-1)
         const ringT = ringB + segs;
         for (let s = 0; s < segs; s++) {
           const a = (Math.PI * 2 * s) / segs;
-          pos.push(cx + Math.cos(a) * topR, baseY + bodyH + spireH, -(cy + Math.sin(a) * topR));
+          pos.push(cx + Math.cos(a) * topR, y + spireH, -(cy + Math.sin(a) * topR));
         }
 
-        // Bottom cap triangles
         for (let s = 0; s < segs; s++) {
           const n = (s + 1) % segs;
-          idx.push(0, ringB + n, ringB + s);
-        }
-
-        // Top cap triangles
-        for (let s = 0; s < segs; s++) {
-          const n = (s + 1) % segs;
-          idx.push(1, ringT + s, ringT + n);
-        }
-
-        // Side quads (two triangles each)
-        for (let s = 0; s < segs; s++) {
-          const n = (s + 1) % segs;
-          const b0 = ringB + s, b1 = ringB + n;
-          const t0 = ringT + s, t1 = ringT + n;
-          idx.push(b0, b1, t1);
-          idx.push(b0, t1, t0);
+          idx.push(0, ringB + n, ringB + s);           // bottom cap
+          idx.push(1, ringT + s, ringT + n);           // top cap
+          idx.push(ringB + s, ringB + n, ringT + n);   // side
+          idx.push(ringB + s, ringT + n, ringT + s);   // side
         }
 
         acc.add(pos, idx);
