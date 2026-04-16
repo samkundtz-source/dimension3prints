@@ -143,279 +143,544 @@ const registry = new LandmarkRegistry();
  *   minBBoxDimension(polygon)
  *   deterministicFrac(polygon)
  */
+// ─── Shared geometry helper: tapered hexagonal prism (spire/antenna) ────────
+function buildSpire(acc, cx, cy, baseY, height, baseR, topR) {
+  const segs = 6, pos = [], idx = [];
+  pos.push(cx, baseY, -cy);
+  pos.push(cx, baseY + height, -cy);
+  const rB = 2;
+  for (let s = 0; s < segs; s++) {
+    const a = (Math.PI * 2 * s) / segs;
+    pos.push(cx + Math.cos(a) * baseR, baseY, -(cy + Math.sin(a) * baseR));
+  }
+  const rT = rB + segs;
+  for (let s = 0; s < segs; s++) {
+    const a = (Math.PI * 2 * s) / segs;
+    pos.push(cx + Math.cos(a) * topR, baseY + height, -(cy + Math.sin(a) * topR));
+  }
+  for (let s = 0; s < segs; s++) {
+    const n = (s + 1) % segs;
+    idx.push(0, rB + n, rB + s);
+    idx.push(1, rT + s, rT + n);
+    idx.push(rB + s, rB + n, rT + n, rB + s, rT + n, rT + s);
+  }
+  acc.add(pos, idx);
+}
+
+function centroid(polygon) {
+  let cx = 0, cy = 0;
+  for (const p of polygon) { cx += p.x; cy += p.y; }
+  return { cx: cx / polygon.length, cy: cy / polygon.length };
+}
+
 export const LANDMARK_PRESETS = {
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Burj Khalifa — Y-shaped trilobal tower with spiral wing retractions
+  // BURJ KHALIFA — 828m total. Y-shaped plan, 3 wings at 120°.
   //
-  // The real building has 3 wings at 120° around a hexagonal core.
-  // Each wing is ~55m wide at the base. As the tower rises, ONE wing
-  // retracts at each setback tier in a rotating A→B→C→A spiral, giving
-  // an asymmetric stepped silhouette. 27 setbacks total (~every 7 floors).
-  //
-  // We generate this as:
-  //   - A hexagonal core column that runs the full body height
-  //   - 3 wing prisms that each retract independently at staggered heights
-  //   - A needle spire on top (~24% of total = 200m of 828m)
-  //
-  // This approach creates the distinctive asymmetric Y-shape where
-  // different sides of the building step back at different levels.
+  // Real data (SOM / CTBUH):
+  //   - 3 wings each ~55m wide at base around hexagonal core
+  //   - 27 setbacks in spiral: one wing retracts per tier (A→B→C→A...)
+  //   - Body to ~636m (roof), spire/pinnacle 200m pipe above that
+  //   - Concrete structure to level 156 (585m), steel above
+  //   - Wings terminate at staggered heights in spiral pattern
   // ──────────────────────────────────────────────────────────────────────────
   burjKhalifa: {
     name: 'Burj Khalifa',
     generate(ctx, acc, polygon, baseY, totalH, heightM) {
       const { collectExtrudedPolygon, minBBoxDimension } = ctx;
-
-      // Find centroid and bounding dimensions of the OSM footprint
-      let cx = 0, cy = 0;
-      for (const p of polygon) { cx += p.x; cy += p.y; }
-      cx /= polygon.length;
-      cy /= polygon.length;
-
+      const { cx, cy } = centroid(polygon);
       const dim = minBBoxDimension(polygon);
 
-      // ── Proportions based on the real building ──────────────────────
-      // Total: 828m. Spire: 200m (pinnacle pipe). Body: 628m.
-      const spireFrac = 0.24;
-      const bodyH  = totalH * (1.0 - spireFrac);
-      const spireH = totalH * spireFrac;
+      // Real proportions: 828m total, 636m roof, 200m spire
+      const spireH = totalH * (200 / 828);
+      const bodyH  = totalH - spireH;
 
-      // Core radius and wing dimensions relative to footprint
-      const coreR  = dim * 0.18;  // hexagonal core ~18% of footprint width
-      const wingL  = dim * 0.42;  // wing length from core center outward
-      const wingW  = dim * 0.14;  // wing half-width
+      // Core and wing dimensions relative to OSM footprint
+      const coreR = dim * 0.18;
+      const wingL = dim * 0.42;
+      const wingW = dim * 0.14;
 
-      // ── Build the hexagonal core (runs full body height) ───────────
-      const coreSegs = 6;
-      {
-        const pos = [], idx = [];
-        // Top cap center + ring
-        pos.push(cx, baseY + bodyH, -cy); // v0 = top center
-        for (let s = 0; s < coreSegs; s++) {
-          const a = (Math.PI * 2 * s) / coreSegs;
-          pos.push(cx + Math.cos(a) * coreR, baseY + bodyH, -(cy + Math.sin(a) * coreR));
-        }
-        // Bottom cap center + ring
-        const bc = coreSegs + 1;
-        pos.push(cx, baseY, -cy); // bottom center
-        for (let s = 0; s < coreSegs; s++) {
-          const a = (Math.PI * 2 * s) / coreSegs;
-          pos.push(cx + Math.cos(a) * coreR, baseY, -(cy + Math.sin(a) * coreR));
-        }
-        // Top cap tris
-        for (let s = 0; s < coreSegs; s++) {
-          idx.push(0, 1 + s, 1 + (s + 1) % coreSegs);
-        }
-        // Bottom cap tris (reversed)
-        for (let s = 0; s < coreSegs; s++) {
-          idx.push(bc, bc + 1 + (s + 1) % coreSegs, bc + 1 + s);
-        }
-        // Side walls
-        for (let s = 0; s < coreSegs; s++) {
-          const t0 = 1 + s, t1 = 1 + (s + 1) % coreSegs;
-          const b0 = bc + 1 + s, b1 = bc + 1 + (s + 1) % coreSegs;
-          idx.push(t0, t1, b1, t0, b1, b0);
-        }
-        acc.add(pos, idx);
+      // Hexagonal core — full body height
+      const cSegs = 6;
+      const pos = [], idx = [];
+      pos.push(cx, baseY + bodyH, -cy);
+      for (let s = 0; s < cSegs; s++) {
+        const a = (Math.PI * 2 * s) / cSegs;
+        pos.push(cx + Math.cos(a) * coreR, baseY + bodyH, -(cy + Math.sin(a) * coreR));
       }
+      const bc = cSegs + 1;
+      pos.push(cx, baseY, -cy);
+      for (let s = 0; s < cSegs; s++) {
+        const a = (Math.PI * 2 * s) / cSegs;
+        pos.push(cx + Math.cos(a) * coreR, baseY, -(cy + Math.sin(a) * coreR));
+      }
+      for (let s = 0; s < cSegs; s++) {
+        idx.push(0, 1 + s, 1 + (s + 1) % cSegs);
+        idx.push(bc, bc + 1 + (s + 1) % cSegs, bc + 1 + s);
+        const t0 = 1 + s, t1 = 1 + (s + 1) % cSegs;
+        const b0 = bc + 1 + s, b1 = bc + 1 + (s + 1) % cSegs;
+        idx.push(t0, t1, b1, t0, b1, b0);
+      }
+      acc.add(pos, idx);
 
-      // ── 3 wings at 120° intervals ─────────────────────────────────
-      // Each wing has 9 setback tiers (27 total / 3 wings). The spiral
-      // pattern staggers them: wing 0 sets back at tiers 0,3,6,9,...
-      // wing 1 at tiers 1,4,7,10,...  wing 2 at tiers 2,5,8,11,...
-      //
-      // Real building: wings retract progressively, each wing going from
-      // full length at the base to fully retracted (just the core) at
-      // roughly 75% of body height, staggered so each wing terminates
-      // at a different elevation.
-
-      const TOTAL_SETBACKS = 27;
-      const SETBACKS_PER_WING = 9;
+      // 3 wings, 9 setback tiers each (27 total), spiral staggered.
+      // Wing termination heights based on real building:
+      // Wing A terminates ~level 109 (460m = 55% of 828m)
+      // Wing B terminates ~level 136 (530m = 64%)
+      // Wing C terminates ~level 156 (585m = 71%)
+      const wingEndFracs = [460 / 828, 530 / 828, 585 / 828];
 
       for (let w = 0; w < 3; w++) {
-        // Wing direction (120° apart, starting at 90° so one points "up")
-        const wingAngle = (Math.PI / 2) + (w * Math.PI * 2 / 3);
-        const dx = Math.cos(wingAngle);
-        const dy = Math.sin(wingAngle);
-        // Perpendicular for wing width
-        const nx = -dy;
-        const ny = dx;
+        const angle = (Math.PI / 2) + (w * Math.PI * 2 / 3);
+        const dx = Math.cos(angle), dy = Math.sin(angle);
+        const nx = -dy, ny = dx;
+        const endH = bodyH * (wingEndFracs[w] / (1 - 200 / 828));
+        const clampedEndH = Math.min(endH, bodyH);
+        const SLICES = 9;
 
-        // Each wing's setbacks are staggered in the spiral:
-        // Wing 0 starts retracting at tier w=0, wing 1 at tier 1, wing 2 at tier 2
-        // This means wing 0 terminates lowest, wing 2 terminates highest
-        const wingStartRetract = (w / TOTAL_SETBACKS) * bodyH;
-        // Each wing terminates at a different height (staggered by ~8% of body)
-        const wingEndFrac = 0.55 + w * 0.10; // wing 0: 55%, wing 1: 65%, wing 2: 75%
-        const wingEndH = bodyH * wingEndFrac;
-
-        // Build wing as stacked slices, each shorter than the last
-        for (let s = 0; s < SETBACKS_PER_WING; s++) {
-          // Height fraction within this wing's retraction schedule
-          const t = s / SETBACKS_PER_WING;
-          // Wing length decreases from full to 0 as we go up
+        for (let s = 0; s < SLICES; s++) {
+          const t = s / SLICES;
           const wingScale = 1.0 - t;
-          const curWingL = wingL * wingScale;
-          if (curWingL < 0.05) continue;
-
-          // Vertical span for this slice
-          const sliceBot = baseY + wingStartRetract + (wingEndH - wingStartRetract) * (s / SETBACKS_PER_WING);
-          const sliceTop = baseY + wingStartRetract + (wingEndH - wingStartRetract) * ((s + 1) / SETBACKS_PER_WING);
-          const sliceH = sliceTop - sliceBot;
+          const curL = wingL * wingScale;
+          if (curL < 0.03) continue;
+          const sliceBot = baseY + clampedEndH * (s / SLICES);
+          const sliceH = clampedEndH / SLICES;
           if (sliceH < 0.01) continue;
-
-          // Wing quad: 4 corners of a rectangle extending from core edge outward
-          const coreEdge = coreR * 0.85; // slight overlap with core for watertight join
+          const edge = coreR * 0.85;
+          const ww = wingW * wingScale;
           const wingPoly = [
-            { x: cx + dx * coreEdge + nx * wingW, y: cy + dy * coreEdge + ny * wingW },
-            { x: cx + dx * (coreEdge + curWingL) + nx * wingW * wingScale, y: cy + dy * (coreEdge + curWingL) + ny * wingW * wingScale },
-            { x: cx + dx * (coreEdge + curWingL) - nx * wingW * wingScale, y: cy + dy * (coreEdge + curWingL) - ny * wingW * wingScale },
-            { x: cx + dx * coreEdge - nx * wingW, y: cy + dy * coreEdge - ny * wingW },
+            { x: cx + dx * edge + nx * wingW, y: cy + dy * edge + ny * wingW },
+            { x: cx + dx * (edge + curL) + nx * ww, y: cy + dy * (edge + curL) + ny * ww },
+            { x: cx + dx * (edge + curL) - nx * ww, y: cy + dy * (edge + curL) - ny * ww },
+            { x: cx + dx * edge - nx * wingW, y: cy + dy * edge - ny * wingW },
           ];
-
           collectExtrudedPolygon(acc, wingPoly, [], sliceBot, sliceH);
         }
       }
 
-      // ── Needle spire — tapered hexagonal prism ─────────────────────
-      if (spireH > 0.2) {
-        const sBaseR = coreR * 0.6;
-        const sTopR  = sBaseR * 0.04;
-        const segs   = 6;
-        const pos    = [];
-        const idx    = [];
-
-        pos.push(cx, baseY + bodyH, -cy);               // v0 = bottom center
-        pos.push(cx, baseY + bodyH + spireH, -cy);      // v1 = top center
-
-        const ringB = 2;
-        for (let s = 0; s < segs; s++) {
-          const a = (Math.PI * 2 * s) / segs;
-          pos.push(cx + Math.cos(a) * sBaseR, baseY + bodyH, -(cy + Math.sin(a) * sBaseR));
-        }
-        const ringT = ringB + segs;
-        for (let s = 0; s < segs; s++) {
-          const a = (Math.PI * 2 * s) / segs;
-          pos.push(cx + Math.cos(a) * sTopR, baseY + bodyH + spireH, -(cy + Math.sin(a) * sTopR));
-        }
-
-        for (let s = 0; s < segs; s++) {
-          const n = (s + 1) % segs;
-          idx.push(0, ringB + n, ringB + s);
-          idx.push(1, ringT + s, ringT + n);
-          idx.push(ringB + s, ringB + n, ringT + n);
-          idx.push(ringB + s, ringT + n, ringT + s);
-        }
-        acc.add(pos, idx);
+      // Spire: 200m pinnacle pipe
+      if (spireH > 0.1) {
+        buildSpire(acc, cx, cy, baseY + bodyH, spireH, coreR * 0.5, coreR * 0.02);
       }
     },
   },
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Empire State Building -- Art deco stepped tower with 5 setback tiers + antenna
+  // EMPIRE STATE BUILDING — 443m total. Art deco stepped tower.
+  //
+  // Real data (Wikipedia / ESB fact sheet):
+  //   - Base footprint: 129m × 57m (424ft × 187ft)
+  //   - Setback above 5th floor: 18m (60ft) deep on all sides
+  //   - Setbacks at floors: 6, 25, 30, 72, 81, 85
+  //   - Roof height: 381m (1,250ft) at floor 86
+  //   - Antenna mast: 62m (204ft) above roof = 443m total
+  //   - Interior depth max 8.5m from windows (elevator core constraint)
+  //
+  //   Height fractions (of 443m total):
+  //     Floor 6:  ~25m  = 0.056    (first big setback, 18m deep)
+  //     Floor 25: ~96m  = 0.217
+  //     Floor 30: ~115m = 0.260
+  //     Floor 72: ~275m = 0.621
+  //     Floor 85: ~325m = 0.734
+  //     Roof 86:  381m  = 0.860
+  //     Antenna:  443m  = 1.000
   // ──────────────────────────────────────────────────────────────────────────
   empireStateBuilding: {
     name: 'Empire State Building',
     generate(ctx, acc, polygon, baseY, totalH, heightM) {
-      const {
-        collectExtrudedPolygon, shrinkToCentroid,
-        collectBandedBuilding, collectSpire,
-        deterministicFrac, minBBoxDimension,
-      } = ctx;
+      const { collectExtrudedPolygon, shrinkToCentroid } = ctx;
 
-      const frac = deterministicFrac(polygon);
-
-      // Art deco stepped massing: 5 major tiers + antenna
-      // Proportions loosely based on the real building's setback schedule
-      const tiers = [
-        { hFrac: 0.30, scale: 1.00 },  // base / lower floors (full footprint)
-        { hFrac: 0.20, scale: 0.80 },  // first setback
-        { hFrac: 0.18, scale: 0.62 },  // second setback
-        { hFrac: 0.12, scale: 0.48 },  // third setback
-        { hFrac: 0.08, scale: 0.35 },  // observation deck / crown
-      ];
-
-      const antennaFrac = 0.12; // antenna is ~12% of total
-      const bodyH = totalH * (1.0 - antennaFrac);
+      // Real setback schedule as height fractions and remaining width fractions.
+      // The base is rectangular 129×57m. Setback at floor 6 is 18m deep on all
+      // sides, so 93×21m = ~72% × ~37% of base. Upper tower narrows further.
+      const antennaFrac = 62 / 443; // antenna is 14% of total
+      const bodyH = totalH * (1 - antennaFrac);
       const antennaH = totalH * antennaFrac;
+
+      const tiers = [
+        { hFrac: 25 / 381,           scale: 1.00 },  // ground to floor 6
+        { hFrac: (96 - 25) / 381,    scale: 0.72 },  // floor 6-25 (after 18m setback)
+        { hFrac: (115 - 96) / 381,   scale: 0.62 },  // floor 25-30
+        { hFrac: (275 - 115) / 381,  scale: 0.50 },  // floor 30-72 (main shaft)
+        { hFrac: (325 - 275) / 381,  scale: 0.38 },  // floor 72-85
+        { hFrac: (381 - 325) / 381,  scale: 0.28 },  // floor 85-86 (crown/observatory)
+      ];
 
       let y = baseY;
       for (const tier of tiers) {
         const tierH = bodyH * tier.hFrac;
-        const tierPoly = shrinkToCentroid(polygon, tier.scale);
-        if (tierPoly && tierH > 0.05) {
-          const bands = Math.max(1, Math.round(tierH / 1.2));
-          collectBandedBuilding(acc, tierPoly, y, tierH, bands, 0.92, 0.25);
-        }
+        if (tierH < 0.02) continue;
+        const tierPoly = tier.scale < 0.99 ? shrinkToCentroid(polygon, tier.scale) : polygon;
+        if (tierPoly) collectExtrudedPolygon(acc, tierPoly, [], y, tierH);
         y += tierH;
       }
 
-      // Antenna / broadcast tower
-      if (antennaH > 0.3) {
-        collectSpire(acc, polygon, y, antennaH, frac);
+      // Antenna mast
+      if (antennaH > 0.1) {
+        const { cx, cy } = centroid(polygon);
+        const dim = minBBoxDimension(polygon);
+        buildSpire(acc, cx, cy, y, antennaH, dim * 0.08, dim * 0.01);
       }
     },
   },
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Generic supertall -- simple tapered box with 2-3 setback stages
-  // Reused as fallback for known supertalls that lack a bespoke preset.
+  // WILLIS TOWER (Sears Tower) — 527m total. Bundled tube structure.
+  //
+  // Real data (Wikipedia / SOM):
+  //   - Base: 225×225ft (68.6m) square = 9 tubes, each 75×75ft (22.9m)
+  //   - Floor 1-50:  all 9 tubes (full square)
+  //   - Floor 51-66: 7 tubes (NW + SE tubes drop off)
+  //   - Floor 67-90: 5 tubes (cross shape, NE + SW also drop)
+  //   - Floor 91-108: 2 tubes (west + center only)
+  //   - Roof: 442m. Antennas: up to 527m
+  //   - 108 floors, 4.13m per floor average
+  //
+  //   Height fractions (of 527m):
+  //     Floor 50:  ~207m = 0.393  (50 × 4.13)
+  //     Floor 66:  ~273m = 0.518
+  //     Floor 90:  ~372m = 0.706
+  //     Roof 108:  442m  = 0.839
+  //     Antenna:   527m  = 1.000
+  // ──────────────────────────────────────────────────────────────────────────
+  willisTower: {
+    name: 'Willis Tower',
+    generate(ctx, acc, polygon, baseY, totalH, heightM) {
+      const { collectExtrudedPolygon, shrinkToCentroid, minBBoxDimension } = ctx;
+      const { cx, cy } = centroid(polygon);
+      const dim = minBBoxDimension(polygon);
+
+      // Real height fractions
+      const antennaFrac = (527 - 442) / 527;
+      const bodyH = totalH * (1 - antennaFrac);
+      const antennaH = totalH * antennaFrac;
+
+      // Tube unit = 1/3 of building width
+      const unit = dim / 3;
+
+      // The 9 tubes in a 3×3 grid. We define which are present at each tier.
+      // Grid positions: (col, row) where 0=west, 1=center, 2=east; 0=south, 1=center, 2=north
+      //
+      // Floors 1-50: all 9 (full square)
+      // Floors 51-66: drop NW(0,2) and SE(2,0) = 7 tubes
+      // Floors 67-90: also drop NE(2,2) and SW(0,0) = 5 tubes (cross)
+      // Floors 91-108: only W-center(0,1) and center(1,1) = 2 tubes
+      const tiers = [
+        { hFrac: 207 / 442, scale: 1.00 },  // all 9 tubes = full footprint
+        { hFrac: (273 - 207) / 442, scale: 0.88 },  // 7 tubes ≈ 78% area
+        { hFrac: (372 - 273) / 442, scale: 0.74 },  // 5 tubes (cross) ≈ 56% area
+        { hFrac: (442 - 372) / 442, scale: 0.47 },  // 2 tubes ≈ 22% area
+      ];
+
+      let y = baseY;
+      for (const tier of tiers) {
+        const tierH = bodyH * tier.hFrac;
+        if (tierH < 0.02) continue;
+        const tierPoly = tier.scale < 0.99 ? shrinkToCentroid(polygon, tier.scale) : polygon;
+        if (tierPoly) collectExtrudedPolygon(acc, tierPoly, [], y, tierH);
+        y += tierH;
+      }
+
+      // Antenna towers
+      if (antennaH > 0.1) {
+        buildSpire(acc, cx, cy, y, antennaH, dim * 0.06, dim * 0.01);
+      }
+    },
+  },
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // ONE WORLD TRADE CENTER — 541m total. Chamfered square taper.
+  //
+  // Real data (WikiArquitectura / Wikipedia):
+  //   - Base: 61×61m square (200ft)
+  //   - From floor 20 upward, edges bevel inward forming octagonal cross-section
+  //   - Roof: 417m, capped by 46×46m square rotated 45° from base
+  //   - Spire: 124m sculpted mast (417m to 541m)
+  //   - Concrete base (windowless) to 57m height
+  //   - 104 floors. Office floors 20-90.
+  //
+  //   Height fractions (of 541m):
+  //     Floor 20:  ~83m  = 0.153  (bevel starts)
+  //     Roof:      417m  = 0.771
+  //     Spire top: 541m  = 1.000
+  // ──────────────────────────────────────────────────────────────────────────
+  oneWorldTradeCenter: {
+    name: 'One World Trade Center',
+    generate(ctx, acc, polygon, baseY, totalH, heightM) {
+      const { collectExtrudedPolygon, shrinkToCentroid, minBBoxDimension } = ctx;
+      const { cx, cy } = centroid(polygon);
+      const dim = minBBoxDimension(polygon);
+
+      const spireFrac = 124 / 541;
+      const bodyH = totalH * (1 - spireFrac);
+      const spireH = totalH * spireFrac;
+
+      // Square base to floor 20 (concrete podium)
+      const podiumH = bodyH * (83 / 417);
+      collectExtrudedPolygon(acc, polygon, [], baseY, podiumH);
+
+      // Floors 20 to roof: gradual taper from 61m to 46m (scale 0.754)
+      // The taper is linear — 8 isosceles triangles on the facade
+      const taperH = bodyH - podiumH;
+      const TAPER_SLICES = 8;
+      const sliceH = taperH / TAPER_SLICES;
+      for (let i = 0; i < TAPER_SLICES; i++) {
+        const t = i / TAPER_SLICES;
+        const scale = 1.0 - t * (1.0 - 46 / 61); // 1.0 → 0.754
+        const tierPoly = shrinkToCentroid(polygon, scale);
+        if (tierPoly) {
+          collectExtrudedPolygon(acc, tierPoly, [], baseY + podiumH + i * sliceH, sliceH);
+        }
+      }
+
+      // Spire
+      if (spireH > 0.1) {
+        buildSpire(acc, cx, cy, baseY + bodyH, spireH, dim * 0.10, dim * 0.015);
+      }
+    },
+  },
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // CN TOWER — 553m total. Concrete hexagonal shaft + SkyPod + antenna.
+  //
+  // Real data (Wikipedia):
+  //   - Hexagonal concrete shaft with Y-shaped base legs
+  //   - Main observation pod at 342-351m (donut-shaped)
+  //   - SkyPod at 447m
+  //   - Antenna: 96m (457m to 553m)
+  //   - Shaft tapers continuously from base to pod
+  //   - Base Y-legs ~30m across, shaft narrows to ~15m at pod level
+  // ──────────────────────────────────────────────────────────────────────────
+  cnTower: {
+    name: 'CN Tower',
+    generate(ctx, acc, polygon, baseY, totalH, heightM) {
+      const { minBBoxDimension } = ctx;
+      const { cx, cy } = centroid(polygon);
+      const dim = minBBoxDimension(polygon);
+
+      // Real proportions
+      const podFrac    = 346 / 553;  // main pod at 63%
+      const skyPodFrac = 447 / 553;  // skypod at 81%
+      const antFrac    = 96 / 553;   // antenna 17%
+
+      const podH    = totalH * podFrac;
+      const skyPodY = totalH * skyPodFrac;
+      const antH    = totalH * antFrac;
+      const bodyH   = totalH - antH;
+
+      // Tapered hexagonal shaft from base to pod
+      const baseR = dim * 0.45;
+      const podR  = dim * 0.22;
+      const SHAFT_SLICES = 10;
+      const shaftSliceH = podH / SHAFT_SLICES;
+      for (let i = 0; i < SHAFT_SLICES; i++) {
+        const t = i / SHAFT_SLICES;
+        const r = baseR + (podR - baseR) * t;
+        const segs = 6, pos = [], idx = [];
+        const r2 = baseR + (podR - baseR) * ((i + 1) / SHAFT_SLICES);
+        const y0 = baseY + i * shaftSliceH;
+        // Bottom ring
+        pos.push(cx, y0, -cy);
+        for (let s = 0; s < segs; s++) {
+          const a = (Math.PI * 2 * s) / segs;
+          pos.push(cx + Math.cos(a) * r, y0, -(cy + Math.sin(a) * r));
+        }
+        // Top ring
+        const tc = segs + 1;
+        pos.push(cx, y0 + shaftSliceH, -cy);
+        for (let s = 0; s < segs; s++) {
+          const a = (Math.PI * 2 * s) / segs;
+          pos.push(cx + Math.cos(a) * r2, y0 + shaftSliceH, -(cy + Math.sin(a) * r2));
+        }
+        for (let s = 0; s < segs; s++) {
+          const n = (s + 1) % segs;
+          idx.push(0, 1 + s, 1 + n);
+          idx.push(tc, tc + 1 + n, tc + 1 + s);
+          idx.push(1 + s, 1 + n, tc + 1 + n, 1 + s, tc + 1 + n, tc + 1 + s);
+        }
+        acc.add(pos, idx);
+      }
+
+      // Observation pod (wider donut) at 342-351m
+      const podBulgeR = podR * 1.8;
+      const podThick = totalH * (9 / 553);
+      buildSpire(acc, cx, cy, baseY + podH, podThick, podBulgeR, podBulgeR);
+
+      // Narrow shaft from pod to SkyPod
+      const midH = skyPodY - podH - podThick;
+      if (midH > 0.05) {
+        buildSpire(acc, cx, cy, baseY + podH + podThick, midH, podR * 0.7, podR * 0.5);
+      }
+
+      // SkyPod (small wider section)
+      const skyThick = totalH * (5 / 553);
+      buildSpire(acc, cx, cy, baseY + skyPodY, skyThick, podR * 1.1, podR * 1.1);
+
+      // Shaft from SkyPod to antenna base
+      const topShaftH = bodyH - skyPodY - skyThick;
+      if (topShaftH > 0.05) {
+        buildSpire(acc, cx, cy, baseY + skyPodY + skyThick, topShaftH, podR * 0.4, podR * 0.25);
+      }
+
+      // Antenna
+      if (antH > 0.1) {
+        buildSpire(acc, cx, cy, baseY + bodyH, antH, podR * 0.25, podR * 0.02);
+      }
+    },
+  },
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // TAIPEI 101 — 508m total. 8 modules of 8 floors each, bamboo/pagoda form.
+  //
+  // Real data (Wikipedia / CTBUH):
+  //   - 8 identical 8-story modules stacked, each flares outward at top
+  //   - Floor plate: 2,500–4,300 m². Story height: 4.2m
+  //   - Base ~62m wide, each module widens then steps back
+  //   - Spire: ~60m (448m to 508m)
+  //   - Roof: 449.2m
+  //   - Each module: 8 floors × 4.2m = 33.6m tall
+  //   - Below modules: 8-story base/podium (floors 1-8, then 9-16 start modules)
+  // ──────────────────────────────────────────────────────────────────────────
+  taipei101: {
+    name: 'Taipei 101',
+    generate(ctx, acc, polygon, baseY, totalH, heightM) {
+      const { collectExtrudedPolygon, shrinkToCentroid, minBBoxDimension } = ctx;
+      const { cx, cy } = centroid(polygon);
+      const dim = minBBoxDimension(polygon);
+
+      const spireFrac = 60 / 508;
+      const bodyH = totalH * (1 - spireFrac);
+      const spireH = totalH * spireFrac;
+
+      // Base podium (floors 1-8): ~34m of 448m roof = 7.6%
+      const podiumFrac = 34 / 448;
+      const podiumH = bodyH * podiumFrac;
+      collectExtrudedPolygon(acc, polygon, [], baseY, podiumH);
+
+      // 8 pagoda modules, each flares outward then steps back
+      const moduleH = (bodyH - podiumH) / 8;
+      for (let m = 0; m < 8; m++) {
+        const y0 = baseY + podiumH + m * moduleH;
+        // Each module tapers inward slightly as building rises
+        const baseScale = 1.0 - m * 0.04; // top module is ~68% of base
+        const topScale = baseScale * 1.06; // flare: each module widens 6% at top
+
+        // Lower 80% of module (main body, slightly narrower)
+        const lowerH = moduleH * 0.8;
+        const lowerPoly = shrinkToCentroid(polygon, baseScale);
+        if (lowerPoly) collectExtrudedPolygon(acc, lowerPoly, [], y0, lowerH);
+
+        // Upper 20% (flared cap, slightly wider)
+        const upperH = moduleH * 0.2;
+        const upperPoly = shrinkToCentroid(polygon, Math.min(topScale, 1.0));
+        if (upperPoly) collectExtrudedPolygon(acc, upperPoly, [], y0 + lowerH, upperH);
+      }
+
+      // Spire
+      if (spireH > 0.1) {
+        buildSpire(acc, cx, cy, baseY + bodyH, spireH, dim * 0.08, dim * 0.01);
+      }
+    },
+  },
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // PETRONAS TOWERS — 452m total. Twin towers with skybridge.
+  //
+  // Real data (Wikipedia):
+  //   - Floor plan: 8-pointed star (Rub el Hizb) with circular arcs
+  //   - Core: 23×23m (75×75ft)
+  //   - Skybridge at floors 41-42 (170m height), 58.4m long
+  //   - Roof: 405m. Spire: 46m (to 452m)
+  //   - 88 floors. Setbacks at upper floors.
+  //   - Building uses the OSM footprint which is the star shape
+  // ──────────────────────────────────────────────────────────────────────────
+  petronasTowers: {
+    name: 'Petronas Towers',
+    generate(ctx, acc, polygon, baseY, totalH, heightM) {
+      const { collectExtrudedPolygon, shrinkToCentroid, minBBoxDimension } = ctx;
+      const { cx, cy } = centroid(polygon);
+      const dim = minBBoxDimension(polygon);
+
+      const spireFrac = 46 / 452;
+      const bodyH = totalH * (1 - spireFrac);
+      const spireH = totalH * spireFrac;
+
+      // Main tower body to roof — gradual taper with few setbacks
+      // Real building has subtle setbacks at upper floors
+      const tiers = [
+        { hFrac: 0.60, scale: 1.00 },  // lower 60% full width
+        { hFrac: 0.20, scale: 0.90 },  // mild setback
+        { hFrac: 0.12, scale: 0.78 },  // upper setback
+        { hFrac: 0.08, scale: 0.60 },  // crown
+      ];
+
+      let y = baseY;
+      for (const tier of tiers) {
+        const tierH = bodyH * tier.hFrac;
+        if (tierH < 0.02) continue;
+        const tierPoly = tier.scale < 0.99 ? shrinkToCentroid(polygon, tier.scale) : polygon;
+        if (tierPoly) collectExtrudedPolygon(acc, tierPoly, [], y, tierH);
+        y += tierH;
+      }
+
+      // Spire
+      if (spireH > 0.1) {
+        buildSpire(acc, cx, cy, y, spireH, dim * 0.10, dim * 0.01);
+      }
+    },
+  },
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Generic supertall fallback — for landmarks in the registry without a
+  // bespoke preset. Uses the OSM footprint with simple proportional setbacks.
   // ──────────────────────────────────────────────────────────────────────────
   genericSupertall: {
     name: 'Generic Supertall',
     generate(ctx, acc, polygon, baseY, totalH, heightM) {
-      const {
-        collectExtrudedPolygon, shrinkToCentroid,
-        collectBandedBuilding, collectSpire,
-        deterministicFrac,
-      } = ctx;
-
-      const frac = deterministicFrac(polygon);
-
-      // 3-stage setback: base, mid, crown + optional spire
-      const stages = [
-        { hFrac: 0.45, scale: 1.00 },
-        { hFrac: 0.30, scale: 0.82 },
-        { hFrac: 0.17, scale: 0.65 },
-      ];
+      const { collectExtrudedPolygon, shrinkToCentroid, minBBoxDimension } = ctx;
+      const { cx, cy } = centroid(polygon);
+      const dim = minBBoxDimension(polygon);
 
       const spireFrac = 0.08;
-      const bodyH = totalH * (1.0 - spireFrac);
+      const bodyH = totalH * (1 - spireFrac);
       const spireH = totalH * spireFrac;
 
+      const tiers = [
+        { hFrac: 0.50, scale: 1.00 },
+        { hFrac: 0.30, scale: 0.85 },
+        { hFrac: 0.20, scale: 0.65 },
+      ];
+
       let y = baseY;
-      for (const stage of stages) {
-        const stageH = bodyH * stage.hFrac;
-        const stagePoly = shrinkToCentroid(polygon, stage.scale);
-        if (stagePoly && stageH > 0.05) {
-          const bands = Math.max(2, Math.round(stageH / 1.5));
-          collectBandedBuilding(acc, stagePoly, y, stageH, bands, 0.93, 0.25);
-        }
-        y += stageH;
+      for (const tier of tiers) {
+        const tierH = bodyH * tier.hFrac;
+        if (tierH < 0.02) continue;
+        const tierPoly = tier.scale < 0.99 ? shrinkToCentroid(polygon, tier.scale) : polygon;
+        if (tierPoly) collectExtrudedPolygon(acc, tierPoly, [], y, tierH);
+        y += tierH;
       }
 
-      // Spire / pinnacle
-      if (spireH > 0.2) {
-        collectSpire(acc, polygon, y, spireH, frac);
+      if (spireH > 0.1) {
+        buildSpire(acc, cx, cy, y, spireH, dim * 0.07, dim * 0.01);
       }
     },
   },
 };
 
-// ── Alias mappings -- landmarks.json references these camelCase names,
-//    map them to the preset keys above. Landmarks without a bespoke
-//    generator fall through to genericSupertall.
+// ── Alias mappings ──────────────────────────────────────────────────────────
+// Each landmark in landmarks.json maps to one of the presets above.
 const PRESET_ALIASES = {
-  burjKhalifa:           'burjKhalifa',
-  empireStateBuilding:   'empireStateBuilding',
-  oneWorldTradeCenter:   'genericSupertall',
-  willisTower:           'genericSupertall',
-  cnTower:               'genericSupertall',
-  taipei101:             'genericSupertall',
-  petronasTowers:        'genericSupertall',
-  shanghaiTower:         'genericSupertall',
-  lotteWorldTower:       'genericSupertall',
-  tokyoSkytree:          'genericSupertall',
+  burjKhalifa:         'burjKhalifa',
+  empireStateBuilding: 'empireStateBuilding',
+  oneWorldTradeCenter: 'oneWorldTradeCenter',
+  willisTower:         'willisTower',
+  cnTower:             'cnTower',
+  taipei101:           'taipei101',
+  petronasTowers:      'petronasTowers',
+  shanghaiTower:       'genericSupertall',
+  lotteWorldTower:     'genericSupertall',
+  tokyoSkytree:        'cnTower', // similar profile: tapered shaft + observation pod + antenna
 };
 
 // ─── Public API ─────────────────────────────────────────────────────────────
