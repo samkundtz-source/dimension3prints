@@ -401,28 +401,32 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     buildingCount++;
   }
 
-  // ── 5. Water (black, RECESSED) — sits lower than roads/buildings ────────
-  // Water extrudes from Y=0 up to BASE - WATER_DEPTH, creating a depression.
-  // In multi-material slicing, the slicer subtracts this from the white base,
-  // producing a real physical divot filled with black filament.
-  const MIN_AREA_MM2  = 3.0;
-  const WATER_DEPTH   = 0.4; // mm below base surface — subtle depression
-  const WATER_TOP     = Math.max(BASE - WATER_DEPTH, 0.2); // don't go below 0.2mm
-  const WATER_SLAB_H  = WATER_TOP; // extrude from Y=0 to WATER_TOP
+  // ── 5. Water (black, RECESSED) — thin slab on top of base ───────────────
+  // Water sits ON TOP of the base plate as a dark slab, but THINNER than
+  // roads (0.15mm vs 0.3mm). The height difference makes water read as
+  // recessed compared to roads. Roads that cross water simply cover it.
+  const MIN_AREA_MM2    = 3.0;
+  const WATER_SLAB_BASE = BASE; // sits on the base surface
+  const WATER_SLAB_H    = NOZZLE_MM * 0.375; // 0.15mm — thinner than roads
 
   let waterCount = 0;
+  const waterFootprints = []; // for bridge detection later
   onProgress?.('Building water…', 78);
   for (const feat of features.water) {
     const poly = clipToHex(feat.polygon, hexInner);
     if (!poly || poly.length < 3) continue;
     if (Math.abs(signedArea2D(poly)) < MIN_AREA_MM2) continue;
-    // Skip water polygons that sit inside a building ring (stops OSM
-    // "pond inside courtyard" and similar features punching holes in the base)
     if (enclosedByAnyBuilding(poly)) continue;
     const bldgHoles = findOverlappingBuildings(poly);
     const allHoles  = [...(feat.holes || []), ...bldgHoles];
-    // Extrude from bottom (0) to WATER_TOP — sits below base surface
-    collectExtrudedPolygon(blackAcc, poly, allHoles, 0, WATER_SLAB_H);
+    collectExtrudedPolygon(blackAcc, poly, allHoles, WATER_SLAB_BASE, WATER_SLAB_H);
+    // Store for bridge detection
+    let wMinX = Infinity, wMaxX = -Infinity, wMinY = Infinity, wMaxY = -Infinity;
+    for (const p of poly) {
+      if (p.x < wMinX) wMinX = p.x; if (p.x > wMaxX) wMaxX = p.x;
+      if (p.y < wMinY) wMinY = p.y; if (p.y > wMaxY) wMaxY = p.y;
+    }
+    waterFootprints.push({ polygon: poly, bbox: { minX: wMinX, maxX: wMaxX, minY: wMinY, maxY: wMaxY } });
     waterCount++;
   }
 
@@ -446,15 +450,23 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       if (!clipped || clipped.length < 3) continue;
       if (enclosedByAnyBuilding(clipped)) continue;
       const bldgHoles = findOverlappingBuildings(clipped);
-      collectExtrudedPolygon(blackAcc, clipped, bldgHoles, 0, WATER_SLAB_H);
+      collectExtrudedPolygon(blackAcc, clipped, bldgHoles, WATER_SLAB_BASE, WATER_SLAB_H);
+      // Store for bridge detection
+      let wMinX = Infinity, wMaxX = -Infinity, wMinY = Infinity, wMaxY = -Infinity;
+      for (const p of clipped) {
+        if (p.x < wMinX) wMinX = p.x; if (p.x > wMaxX) wMaxX = p.x;
+        if (p.y < wMinY) wMinY = p.y; if (p.y > wMaxY) wMaxY = p.y;
+      }
+      waterFootprints.push({ polygon: clipped, bbox: { minX: wMinX, maxX: wMaxX, minY: wMinY, maxY: wMaxY } });
       waterCount++;
     }
   }
 
   // ── 6. Parks — with building gaps ───────────────────────────────────────────
   // Roads and parks sit ON TOP of the base plate as a thin black layer.
-  const ROAD_BASE = BASE;
-  const ROAD_SLAB = ROAD_HEIGHT;
+  const ROAD_BASE   = BASE;
+  const ROAD_SLAB   = ROAD_HEIGHT;
+  const BRIDGE_BASE = ROAD_BASE + WATER_SLAB_H + 0.15; // bridge deck above water
 
   onProgress?.('Building parks…', 80);
   for (const feat of features.parks) {
@@ -478,7 +490,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const realW = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.residential);
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW = Math.max(realW, minW);
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, ROAD_BASE, ROAD_SLAB, findOverlappingBuildings);
+    const isBridge = feat.tags.bridge && feat.tags.bridge !== 'no';
+    const roadY    = isBridge ? BRIDGE_BASE : ROAD_BASE;
+    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadY, ROAD_SLAB, findOverlappingBuildings);
     roadCount++;
   }
 
@@ -489,7 +503,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const realW = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.path);
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.path;
     const halfW = Math.max(realW, minW);
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, ROAD_BASE, ROAD_SLAB, findOverlappingBuildings);
+    const isBridge = feat.tags.bridge && feat.tags.bridge !== 'no';
+    const pathY    = isBridge ? BRIDGE_BASE : ROAD_BASE;
+    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, pathY, ROAD_SLAB, findOverlappingBuildings);
     roadCount++;
   }
 

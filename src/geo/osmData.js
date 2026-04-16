@@ -48,8 +48,11 @@ function buildQuery(bbox) {
   way["building"](${bb});
   way["highway"](${bb});
   way["natural"="water"](${bb});
-  way["waterway"~"^(river|stream|canal|drain)$"](${bb});
+  way["waterway"](${bb});
   way["water"](${bb});
+  way["landuse"="reservoir"](${bb});
+  way["landuse"="basin"](${bb});
+  way["natural"="wetland"](${bb});
   way["leisure"~"^(park|garden|pitch|playground|nature_reserve)$"](${bb});
   way["landuse"~"^(park|forest|grass|meadow|recreation_ground|village_green|cemetery)$"](${bb});
   way["natural"~"^(wood|scrub|grassland|heath)$"](${bb});
@@ -57,6 +60,8 @@ function buildQuery(bbox) {
   relation["natural"="water"](${bb});
   relation["water"](${bb});
   relation["waterway"](${bb});
+  relation["landuse"="reservoir"](${bb});
+  relation["landuse"="basin"](${bb});
   relation["leisure"~"^(park|garden|pitch|playground|nature_reserve)$"](${bb});
   relation["landuse"~"^(park|forest|grass|meadow|recreation_ground|village_green|cemetery)$"](${bb});
   relation["building"](${bb});
@@ -275,7 +280,9 @@ function classifyTags(tags) {
     return 'road';
   }
 
-  if (tags.natural === 'water' || tags.water || tags.landuse === 'reservoir') {
+  if (tags.natural === 'water' || tags.water || tags.landuse === 'reservoir' ||
+      tags.landuse === 'basin' || tags.natural === 'wetland' ||
+      tags.waterway === 'riverbank' || tags.waterway === 'dock') {
     return 'water';
   }
 
