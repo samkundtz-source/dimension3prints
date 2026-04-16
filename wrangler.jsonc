@@ -13,8 +13,5 @@
     "directory": "./dist",
     "binding": "ASSETS",
     "not_found_handling": "single-page-application"
-  },
-  "kv_namespaces": [
-    { "binding": "SETTINGS", "id": "PLACEHOLDER_REPLACE_AFTER_CREATE" }
-  ]
+  }
 }
