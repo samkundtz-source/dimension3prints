@@ -557,7 +557,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // and identify which order it belongs to.
   if (orderId && orderId.length > 0) {
     onProgress?.('Engraving order ID…', 91);
-    engraveTextOnBottom(baseAcc, orderId);
+    engraveTextOnBottom(blackAcc, orderId);
   }
 
   // ── Build exactly 3 combined meshes ───────────────────────────────────────
@@ -723,30 +723,32 @@ const PIXEL_FONT = {
 };
 
 /**
- * Engrave text on the bottom of the base plate as tiny raised blocks.
- * Each pixel is a small cube raised 0.3mm below Y=0 (sticking out downward).
- * When you flip the print, you can read the order ID.
+ * Engrave text INTO the bottom of the base plate as black recessed pixels.
+ * Each pixel is a thin black slab that sits inside the base (from Y=0 up
+ * to Y=ENGRAVE_DEPTH). Added to blackAcc so it renders as dark text.
+ * When you flip the print, the dark recessed text is readable against the
+ * white base.
  */
 function engraveTextOnBottom(acc, text) {
-  const PIXEL_SIZE = 0.6;  // mm per pixel
-  const BUMP_H     = 0.3;  // how far the text sticks out below the base
-  const CHAR_GAP   = 1;    // 1 pixel gap between characters
-  const CHAR_W     = 3;    // pixels per character width
+  const PIXEL_SIZE    = 0.7;  // mm per pixel
+  const ENGRAVE_DEPTH = 0.4;  // mm into the base (from bottom up)
+  const CHAR_GAP      = 1;    // 1 pixel gap between characters
+  const CHAR_W        = 3;    // pixels per character width
 
   const chars = text.toUpperCase().split('');
 
   // Calculate total width in pixels
   let totalPixels = 0;
   for (const ch of chars) totalPixels += CHAR_W + CHAR_GAP;
-  totalPixels -= CHAR_GAP; // no gap after last char
+  totalPixels -= CHAR_GAP;
 
   // Centre the text on the base bottom
   const totalMM = totalPixels * PIXEL_SIZE;
   const startX  = -totalMM / 2;
-  const startZ  = -1.5 * PIXEL_SIZE; // centred vertically (5 rows × PIXEL_SIZE / 2)
+  const startZ  = -2.5 * PIXEL_SIZE; // centred vertically (5 rows)
 
-  const baseY = 0;          // bottom of the base plate
-  const bumpY = -BUMP_H;    // text sticks out below
+  const botY = 0;                 // bottom of base plate
+  const topY = ENGRAVE_DEPTH;     // how far up into the base the engraving goes
 
   let cursorX = startX;
 
@@ -759,26 +761,24 @@ function engraveTextOnBottom(acc, text) {
       for (let col = 0; col < 3; col++) {
         if (!(bits & (1 << (2 - col)))) continue; // pixel off
 
-        // Each pixel is a tiny cube: PIXEL_SIZE × BUMP_H × PIXEL_SIZE
         const px = cursorX + col * PIXEL_SIZE;
         const pz = startZ + row * PIXEL_SIZE;
         const x0 = px, x1 = px + PIXEL_SIZE;
         const z0 = pz, z1 = pz + PIXEL_SIZE;
 
-        // 8 vertices of a tiny cube
-        // Top: 0=x0z0, 1=x1z0, 2=x1z1, 3=x0z1
-        // Bot: 4=x0z0, 5=x1z0, 6=x1z1, 7=x0z1
+        // Tiny cube recessed INTO the base (Y=0 to Y=ENGRAVE_DEPTH)
+        // Bottom face visible when print is flipped over
         const pos = [
-          x0, baseY, z0,  x1, baseY, z0,  x1, baseY, z1,  x0, baseY, z1,
-          x0, bumpY, z0,  x1, bumpY, z0,  x1, bumpY, z1,  x0, bumpY, z1,
+          x0, botY, z0,  x1, botY, z0,  x1, botY, z1,  x0, botY, z1,  // 0-3: bottom
+          x0, topY, z0,  x1, topY, z0,  x1, topY, z1,  x0, topY, z1,  // 4-7: top
         ];
         const idx = [
-          0,2,1, 0,3,2,   // top (hidden, inside base)
-          4,5,6, 4,6,7,   // bottom (visible when flipped)
-          0,1,5, 0,5,4,   // front (z0 side)
-          3,6,2, 3,7,6,   // back (z1 side)
-          0,4,7, 0,7,3,   // left (x0 side)
-          1,2,6, 1,6,5,   // right (x1 side)
+          0,1,2, 0,2,3,   // bottom face (visible when flipped — normal faces -Y)
+          4,6,5, 4,7,6,   // top face (hidden inside base)
+          0,5,1, 0,4,5,   // front wall (z0)
+          3,2,6, 3,6,7,   // back wall (z1)
+          0,3,7, 0,7,4,   // left wall (x0)
+          1,5,6, 1,6,2,   // right wall (x1)
         ];
         acc.add(pos, idx);
       }
