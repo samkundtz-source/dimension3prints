@@ -124,7 +124,7 @@ export function parseOSMData(json, projection, hexVertices) {
   }
 
   // ── 3. Parse ways ─────────────────────────────────────────────────────────
-  const features = { buildings: [], roads: [], paths: [], water: [], parks: [], trees: [] };
+  const features = { buildings: [], roads: [], paths: [], water: [], waterways: [], parks: [], trees: [] };
   let totalWays = 0, skippedNoCoords = 0, skippedUnclassified = 0, skippedClipped = 0;
   const processedWayIds = new Set();
 
@@ -219,6 +219,7 @@ export function parseOSMData(json, projection, hexVertices) {
     `roads:${features.roads.length} ` +
     `paths:${features.paths.length} ` +
     `water:${features.water.length} ` +
+    `waterways:${features.waterways.length} ` +
     `parks:${features.parks.length} ` +
     `trees:${features.trees.length} ` +
     `| relations added: ${relationsAdded}` +
@@ -274,8 +275,13 @@ function classifyTags(tags) {
     return 'road';
   }
 
-  if (tags.waterway || tags.natural === 'water' || tags.landuse === 'reservoir') {
+  if (tags.natural === 'water' || tags.water || tags.landuse === 'reservoir') {
     return 'water';
+  }
+
+  // Linear waterways (rivers, streams, canals) — these are lines, not polygons
+  if (tags.waterway) {
+    return 'waterway';
   }
 
   if (GREEN_LANDUSE.has(tags.landuse) ||
@@ -292,7 +298,7 @@ function classifyTags(tags) {
 /** Returns true if the feature was added, false if it was rejected/clipped. */
 function addFeature(type, coords, tags, hexVertices, features) {
   const isArea = type === 'building' || type === 'water' || type === 'park';
-  const isLine = type === 'road' || type === 'path';
+  const isLine = type === 'road' || type === 'path' || type === 'waterway';
 
   if (isArea) {
     // Need a closed ring with at least 3 unique points
@@ -311,8 +317,12 @@ function addFeature(type, coords, tags, hexVertices, features) {
 
   } else if (isLine) {
     if (coords.length < 2) return false;
-    const bucket = type === 'road' ? features.roads : features.paths;
-    bucket.push({ points: coords, tags });
+    if (type === 'waterway') {
+      features.waterways.push({ points: coords, tags });
+    } else {
+      const bucket = type === 'road' ? features.roads : features.paths;
+      bucket.push({ points: coords, tags });
+    }
     return true;
   }
 

@@ -426,6 +426,31 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     waterCount++;
   }
 
+  // ── 5b. Waterways (rivers, streams, canals) — buffered lines, recessed ───
+  // These are linestrings in OSM, not polygons. Buffer them to a visible width
+  // and extrude at the same recessed level as area water.
+  const WATERWAY_WIDTHS_M = {
+    river: 30, canal: 15, stream: 4, drain: 2, ditch: 1.5,
+  };
+  const WATERWAY_MIN_HALF_MM = 0.8; // minimum visible half-width in mm
+
+  if (features.waterways && features.waterways.length > 0) {
+    onProgress?.('Building waterways…', 79);
+    for (const feat of features.waterways) {
+      const wType = feat.tags.waterway || 'stream';
+      const realW = hScale * (WATERWAY_WIDTHS_M[wType] ?? WATERWAY_WIDTHS_M.stream);
+      const halfW = Math.max(realW, WATERWAY_MIN_HALF_MM);
+      const poly  = bufferLinestring(feat.points, halfW);
+      if (!poly) continue;
+      const clipped = clipToHex(poly, hexInner);
+      if (!clipped || clipped.length < 3) continue;
+      if (enclosedByAnyBuilding(clipped)) continue;
+      const bldgHoles = findOverlappingBuildings(clipped);
+      collectExtrudedPolygon(blackAcc, clipped, bldgHoles, 0, WATER_SLAB_H);
+      waterCount++;
+    }
+  }
+
   // ── 6. Parks — with building gaps ───────────────────────────────────────────
   // Roads and parks sit ON TOP of the base plate as a thin black layer.
   const ROAD_BASE = BASE;
