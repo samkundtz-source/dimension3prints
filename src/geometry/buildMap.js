@@ -218,37 +218,73 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   /**
-   * True if the polygon is fully enclosed inside any building's bounding box.
-   * This catches ring-shaped buildings (e.g. the Colosseum) where an inner
-   * park/water polygon sits in the hollow middle — the centroid is NOT inside
-   * the thin wall polygon, but the park's bbox IS inside the building's bbox.
-   * Also checks point-in-polygon as a secondary test for non-ring buildings.
+   * True if the polygon should be suppressed because it sits inside a building
+   * or a ring of buildings. Uses four independent detection strategies so it
+   * catches single-ring buildings, multipolygon courtyards, AND multi-segment
+   * ring structures (e.g. the Colosseum made of many building:part ways).
    */
   function enclosedByAnyBuilding(poly) {
-    // Compute the polygon's own bounding box
+    // ── Precompute park/water bbox and centroid ──────────────────────────
     let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
+    let cx = 0, cy = 0;
     for (const p of poly) {
       if (p.x < pMinX) pMinX = p.x;
       if (p.x > pMaxX) pMaxX = p.x;
       if (p.y < pMinY) pMinY = p.y;
       if (p.y > pMaxY) pMaxY = p.y;
+      cx += p.x; cy += p.y;
     }
+    cx /= poly.length;
+    cy /= poly.length;
 
-    // Check ALL building footprints — a ring building's bbox encloses the
-    // inner polygon even though the spatial grid might not match centroid cells.
+    // ── Test 1: Park bbox fully inside a single building bbox ───────────
     for (const bf of buildingFootprints) {
-      // Test 1: Is this polygon's bbox fully inside the building's bbox?
       if (bf.bbox.minX <= pMinX && bf.bbox.maxX >= pMaxX &&
           bf.bbox.minY <= pMinY && bf.bbox.maxY >= pMaxY) {
         return true;
       }
     }
 
-    // Test 2: Centroid inside any building polygon (for solid non-ring buildings)
-    let cx = 0, cy = 0;
-    for (const p of poly) { cx += p.x; cy += p.y; }
-    cx /= poly.length;
-    cy /= poly.length;
+    // ── Test 2: Centroid inside a building's hole polygon ───────────────
+    // For multipolygon buildings, OSM stores the courtyard as an inner ring.
+    // If the park centroid is inside that hole, it's in the courtyard.
+    for (const bf of buildingFootprints) {
+      if (!bf.holes || bf.holes.length === 0) continue;
+      for (const hole of bf.holes) {
+        if (!hole || hole.length < 3) continue;
+        if (pointInSimplePolygon({ x: cx, y: cy }, hole)) return true;
+      }
+    }
+
+    // ── Test 3: Multiple buildings surround the park ────────────────────
+    // For ring structures made of many building segments (building:part),
+    // no single bbox contains the park. Instead, check if the park's
+    // perimeter vertices are covered by building bboxes from all sides.
+    // Divide vertices into 4 quadrants around the centroid. If 3+ quadrants
+    // have at least one vertex inside a building bbox, the park is enclosed.
+    const quadCovered = [false, false, false, false]; // NE, NW, SW, SE
+    for (const p of poly) {
+      const qi = (p.y < cy ? 2 : 0) + (p.x < cx ? 1 : 0); // quadrant index
+      if (quadCovered[qi]) continue; // already found coverage here
+
+      // Use spatial grid for efficient lookup
+      const [pgx, pgy] = gridCell(p.x, p.y);
+      if (pgx < 0 || pgy < 0 || pgx >= GRID_SIZE || pgy >= GRID_SIZE) continue;
+      const bucket = buildingGrid[gridKey(pgx, pgy)];
+      if (!bucket) continue;
+      for (const bi of bucket) {
+        const bf = buildingFootprints[bi];
+        if (p.x >= bf.bbox.minX && p.x <= bf.bbox.maxX &&
+            p.y >= bf.bbox.minY && p.y <= bf.bbox.maxY) {
+          quadCovered[qi] = true;
+          break;
+        }
+      }
+    }
+    const coveredQuads = quadCovered[0] + quadCovered[1] + quadCovered[2] + quadCovered[3];
+    if (coveredQuads >= 3) return true;
+
+    // ── Test 4: Centroid inside any building polygon (solid buildings) ──
     const [gcx, gcy] = gridCell(cx, cy);
     if (gcx >= 0 && gcy >= 0 && gcx < GRID_SIZE && gcy < GRID_SIZE) {
       const bucket = buildingGrid[gridKey(gcx, gcy)];
@@ -261,6 +297,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
         }
       }
     }
+
     return false;
   }
 
