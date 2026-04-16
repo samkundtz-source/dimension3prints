@@ -146,94 +146,166 @@ const registry = new LandmarkRegistry();
 export const LANDMARK_PRESETS = {
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Burj Khalifa -- graduated stepped tower with needle spire
+  // Burj Khalifa — Y-shaped trilobal tower with spiral wing retractions
   //
-  // The real Burj Khalifa has a Y-shaped footprint where the 3 wings
-  // retract progressively as the building rises. The key visual feature
-  // is many small graduated setback levels creating a smooth tapering
-  // silhouette — NOT big chunky steps.
+  // The real building has 3 wings at 120° around a hexagonal core.
+  // Each wing is ~55m wide at the base. As the tower rises, ONE wing
+  // retracts at each setback tier in a rotating A→B→C→A spiral, giving
+  // an asymmetric stepped silhouette. 27 setbacks total (~every 7 floors).
   //
-  // We use ~15 thin setback slices with a smooth scale curve that:
-  //  - Holds nearly full width for the bottom 40%
-  //  - Gradually tapers through the middle section
-  //  - Narrows to a slender core at the top
-  //  - Finishes with a tall needle spire (~20% of total height)
+  // We generate this as:
+  //   - A hexagonal core column that runs the full body height
+  //   - 3 wing prisms that each retract independently at staggered heights
+  //   - A needle spire on top (~24% of total = 200m of 828m)
+  //
+  // This approach creates the distinctive asymmetric Y-shape where
+  // different sides of the building step back at different levels.
   // ──────────────────────────────────────────────────────────────────────────
   burjKhalifa: {
     name: 'Burj Khalifa',
     generate(ctx, acc, polygon, baseY, totalH, heightM) {
-      const {
-        collectExtrudedPolygon, shrinkToCentroid,
-        minBBoxDimension,
-      } = ctx;
+      const { collectExtrudedPolygon, minBBoxDimension } = ctx;
 
-      // Spire is the top ~20% (real: 244m of 828m ≈ 29%, but at model
-      // scale a slightly shorter spire reads better)
-      const spireFrac = 0.20;
+      // Find centroid and bounding dimensions of the OSM footprint
+      let cx = 0, cy = 0;
+      for (const p of polygon) { cx += p.x; cy += p.y; }
+      cx /= polygon.length;
+      cy /= polygon.length;
+
+      const dim = minBBoxDimension(polygon);
+
+      // ── Proportions based on the real building ──────────────────────
+      // Total: 828m. Spire: 200m (pinnacle pipe). Body: 628m.
+      const spireFrac = 0.24;
       const bodyH  = totalH * (1.0 - spireFrac);
       const spireH = totalH * spireFrac;
 
-      // 15 graduated setback levels — smooth taper curve
-      // Each level is a thin slice of the OSM footprint shrunk toward centroid.
-      // The scale curve holds wide at the base then accelerates the taper.
-      const LEVELS = 15;
-      const sliceH = bodyH / LEVELS;
+      // Core radius and wing dimensions relative to footprint
+      const coreR  = dim * 0.18;  // hexagonal core ~18% of footprint width
+      const wingL  = dim * 0.42;  // wing length from core center outward
+      const wingW  = dim * 0.14;  // wing half-width
 
-      let y = baseY;
-      for (let i = 0; i < LEVELS; i++) {
-        // t goes from 0 (bottom) to 1 (top of body)
-        const t = i / LEVELS;
-
-        // Smooth taper curve: slow taper at bottom, accelerating toward top
-        // scale = 1.0 at t=0, ~0.95 at t=0.4, ~0.7 at t=0.7, ~0.35 at t=1.0
-        const scale = 1.0 - 0.65 * (t * t);
-
-        const tierPoly = scale < 0.99
-          ? shrinkToCentroid(polygon, Math.max(0.15, scale))
-          : polygon;
-
-        if (tierPoly) {
-          collectExtrudedPolygon(acc, tierPoly, [], y, sliceH);
+      // ── Build the hexagonal core (runs full body height) ───────────
+      const coreSegs = 6;
+      {
+        const pos = [], idx = [];
+        // Top cap center + ring
+        pos.push(cx, baseY + bodyH, -cy); // v0 = top center
+        for (let s = 0; s < coreSegs; s++) {
+          const a = (Math.PI * 2 * s) / coreSegs;
+          pos.push(cx + Math.cos(a) * coreR, baseY + bodyH, -(cy + Math.sin(a) * coreR));
         }
-        y += sliceH;
+        // Bottom cap center + ring
+        const bc = coreSegs + 1;
+        pos.push(cx, baseY, -cy); // bottom center
+        for (let s = 0; s < coreSegs; s++) {
+          const a = (Math.PI * 2 * s) / coreSegs;
+          pos.push(cx + Math.cos(a) * coreR, baseY, -(cy + Math.sin(a) * coreR));
+        }
+        // Top cap tris
+        for (let s = 0; s < coreSegs; s++) {
+          idx.push(0, 1 + s, 1 + (s + 1) % coreSegs);
+        }
+        // Bottom cap tris (reversed)
+        for (let s = 0; s < coreSegs; s++) {
+          idx.push(bc, bc + 1 + (s + 1) % coreSegs, bc + 1 + s);
+        }
+        // Side walls
+        for (let s = 0; s < coreSegs; s++) {
+          const t0 = 1 + s, t1 = 1 + (s + 1) % coreSegs;
+          const b0 = bc + 1 + s, b1 = bc + 1 + (s + 1) % coreSegs;
+          idx.push(t0, t1, b1, t0, b1, b0);
+        }
+        acc.add(pos, idx);
       }
 
-      // Needle spire — tall hexagonal tapered prism from centroid
+      // ── 3 wings at 120° intervals ─────────────────────────────────
+      // Each wing has 9 setback tiers (27 total / 3 wings). The spiral
+      // pattern staggers them: wing 0 sets back at tiers 0,3,6,9,...
+      // wing 1 at tiers 1,4,7,10,...  wing 2 at tiers 2,5,8,11,...
+      //
+      // Real building: wings retract progressively, each wing going from
+      // full length at the base to fully retracted (just the core) at
+      // roughly 75% of body height, staggered so each wing terminates
+      // at a different elevation.
+
+      const TOTAL_SETBACKS = 27;
+      const SETBACKS_PER_WING = 9;
+
+      for (let w = 0; w < 3; w++) {
+        // Wing direction (120° apart, starting at 90° so one points "up")
+        const wingAngle = (Math.PI / 2) + (w * Math.PI * 2 / 3);
+        const dx = Math.cos(wingAngle);
+        const dy = Math.sin(wingAngle);
+        // Perpendicular for wing width
+        const nx = -dy;
+        const ny = dx;
+
+        // Each wing's setbacks are staggered in the spiral:
+        // Wing 0 starts retracting at tier w=0, wing 1 at tier 1, wing 2 at tier 2
+        // This means wing 0 terminates lowest, wing 2 terminates highest
+        const wingStartRetract = (w / TOTAL_SETBACKS) * bodyH;
+        // Each wing terminates at a different height (staggered by ~8% of body)
+        const wingEndFrac = 0.55 + w * 0.10; // wing 0: 55%, wing 1: 65%, wing 2: 75%
+        const wingEndH = bodyH * wingEndFrac;
+
+        // Build wing as stacked slices, each shorter than the last
+        for (let s = 0; s < SETBACKS_PER_WING; s++) {
+          // Height fraction within this wing's retraction schedule
+          const t = s / SETBACKS_PER_WING;
+          // Wing length decreases from full to 0 as we go up
+          const wingScale = 1.0 - t;
+          const curWingL = wingL * wingScale;
+          if (curWingL < 0.05) continue;
+
+          // Vertical span for this slice
+          const sliceBot = baseY + wingStartRetract + (wingEndH - wingStartRetract) * (s / SETBACKS_PER_WING);
+          const sliceTop = baseY + wingStartRetract + (wingEndH - wingStartRetract) * ((s + 1) / SETBACKS_PER_WING);
+          const sliceH = sliceTop - sliceBot;
+          if (sliceH < 0.01) continue;
+
+          // Wing quad: 4 corners of a rectangle extending from core edge outward
+          const coreEdge = coreR * 0.85; // slight overlap with core for watertight join
+          const wingPoly = [
+            { x: cx + dx * coreEdge + nx * wingW, y: cy + dy * coreEdge + ny * wingW },
+            { x: cx + dx * (coreEdge + curWingL) + nx * wingW * wingScale, y: cy + dy * (coreEdge + curWingL) + ny * wingW * wingScale },
+            { x: cx + dx * (coreEdge + curWingL) - nx * wingW * wingScale, y: cy + dy * (coreEdge + curWingL) - ny * wingW * wingScale },
+            { x: cx + dx * coreEdge - nx * wingW, y: cy + dy * coreEdge - ny * wingW },
+          ];
+
+          collectExtrudedPolygon(acc, wingPoly, [], sliceBot, sliceH);
+        }
+      }
+
+      // ── Needle spire — tapered hexagonal prism ─────────────────────
       if (spireH > 0.2) {
-        let cx = 0, cy = 0;
-        for (const p of polygon) { cx += p.x; cy += p.y; }
-        cx /= polygon.length;
-        cy /= polygon.length;
+        const sBaseR = coreR * 0.6;
+        const sTopR  = sBaseR * 0.04;
+        const segs   = 6;
+        const pos    = [];
+        const idx    = [];
 
-        const dim = minBBoxDimension(polygon);
-        const baseR = dim * 0.15;
-        const topR  = baseR * 0.04; // sharp needle
-        const segs  = 6;
-        const pos   = [];
-        const idx   = [];
-
-        pos.push(cx, y, -cy);                // v0 = bottom center
-        pos.push(cx, y + spireH, -cy);       // v1 = top center
+        pos.push(cx, baseY + bodyH, -cy);               // v0 = bottom center
+        pos.push(cx, baseY + bodyH + spireH, -cy);      // v1 = top center
 
         const ringB = 2;
         for (let s = 0; s < segs; s++) {
           const a = (Math.PI * 2 * s) / segs;
-          pos.push(cx + Math.cos(a) * baseR, y, -(cy + Math.sin(a) * baseR));
+          pos.push(cx + Math.cos(a) * sBaseR, baseY + bodyH, -(cy + Math.sin(a) * sBaseR));
         }
         const ringT = ringB + segs;
         for (let s = 0; s < segs; s++) {
           const a = (Math.PI * 2 * s) / segs;
-          pos.push(cx + Math.cos(a) * topR, y + spireH, -(cy + Math.sin(a) * topR));
+          pos.push(cx + Math.cos(a) * sTopR, baseY + bodyH + spireH, -(cy + Math.sin(a) * sTopR));
         }
 
         for (let s = 0; s < segs; s++) {
           const n = (s + 1) % segs;
-          idx.push(0, ringB + n, ringB + s);           // bottom cap
-          idx.push(1, ringT + s, ringT + n);           // top cap
-          idx.push(ringB + s, ringB + n, ringT + n);   // side
-          idx.push(ringB + s, ringT + n, ringT + s);   // side
+          idx.push(0, ringB + n, ringB + s);
+          idx.push(1, ringT + s, ringT + n);
+          idx.push(ringB + s, ringB + n, ringT + n);
+          idx.push(ringB + s, ringT + n, ringT + s);
         }
-
         acc.add(pos, idx);
       }
     },
