@@ -81,9 +81,26 @@ async function handleCreateCheckout(request, env) {
     return jsonResponse({ error: 'Missing location data' }, 400);
   }
 
+  // Check order limits
+  const settings = await getSettings(env);
+  let paidCount = 0;
+  try {
+    const countResp = await fetch('https://api.stripe.com/v1/checkout/sessions?limit=100', {
+      headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+    });
+    const countData = await countResp.json();
+    paidCount = (countData.data || []).filter(s => s.payment_status === 'paid').length;
+  } catch { /* proceed anyway */ }
+
+  const isPreOrder = paidCount >= settings.orderLimit;
+  if (isPreOrder && !settings.preOrderEnabled) {
+    return jsonResponse({ error: 'Orders are currently closed. Please check back later.' }, 400);
+  }
+
   const orderId    = generateOrderId();
   const unitAmount = 3500; // flat $35
-  const modelDesc  = `${orderId} — 3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x${terrainRelief ? ' | Terrain relief' : ''}`;
+  const preOrderTag = isPreOrder ? ' [PRE-ORDER]' : '';
+  const modelDesc  = `${orderId}${preOrderTag} — 3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x${terrainRelief ? ' | Terrain relief' : ''}`;
   const shipping   = getShippingForRegion(region || 'US');
 
   const shippingOptions = shipping.rates.map((r) => ({
@@ -128,6 +145,7 @@ async function handleCreateCheckout(request, env) {
       elevation:     String(elevation),
       terrainRelief: String(terrainRelief || false),
       region:        region || 'US',
+      preOrder:      String(isPreOrder),
     },
     success_url: `${origin}/success.html?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url:  `${origin}/app.html`,
@@ -243,6 +261,7 @@ async function handleAdminOrders(request, env) {
         country: s.shipping_details.address.country,
       } : null,
       shippingRate: s.shipping_cost?.amount_total || 0,
+      preOrder: s.metadata?.preOrder === 'true',
       model: {
         lat:           parseFloat(s.metadata?.lat) || 0,
         lng:           parseFloat(s.metadata?.lng) || 0,
@@ -300,16 +319,96 @@ async function handleAdminUpdateOrder(request, env) {
   return jsonResponse({ success: true, status: body.status });
 }
 
+// ─── Settings (KV-backed) ──────────────────────────────────────────────────
+
+const DEFAULT_SETTINGS = {
+  orderLimit: 50,
+  preOrderEnabled: true,
+  preOrderMessage: 'Pre-order available — your print will ship after the initial batch is fulfilled. Estimated 3-4 weeks.',
+};
+
+async function getSettings(env) {
+  if (!env.SETTINGS) return { ...DEFAULT_SETTINGS };
+  try {
+    const raw = await env.SETTINGS.get('shop_settings', 'json');
+    return raw ? { ...DEFAULT_SETTINGS, ...raw } : { ...DEFAULT_SETTINGS };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+async function handleGetSettings(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+  if (body.password !== env.ADMIN_PASSWORD) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const settings = await getSettings(env);
+  return jsonResponse({ settings });
+}
+
+async function handleUpdateSettings(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+  if (!env.SETTINGS) return jsonResponse({ error: 'KV namespace SETTINGS not bound' }, 500);
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+  if (body.password !== env.ADMIN_PASSWORD) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const current = await getSettings(env);
+  const updated = {
+    orderLimit:      body.orderLimit      != null ? Math.max(0, parseInt(body.orderLimit, 10) || 0) : current.orderLimit,
+    preOrderEnabled: body.preOrderEnabled != null ? !!body.preOrderEnabled : current.preOrderEnabled,
+    preOrderMessage: body.preOrderMessage != null ? String(body.preOrderMessage).slice(0, 500) : current.preOrderMessage,
+  };
+
+  await env.SETTINGS.put('shop_settings', JSON.stringify(updated));
+  return jsonResponse({ success: true, settings: updated });
+}
+
+// Public endpoint — storefront checks order availability
+async function handleOrderAvailability(request, env) {
+  if (request.method !== 'GET' && request.method !== 'POST') {
+    return jsonResponse({ error: 'Method not allowed' }, 405);
+  }
+
+  const settings = await getSettings(env);
+
+  // Count paid orders from Stripe
+  let paidCount = 0;
+  if (env.STRIPE_SECRET_KEY) {
+    try {
+      const resp = await fetch('https://api.stripe.com/v1/checkout/sessions?limit=100', {
+        headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+      });
+      const data = await resp.json();
+      paidCount = (data.data || []).filter(s => s.payment_status === 'paid').length;
+    } catch { /* default to 0 */ }
+  }
+
+  const limitReached = paidCount >= settings.orderLimit;
+  return jsonResponse({
+    orderCount: paidCount,
+    orderLimit: settings.orderLimit,
+    limitReached,
+    preOrderEnabled: settings.preOrderEnabled,
+    preOrderMessage: limitReached ? settings.preOrderMessage : null,
+  });
+}
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
     switch (url.pathname) {
-      case '/api/create-checkout':    return handleCreateCheckout(request, env);
-      case '/api/order-info':         return handleOrderInfo(request, env);
-      case '/api/admin-verify':       return handleAdminVerify(request, env);
-      case '/api/admin-orders':       return handleAdminOrders(request, env);
-      case '/api/admin-update-order': return handleAdminUpdateOrder(request, env);
+      case '/api/create-checkout':      return handleCreateCheckout(request, env);
+      case '/api/order-info':           return handleOrderInfo(request, env);
+      case '/api/admin-verify':         return handleAdminVerify(request, env);
+      case '/api/admin-orders':         return handleAdminOrders(request, env);
+      case '/api/admin-update-order':   return handleAdminUpdateOrder(request, env);
+      case '/api/admin-settings':       return handleGetSettings(request, env);
+      case '/api/admin-update-settings':return handleUpdateSettings(request, env);
+      case '/api/order-availability':   return handleOrderAvailability(request, env);
     }
 
     // Everything else → static assets

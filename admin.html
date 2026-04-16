@@ -136,6 +136,82 @@
     }
     .status-tab.active .tab-count { background: #333; color: var(--text-sec); }
 
+    /* Page tabs */
+    .page-tabs {
+      display: flex; gap: 0; border-bottom: 1px solid var(--border);
+      background: var(--bg-panel); padding: 0 24px;
+    }
+    .page-tab {
+      background: transparent; border: none; border-bottom: 2px solid transparent;
+      color: var(--text-muted); font-family: var(--font); font-size: 14px; font-weight: 500;
+      padding: 14px 20px; cursor: pointer; transition: all 0.15s;
+    }
+    .page-tab:hover { color: var(--text-sec); }
+    .page-tab.active { color: #fff; border-bottom-color: #fff; font-weight: 600; }
+
+    .page-content { display: none; }
+    .page-content.active { display: block; }
+
+    /* Settings panel */
+    .settings-wrap { padding: 24px; max-width: 700px; margin: 0 auto; }
+    .settings-card {
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 24px; margin-bottom: 16px;
+    }
+    .settings-card h2 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+    .settings-card p { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; }
+    .settings-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .settings-row:last-child { margin-bottom: 0; }
+    .settings-label { font-size: 14px; font-weight: 500; }
+    .settings-hint { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+    .settings-input {
+      background: #141414; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-family: var(--font-mono); font-size: 14px;
+      padding: 8px 12px; width: 80px; text-align: center; outline: none;
+    }
+    .settings-input:focus { border-color: #fff; }
+    .settings-textarea {
+      background: #141414; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-family: var(--font); font-size: 13px;
+      padding: 10px 12px; width: 100%; min-height: 60px; outline: none; resize: vertical;
+    }
+    .settings-textarea:focus { border-color: #fff; }
+
+    .toggle-wrap { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
+    .toggle-wrap input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track {
+      position: absolute; inset: 0; background: #333; border-radius: 12px;
+      cursor: pointer; transition: background 0.2s;
+    }
+    .toggle-track::after {
+      content: ''; position: absolute; top: 2px; left: 2px;
+      width: 20px; height: 20px; background: #888; border-radius: 50%;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .toggle-wrap input:checked + .toggle-track { background: #3b82f6; }
+    .toggle-wrap input:checked + .toggle-track::after { transform: translateX(20px); background: #fff; }
+
+    .btn-save {
+      background: #fff; color: #000; border: none; border-radius: 10px;
+      padding: 10px 24px; font-family: var(--font); font-size: 14px; font-weight: 600;
+      cursor: pointer; transition: all 0.2s; margin-top: 8px;
+    }
+    .btn-save:hover { background: #ddd; }
+    .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+    .save-status { font-size: 12px; color: #66bb6a; margin-left: 12px; display: inline-block; }
+
+    .limit-bar {
+      margin-top: 16px; background: #1a1a1a; border-radius: 8px; overflow: hidden; height: 8px;
+    }
+    .limit-bar-fill { height: 100%; border-radius: 8px; transition: width 0.5s ease; }
+    .limit-info { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--text-muted); }
+
+    .preorder-badge {
+      font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 10px;
+      background: #2a1a00; color: #ff9800; border: 1px solid #3d2a00;
+      margin-left: 8px; text-transform: uppercase; letter-spacing: 0.03em;
+    }
+
     .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
     .empty-state h2 { font-size: 18px; margin-bottom: 8px; color: var(--text-sec); }
 
@@ -184,6 +260,12 @@
       <button class="btn-logout" id="logout-btn">Logout</button>
     </div>
 
+    <div class="page-tabs">
+      <button class="page-tab active" data-page="orders">Orders</button>
+      <button class="page-tab" data-page="limits">Limits</button>
+    </div>
+
+    <div class="page-content active" id="page-orders">
     <div class="orders-wrap">
       <div class="status-tabs" id="status-tabs">
         <button class="status-tab active" data-filter="all">All <span class="tab-count" id="tab-all">0</span></button>
@@ -196,12 +278,66 @@
         <div class="loading">Loading orders...</div>
       </div>
     </div>
+    </div><!-- /page-orders -->
+
+    <div class="page-content" id="page-limits">
+      <div class="settings-wrap">
+        <div class="settings-card">
+          <h2>Order Limit</h2>
+          <p>Set the maximum number of orders for the initial batch. Once this limit is reached, new orders become pre-orders.</p>
+
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">Max orders</div>
+              <div class="settings-hint">Set to 0 to disable ordering entirely</div>
+            </div>
+            <input type="number" class="settings-input" id="setting-order-limit" min="0" max="9999" value="50" />
+          </div>
+
+          <div id="limit-progress">
+            <div class="limit-bar"><div class="limit-bar-fill" id="limit-bar-fill"></div></div>
+            <div class="limit-info">
+              <span id="limit-count-label">0 / 50 orders</span>
+              <span id="limit-pct-label">0%</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="settings-card">
+          <h2>Pre-Orders</h2>
+          <p>When the order limit is reached, allow customers to place a pre-order. They'll see a notice that their order will take longer to fulfill.</p>
+
+          <div class="settings-row">
+            <div>
+              <div class="settings-label">Allow pre-orders after limit</div>
+              <div class="settings-hint">If disabled, checkout will be blocked when the limit is reached</div>
+            </div>
+            <label class="toggle-wrap">
+              <input type="checkbox" id="setting-preorder-enabled" checked />
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+
+          <div style="margin-top: 12px">
+            <div class="settings-label" style="margin-bottom: 6px">Pre-order message</div>
+            <textarea class="settings-textarea" id="setting-preorder-message">Pre-order available — your print will ship after the initial batch is fulfilled. Estimated 3-4 weeks.</textarea>
+          </div>
+        </div>
+
+        <div style="display:flex;align-items:center">
+          <button class="btn-save" id="save-settings-btn">Save Settings</button>
+          <span class="save-status" id="save-status"></span>
+        </div>
+      </div>
+    </div><!-- /page-limits -->
+
   </div>
 
   <script>
     let adminPassword = '';
     let orders = [];
     let activeFilter = 'all';
+    let shopSettings = { orderLimit: 50, preOrderEnabled: true, preOrderMessage: '' };
 
     // ─── Login ───────────────────────────────────────────────────
     document.getElementById('login-btn').addEventListener('click', doLogin);
@@ -326,6 +462,7 @@
               </div>
               <div class="order-right">
                 <span class="order-amount">${amount}</span>
+                ${o.preOrder ? '<span class="preorder-badge">Pre-order</span>' : ''}
                 <span class="status-badge status-${o.status}">${o.status}</span>
               </div>
             </div>
@@ -382,6 +519,84 @@
       });
       window.open('/app.html?' + params.toString(), '_blank');
     }
+
+    // ─── Page tabs ─────────────────────────────────────────────
+    document.querySelector('.page-tabs').addEventListener('click', e => {
+      const tab = e.target.closest('.page-tab');
+      if (!tab) return;
+      const page = tab.dataset.page;
+      document.querySelectorAll('.page-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
+      document.getElementById('page-' + page).classList.add('active');
+      if (page === 'limits') loadSettings();
+    });
+
+    // ─── Settings ────────────────────────────────────────────
+    async function loadSettings() {
+      try {
+        const resp = await fetch('/api/admin-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: adminPassword }),
+        });
+        const data = await resp.json();
+        if (data.settings) {
+          shopSettings = data.settings;
+          document.getElementById('setting-order-limit').value = shopSettings.orderLimit;
+          document.getElementById('setting-preorder-enabled').checked = shopSettings.preOrderEnabled;
+          document.getElementById('setting-preorder-message').value = shopSettings.preOrderMessage;
+        }
+      } catch { /* use defaults */ }
+      updateLimitBar();
+    }
+
+    function updateLimitBar() {
+      const count = orders.length;
+      const limit = shopSettings.orderLimit || 1;
+      const pct = Math.min(100, Math.round((count / limit) * 100));
+      const fill = document.getElementById('limit-bar-fill');
+      fill.style.width = pct + '%';
+      fill.style.background = pct >= 100 ? '#ff9800' : pct >= 80 ? '#ffc107' : '#66bb6a';
+      document.getElementById('limit-count-label').textContent = `${count} / ${shopSettings.orderLimit} orders`;
+      document.getElementById('limit-pct-label').textContent = pct + '%';
+    }
+
+    document.getElementById('save-settings-btn').addEventListener('click', async () => {
+      const btn = document.getElementById('save-settings-btn');
+      const status = document.getElementById('save-status');
+      btn.disabled = true;
+      status.textContent = 'Saving...';
+      status.style.color = 'var(--text-muted)';
+
+      try {
+        const resp = await fetch('/api/admin-update-settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            password: adminPassword,
+            orderLimit: parseInt(document.getElementById('setting-order-limit').value, 10),
+            preOrderEnabled: document.getElementById('setting-preorder-enabled').checked,
+            preOrderMessage: document.getElementById('setting-preorder-message').value,
+          }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+          shopSettings = data.settings;
+          status.textContent = 'Saved!';
+          status.style.color = '#66bb6a';
+          updateLimitBar();
+        } else {
+          status.textContent = 'Error: ' + (data.error || 'Unknown');
+          status.style.color = '#ff6b6b';
+        }
+      } catch (err) {
+        status.textContent = 'Failed: ' + err.message;
+        status.style.color = '#ff6b6b';
+      }
+      btn.disabled = false;
+      setTimeout(() => { status.textContent = ''; }, 3000);
+    });
 
     async function updateStatus(sessionId, status, i) {
       try {

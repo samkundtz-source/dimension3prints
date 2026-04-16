@@ -385,12 +385,36 @@ function showRegionPicker() {
 async function doOrderPrint() {
   if (!scene?.group || !selectedCenter) return;
 
-  // Ask for shipping region
-  const region = await showRegionPicker();
-  if (!region) return; // cancelled
-
+  // Check order availability first
   const btn = el('order-print');
   btn.disabled = true;
+  setStatus('Checking availability...', 85);
+
+  try {
+    const availResp = await fetch('/api/order-availability', { method: 'POST' });
+    const avail = await availResp.json();
+    if (avail.limitReached) {
+      if (!avail.preOrderEnabled) {
+        setStatus('Orders are currently closed. Please check back later.', 0);
+        btn.disabled = false;
+        return;
+      }
+      // Show pre-order confirmation
+      const msg = avail.preOrderMessage || 'This will be a pre-order and may take longer to ship.';
+      if (!confirm(`Order limit reached (${avail.orderCount}/${avail.orderLimit}).\n\n${msg}\n\nWould you like to place a pre-order?`)) {
+        setStatus('Pre-order cancelled.', 0);
+        btn.disabled = false;
+        return;
+      }
+    }
+  } catch {
+    // If availability check fails, proceed anyway
+  }
+
+  // Ask for shipping region
+  const region = await showRegionPicker();
+  if (!region) { btn.disabled = false; return; } // cancelled
+
   setStatus('Creating checkout session...', 90);
 
   try {
