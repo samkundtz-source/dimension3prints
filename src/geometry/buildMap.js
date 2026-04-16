@@ -151,19 +151,53 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const buildingAcc = new GeomAccumulator();  // all buildings → white
   const blackAcc    = new GeomAccumulator();  // roads + paths + parks + water → black
 
-  // ── 1. Base plate ─────────────────────────────────────────────────────────
+  const BASE          = BASE_THICKNESS_MM;
+  const ROAD_HEIGHT   = NOZZLE_MM * 0.75; // 0.3mm — 1.5 layers at 0.2mm layer height
+  const CLEARANCE     = 1.4; // generous gap around buildings to prevent clipping
+  const WATER_DEPTH   = 0.6; // mm depression into the base
+  const WATER_FLOOR_Y = BASE - WATER_DEPTH; // bottom of the water depression
+  const MIN_AREA_MM2  = 3.0;
+
+  // ── 1a. Pre-collect water polygons (needed before base plate) ─────────
+  onProgress?.('Collecting water…', 62);
+  const waterClipped = []; // { polygon, holes, tags }[]
+
+  for (const feat of features.water) {
+    const poly = clipToHex(feat.polygon, hexInner);
+    if (!poly || poly.length < 3) continue;
+    if (Math.abs(signedArea2D(poly)) < MIN_AREA_MM2) continue;
+    waterClipped.push({ polygon: poly, holes: feat.holes || [], tags: feat.tags });
+  }
+
+  // Also pre-collect waterway linestrings → buffered polygons
+  const WATERWAY_WIDTHS_M = {
+    river: 30, canal: 15, stream: 4, drain: 2, ditch: 1.5,
+  };
+  const WATERWAY_MIN_HALF_MM = 0.8;
+
+  if (features.waterways && features.waterways.length > 0) {
+    for (const feat of features.waterways) {
+      const wType = feat.tags.waterway || 'stream';
+      const realW = hScale * (WATERWAY_WIDTHS_M[wType] ?? WATERWAY_WIDTHS_M.stream);
+      const halfW = Math.max(realW, WATERWAY_MIN_HALF_MM);
+      const poly  = bufferLinestring(feat.points, halfW);
+      if (!poly) continue;
+      const clipped = clipToHex(poly, hexInner);
+      if (!clipped || clipped.length < 3) continue;
+      waterClipped.push({ polygon: clipped, holes: [], tags: feat.tags });
+    }
+  }
+
+  // ── 1b. Base plate (with water depressions) ──────────────────────────────
   onProgress?.('Building base plate…', 65);
-  collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
+  const waterPolys = waterClipped.map(w => w.polygon);
+  collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0, waterPolys, WATER_FLOOR_Y);
 
   // ── 2. Terrain ────────────────────────────────────────────────────────────
   if (elevGrid && N > 0) {
     onProgress?.('Building terrain…', 68);
     collectTerrainMesh(baseAcc, elevGrid, N, hexFull, vScale);
   }
-
-  const BASE        = BASE_THICKNESS_MM;
-  const ROAD_HEIGHT = NOZZLE_MM * 0.75; // 0.3mm — 1.5 layers at 0.2mm layer height
-  const CLEARANCE   = 1.4; // generous gap around buildings to prevent clipping
 
   // ── 3. Pre-collect building footprints ────────────────────────────────────
   // Buildings are generated FIRST so roads can fit around them.
@@ -401,72 +435,33 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     buildingCount++;
   }
 
-  // ── 5. Water (black, RECESSED) — thin slab on top of base ───────────────
-  // Water sits ON TOP of the base plate as a dark slab, but THINNER than
-  // roads (0.15mm vs 0.3mm). The height difference makes water read as
-  // recessed compared to roads. Roads that cross water simply cover it.
-  const MIN_AREA_MM2    = 3.0;
-  const WATER_SLAB_BASE = BASE; // sits on the base surface
-  const WATER_SLAB_H    = NOZZLE_MM * 0.375; // 0.15mm — thinner than roads
-
+  // ── 5. Water depression floors (black) ────────────────────────────────────
+  // The base plate already has depressions carved where water is (from step 1b).
+  // Now we add a thin black floor at the bottom of each depression.
   let waterCount = 0;
-  const waterFootprints = []; // for bridge detection later
-  onProgress?.('Building water…', 78);
-  for (const feat of features.water) {
-    const poly = clipToHex(feat.polygon, hexInner);
-    if (!poly || poly.length < 3) continue;
-    if (Math.abs(signedArea2D(poly)) < MIN_AREA_MM2) continue;
-    if (enclosedByAnyBuilding(poly)) continue;
-    const bldgHoles = findOverlappingBuildings(poly);
-    const allHoles  = [...(feat.holes || []), ...bldgHoles];
-    collectExtrudedPolygon(blackAcc, poly, allHoles, WATER_SLAB_BASE, WATER_SLAB_H);
+  const waterFootprints = [];
+  onProgress?.('Building water floors…', 78);
+  for (const wf of waterClipped) {
+    if (enclosedByAnyBuilding(wf.polygon)) continue;
+    const bldgHoles = findOverlappingBuildings(wf.polygon);
+    const allHoles  = [...wf.holes, ...bldgHoles];
+    // Black floor at the bottom of the depression (thin flat slab)
+    collectFlatPolygon(blackAcc, wf.polygon, allHoles, WATER_FLOOR_Y);
     // Store for bridge detection
     let wMinX = Infinity, wMaxX = -Infinity, wMinY = Infinity, wMaxY = -Infinity;
-    for (const p of poly) {
+    for (const p of wf.polygon) {
       if (p.x < wMinX) wMinX = p.x; if (p.x > wMaxX) wMaxX = p.x;
       if (p.y < wMinY) wMinY = p.y; if (p.y > wMaxY) wMaxY = p.y;
     }
-    waterFootprints.push({ polygon: poly, bbox: { minX: wMinX, maxX: wMaxX, minY: wMinY, maxY: wMaxY } });
+    waterFootprints.push({ polygon: wf.polygon, bbox: { minX: wMinX, maxX: wMaxX, minY: wMinY, maxY: wMaxY } });
     waterCount++;
-  }
-
-  // ── 5b. Waterways (rivers, streams, canals) — buffered lines, recessed ───
-  // These are linestrings in OSM, not polygons. Buffer them to a visible width
-  // and extrude at the same recessed level as area water.
-  const WATERWAY_WIDTHS_M = {
-    river: 30, canal: 15, stream: 4, drain: 2, ditch: 1.5,
-  };
-  const WATERWAY_MIN_HALF_MM = 0.8; // minimum visible half-width in mm
-
-  if (features.waterways && features.waterways.length > 0) {
-    onProgress?.('Building waterways…', 79);
-    for (const feat of features.waterways) {
-      const wType = feat.tags.waterway || 'stream';
-      const realW = hScale * (WATERWAY_WIDTHS_M[wType] ?? WATERWAY_WIDTHS_M.stream);
-      const halfW = Math.max(realW, WATERWAY_MIN_HALF_MM);
-      const poly  = bufferLinestring(feat.points, halfW);
-      if (!poly) continue;
-      const clipped = clipToHex(poly, hexInner);
-      if (!clipped || clipped.length < 3) continue;
-      if (enclosedByAnyBuilding(clipped)) continue;
-      const bldgHoles = findOverlappingBuildings(clipped);
-      collectExtrudedPolygon(blackAcc, clipped, bldgHoles, WATER_SLAB_BASE, WATER_SLAB_H);
-      // Store for bridge detection
-      let wMinX = Infinity, wMaxX = -Infinity, wMinY = Infinity, wMaxY = -Infinity;
-      for (const p of clipped) {
-        if (p.x < wMinX) wMinX = p.x; if (p.x > wMaxX) wMaxX = p.x;
-        if (p.y < wMinY) wMinY = p.y; if (p.y > wMaxY) wMaxY = p.y;
-      }
-      waterFootprints.push({ polygon: clipped, bbox: { minX: wMinX, maxX: wMaxX, minY: wMinY, maxY: wMaxY } });
-      waterCount++;
-    }
   }
 
   // ── 6. Parks — with building gaps ───────────────────────────────────────────
   // Roads and parks sit ON TOP of the base plate as a thin black layer.
   const ROAD_BASE   = BASE;
   const ROAD_SLAB   = ROAD_HEIGHT;
-  const BRIDGE_BASE = ROAD_BASE + WATER_SLAB_H + 0.15; // bridge deck above water
+  const BRIDGE_BASE = ROAD_BASE; // bridges at same level as roads — already above water depression
 
   onProgress?.('Building parks…', 80);
   for (const feat of features.parks) {
@@ -685,87 +680,122 @@ function tryCollectExtruded(acc, polygon, holes, baseY, heightMM) {
 
 // ─── Geometry collectors ─────────────────────────────────────────────────────
 
-function collectHexBase(acc, shapeVerts, chamfer = 0) {
-  const pos = [];
-  const idx = [];
+function collectHexBase(acc, shapeVerts, chamfer = 0, waterPolygons = [], waterFloorY = 0) {
   const top = BASE_THICKNESS_MM;
   const bot = 0;
-  const N = shapeVerts.length;
+  const N   = shapeVerts.length;
+  const hasWater = waterPolygons.length > 0;
 
-  if (chamfer <= 0) {
-    // ─── Plain prism: top + bottom + vertical walls ──────────────────────────
-    pos.push(0, top, 0);
-    for (const v of shapeVerts) pos.push(v.x, top, -v.y);
-    for (let i = 0; i < N; i++) idx.push(0, 1 + i, 1 + (i + 1) % N);
-
-    const bOff = N + 1;
+  // ── Bottom face — always solid (full hex) ─────────────────────────────────
+  {
+    const pos = [];
+    const idx = [];
     pos.push(0, bot, 0);
     for (const v of shapeVerts) pos.push(v.x, bot, -v.y);
-    for (let i = 0; i < N; i++) idx.push(bOff, bOff + 1 + (i + 1) % N, bOff + 1 + i);
+    for (let i = 0; i < N; i++) idx.push(0, 1 + (i + 1) % N, 1 + i);
+    acc.add(pos, idx);
+  }
 
+  // ── Outer side walls ──────────────────────────────────────────────────────
+  if (chamfer <= 0) {
+    const pos = [];
+    const idx = [];
+    for (const v of shapeVerts) pos.push(v.x, top, -v.y);   // 0..N-1
+    for (const v of shapeVerts) pos.push(v.x, bot, -v.y);   // N..2N-1
     for (let i = 0; i < N; i++) {
-      const tA = 1 + i, tB = 1 + (i + 1) % N;
-      const bA = bOff + 1 + i, bB = bOff + 1 + (i + 1) % N;
+      const tA = i, tB = (i + 1) % N;
+      const bA = N + i, bB = N + (i + 1) % N;
       idx.push(tA, bA, tB,  bA, bB, tB);
     }
-
     acc.add(pos, idx);
-    return;
+  } else {
+    // Chamfered outer walls: bottom → shoulder → chamfer slope → inset top edge
+    const inset = chamfer;
+    const topVerts = shapeVerts.map(v => {
+      const len = Math.hypot(v.x, v.y);
+      if (len < 1e-9) return { x: 0, y: 0 };
+      const k = (len - inset) / len;
+      return { x: v.x * k, y: v.y * k };
+    });
+    const yShoulder = top - chamfer;
+    const pos = [];
+    const idx = [];
+    for (const v of shapeVerts)  pos.push(v.x, bot, -v.y);        // 0..N-1   bottom
+    for (const v of shapeVerts)  pos.push(v.x, yShoulder, -v.y);  // N..2N-1  shoulder
+    for (const v of topVerts)    pos.push(v.x, top, -v.y);        // 2N..3N-1 top inset
+    // Vertical walls bottom → shoulder
+    for (let i = 0; i < N; i++) {
+      const a = i, b = (i + 1) % N, c = N + (i + 1) % N, d = N + i;
+      idx.push(a, b, c,  a, c, d);
+    }
+    // Chamfer slope shoulder → top inset
+    for (let i = 0; i < N; i++) {
+      const a = N + i, b = N + (i + 1) % N, c = 2*N + (i + 1) % N, d = 2*N + i;
+      idx.push(a, b, c,  a, c, d);
+    }
+    acc.add(pos, idx);
   }
 
-  // ─── Chamfered top edge (premium look) ────────────────────────────────────
-  // Bottom hex (full size) → vertical walls up to (top - chamfer) → 45° slope
-  // up and inward by `chamfer` to a smaller top hex.
-  const inset = chamfer; // 1:1 slope so the chamfer is 45°
-  // Inward-shrunk vertices for the top face
-  const topVerts = shapeVerts.map(v => {
-    const len = Math.hypot(v.x, v.y);
-    if (len < 1e-9) return { x: 0, y: 0 };
-    const k = (len - inset) / len;
-    return { x: v.x * k, y: v.y * k };
-  });
-  const yShoulder = top - chamfer;
+  // ── Top face — hex with water holes (earcut) ─────────────────────────────
+  // Use the inset top ring for chamfered mode, full ring otherwise.
+  {
+    const topRing = (chamfer > 0)
+      ? shapeVerts.map(v => {
+          const len = Math.hypot(v.x, v.y);
+          if (len < 1e-9) return { x: 0, y: 0 };
+          const k = (len - chamfer) / len;
+          return { x: v.x * k, y: v.y * k };
+        })
+      : shapeVerts;
 
-  // Vertex layout:
-  //   [0]               top center
-  //   [1..N]            top inset ring   (y = top)
-  //   [N+1]             bottom center
-  //   [N+2..2N+1]       bottom ring      (y = bot)
-  //   [2N+2..3N+1]      shoulder ring    (y = yShoulder, full size)
-  pos.push(0, top, 0);                                        // 0
-  for (const v of topVerts)  pos.push(v.x, top, -v.y);        // 1..N
-  pos.push(0, bot, 0);                                        // N+1
-  for (const v of shapeVerts) pos.push(v.x, bot, -v.y);       // N+2..2N+1
-  for (const v of shapeVerts) pos.push(v.x, yShoulder, -v.y); // 2N+2..3N+1
+    const flat = [];
+    const holeIndices = [];
 
-  const tCtr = 0;
-  const tRing = 1;             // top inset ring base index
-  const bCtr = N + 1;
-  const bRing = N + 2;         // bottom ring base index
-  const sRing = 2 * N + 2;     // shoulder ring base index
+    // Outer ring (hex, CCW)
+    const hexCCW = ensureCCW(topRing);
+    for (const v of hexCCW) flat.push(v.x, v.y);
 
-  // Top face (small hex)
-  for (let i = 0; i < N; i++) {
-    idx.push(tCtr, tRing + i, tRing + (i + 1) % N);
-  }
-  // Bottom face (full hex, reversed winding)
-  for (let i = 0; i < N; i++) {
-    idx.push(bCtr, bRing + (i + 1) % N, bRing + i);
-  }
-  // Vertical side walls (bottom ring → shoulder ring)
-  for (let i = 0; i < N; i++) {
-    const a = bRing + i, b = bRing + (i + 1) % N;
-    const c = sRing + (i + 1) % N, d = sRing + i;
-    idx.push(a, b, c,  a, c, d);
-  }
-  // Chamfer slope (shoulder ring → top inset ring)
-  for (let i = 0; i < N; i++) {
-    const a = sRing + i, b = sRing + (i + 1) % N;
-    const c = tRing + (i + 1) % N, d = tRing + i;
-    idx.push(a, b, c,  a, c, d);
+    // Water holes (CW for earcut)
+    if (hasWater) {
+      for (const wp of waterPolygons) {
+        holeIndices.push(flat.length / 2);
+        const cw = ensureCW(deduplicateRing(wp));
+        for (const p of cw) flat.push(p.x, p.y);
+      }
+    }
+
+    const tris = earcut(flat, holeIndices.length > 0 ? holeIndices : undefined, 2);
+    if (tris.length > 0) {
+      const nVerts = flat.length / 2;
+      const pos = [];
+      for (let i = 0; i < nVerts; i++) pos.push(flat[i * 2], top, -flat[i * 2 + 1]);
+      acc.add(pos, Array.from(tris));
+    }
   }
 
-  acc.add(pos, idx);
+  // ── Water depression walls (white) — from top down to waterFloorY ────────
+  if (hasWater) {
+    for (const wp of waterPolygons) {
+      const ring = deduplicateRing(wp);
+      if (ring.length < 3) continue;
+      const ccw = ensureCCW(ring);
+      const n   = ccw.length;
+      const pos = [];
+      const idx = [];
+      // Top ring at Y=top, bottom ring at Y=waterFloorY
+      // Winding: looking from INSIDE the depression outward, normals face inward
+      // So we reverse the winding compared to the outer walls
+      for (const p of ccw) pos.push(p.x, top, -p.y);            // 0..n-1
+      for (const p of ccw) pos.push(p.x, waterFloorY, -p.y);    // n..2n-1
+      for (let i = 0; i < n; i++) {
+        const tA = i, tB = (i + 1) % n;
+        const bA = n + i, bB = n + (i + 1) % n;
+        // Reversed winding so normals face inward (visible from inside the depression)
+        idx.push(tA, tB, bA,  bA, tB, bB);
+      }
+      acc.add(pos, idx);
+    }
+  }
 }
 
 // Small extruded prism (n-gon) used for tree bumps
@@ -970,6 +1000,27 @@ function collectExtrudedPolygon(acc, polygon, holes, baseY, heightMM) {
     }
 
     acc.add(allPos, allIdx);
+  } catch (_) {}
+}
+
+/**
+ * Flat polygon face (no extrusion, no walls) — used for water depression floors.
+ * Face normal points UP (+Y).
+ */
+function collectFlatPolygon(acc, polygon, holes, y) {
+  try {
+    const ring = deduplicateRing(polygon);
+    if (ring.length < 3) return;
+    const outerCCW = ensureCCW(ring);
+    const { flat, holeIndices } = flattenWithHoles(outerCCW, holes || []);
+    const nVerts = flat.length / 2;
+
+    const tris = earcut(flat, holeIndices, 2);
+    if (tris.length === 0) return;
+
+    const pos = [];
+    for (let i = 0; i < nVerts; i++) pos.push(flat[i * 2], y, -flat[i * 2 + 1]);
+    acc.add(pos, Array.from(tris));
   } catch (_) {}
 }
 

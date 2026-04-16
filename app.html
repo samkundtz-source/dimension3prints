@@ -62,16 +62,16 @@
           <label class="section-label">Settings</label>
 
           <div class="setting-row">
-            <span class="setting-name">Capture Radius <span style="color:var(--text-dim);font-weight:400">(0.7 recommended)</span></span>
+            <span class="setting-name">Capture Radius</span>
             <span class="setting-val" id="radius-value">1.0 km</span>
           </div>
-          <input type="range" id="radius-slider" class="slider" min="0.2" max="2" step="0.1" value="1.0" />
+          <input type="range" id="radius-slider" class="slider" min="1" max="1" step="0.1" value="1.0" disabled />
 
           <div class="setting-row" style="margin-top:12px">
             <span class="setting-name">Elevation Scale</span>
             <span class="setting-val" id="vscale-value">3x</span>
           </div>
-          <input type="range" id="vscale-slider" class="slider" min="1" max="6" step="1" value="3" />
+          <input type="range" id="vscale-slider" class="slider" min="1" max="5" step="1" value="3" />
 
           <label class="toggle-row" style="margin-top:12px">
             <input type="checkbox" id="use-elevation" checked />
