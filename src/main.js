@@ -36,7 +36,7 @@ let markerLayerGroup= null;
 let scene           = null;
 
 let selectedCenter  = null;   // { lat, lng }
-const currentShape  = 'hexagon';
+let   currentShape  = 'hexagon';
 let generating      = false;
 let generateId      = 0;      // increments each run — stale runs bail out
 let lastGenerateTime = 0;
@@ -476,6 +476,21 @@ function initControls() {
   vscaleSlider.addEventListener('input', () => {
     el('vscale-value').textContent = `${vscaleSlider.value}x`;
   });
+
+  // Shape selector
+  const shapeSelector = el('shape-selector');
+  if (shapeSelector) {
+    shapeSelector.addEventListener('click', e => {
+      const btn = e.target.closest('.shape-btn');
+      if (!btn) return;
+      const shape = btn.dataset.shape;
+      if (shape === currentShape) return;
+      currentShape = shape;
+      shapeSelector.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      updateShapeOverlay();
+    });
+  }
 
   const priceLabel = el('order-price-label');
   if (priceLabel) priceLabel.textContent = 'Order Print — $35';

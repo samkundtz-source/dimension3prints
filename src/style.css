@@ -199,6 +199,18 @@ html, body {
 .setting-name { font-size: 12px; color: var(--text-secondary); }
 .setting-val { font-size: 12px; font-weight: 600; color: var(--text); font-family: var(--font-mono); }
 
+/* Shape selector */
+.shape-selector { display: flex; gap: 6px; margin-top: 4px; margin-bottom: 4px; }
+.shape-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 40px; height: 34px;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: 6px; color: var(--text-dim);
+  cursor: pointer; transition: all 0.15s;
+}
+.shape-btn:hover { border-color: var(--text-secondary); color: var(--text-secondary); }
+.shape-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(99,102,241,0.08); }
+
 /* Slider */
 .slider {
   -webkit-appearance: none; appearance: none;

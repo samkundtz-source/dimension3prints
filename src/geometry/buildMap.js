@@ -458,7 +458,6 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // ── 6. Parks — with building gaps ───────────────────────────────────────────
   const ROAD_BASE   = BASE;
   const ROAD_SLAB   = ROAD_HEIGHT;
-  const BRIDGE_BASE = ROAD_BASE + WATER_SLAB_H + 0.15;
 
   onProgress?.('Building parks…', 80);
   for (const feat of features.parks) {
@@ -482,9 +481,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const realW = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.residential);
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW = Math.max(realW, minW);
-    const isBridge = feat.tags.bridge && feat.tags.bridge !== 'no';
-    const roadY    = isBridge ? BRIDGE_BASE : ROAD_BASE;
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadY, ROAD_SLAB, findOverlappingBuildings);
+    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, ROAD_BASE, ROAD_SLAB, findOverlappingBuildings);
     roadCount++;
   }
 
@@ -495,9 +492,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const realW = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.path);
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.path;
     const halfW = Math.max(realW, minW);
-    const isBridge = feat.tags.bridge && feat.tags.bridge !== 'no';
-    const pathY    = isBridge ? BRIDGE_BASE : ROAD_BASE;
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, pathY, ROAD_SLAB, findOverlappingBuildings);
+    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, ROAD_BASE, ROAD_SLAB, findOverlappingBuildings);
     roadCount++;
   }
 
