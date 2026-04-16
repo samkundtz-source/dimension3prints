@@ -1180,38 +1180,13 @@ function classifyBuilding(tags, heightM, polygon) {
 }
 
 /**
- * Master dispatcher for detailed building generation.
- * Routes to class-specific generators based on classification.
+ * Tier 3: Standard building — plain flat-top extrusion from footprint.
+ * No banding, no setbacks, no special massing. Just an honest block.
+ * Tier 1 (landmark presets) and Tier 2 (generic tall-tower) are handled
+ * upstream in the building loop before this is called.
  */
 function collectDetailedBuilding(acc, polygon, tags, baseY, totalH, heightM) {
-  const cls = classifyBuilding(tags, heightM, polygon);
-
-  switch (cls) {
-    case CLASS_RESIDENTIAL_LOW:
-      collectResidentialLow(acc, polygon, tags, baseY, totalH, heightM);
-      break;
-    case CLASS_RESIDENTIAL_MID:
-      collectResidentialMid(acc, polygon, tags, baseY, totalH, heightM);
-      break;
-    case CLASS_OFFICE_TOWER:
-      collectOfficeTower(acc, polygon, tags, baseY, totalH, heightM);
-      break;
-    case CLASS_PODIUM_TOWER:
-      collectPodiumTower(acc, polygon, tags, baseY, totalH, heightM);
-      break;
-    case CLASS_INDUSTRIAL:
-      collectIndustrial(acc, polygon, tags, baseY, totalH, heightM);
-      break;
-    case CLASS_LANDMARK:
-      collectLandmark(acc, polygon, tags, baseY, totalH, heightM);
-      break;
-    case CLASS_CIVIC:
-      collectCivic(acc, polygon, tags, baseY, totalH, heightM);
-      break;
-    default:
-      collectFiller(acc, polygon, tags, baseY, totalH, heightM);
-      break;
-  }
+  collectExtrudedPolygon(acc, polygon, [], baseY, totalH);
 }
 
 // ── Window banding ───────────────────────────────────────────────────────────

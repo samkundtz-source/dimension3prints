@@ -146,13 +146,18 @@ const registry = new LandmarkRegistry();
 export const LANDMARK_PRESETS = {
 
   // ──────────────────────────────────────────────────────────────────────────
-  // Burj Khalifa -- slender stepped tower with needle spire
-  // The real building is a Y-shaped plan that stays relatively wide through
-  // its lower 60%, then the 3 wings retract at key setback levels while the
-  // central core continues upward. At print scale (~75mm model radius for a
-  // 1km capture) the footprint is tiny, so we use just 5 visible setback
-  // tiers to keep the silhouette clean and the geometry printable, plus a
-  // tall needle spire for the top ~25%.
+  // Burj Khalifa -- graduated stepped tower with needle spire
+  //
+  // The real Burj Khalifa has a Y-shaped footprint where the 3 wings
+  // retract progressively as the building rises. The key visual feature
+  // is many small graduated setback levels creating a smooth tapering
+  // silhouette — NOT big chunky steps.
+  //
+  // We use ~15 thin setback slices with a smooth scale curve that:
+  //  - Holds nearly full width for the bottom 40%
+  //  - Gradually tapers through the middle section
+  //  - Narrows to a slender core at the top
+  //  - Finishes with a tall needle spire (~20% of total height)
   // ──────────────────────────────────────────────────────────────────────────
   burjKhalifa: {
     name: 'Burj Khalifa',
@@ -162,34 +167,35 @@ export const LANDMARK_PRESETS = {
         minBBoxDimension,
       } = ctx;
 
-      // The real Burj Khalifa's spire (above the top occupied floor at ~585m)
-      // is roughly 244m of the 828m total = ~29%. We use ~25% for the spire.
-      const spireFrac = 0.25;
+      // Spire is the top ~20% (real: 244m of 828m ≈ 29%, but at model
+      // scale a slightly shorter spire reads better)
+      const spireFrac = 0.20;
       const bodyH  = totalH * (1.0 - spireFrac);
       const spireH = totalH * spireFrac;
 
-      // 5 setback tiers — the building stays nearly full-width for the
-      // bottom section, then steps in at key heights. Scale values are
-      // much more conservative than before to avoid the pyramid look.
-      const tiers = [
-        { hFrac: 0.35, scale: 1.00 },  // lower body — full Y-shaped footprint
-        { hFrac: 0.20, scale: 0.92 },  // first wing retraction
-        { hFrac: 0.15, scale: 0.82 },  // second wing retraction
-        { hFrac: 0.18, scale: 0.68 },  // third retraction — core + partial wings
-        { hFrac: 0.12, scale: 0.50 },  // top section — mostly core
-      ];
+      // 15 graduated setback levels — smooth taper curve
+      // Each level is a thin slice of the OSM footprint shrunk toward centroid.
+      // The scale curve holds wide at the base then accelerates the taper.
+      const LEVELS = 15;
+      const sliceH = bodyH / LEVELS;
 
       let y = baseY;
-      for (const tier of tiers) {
-        const tierH = bodyH * tier.hFrac;
-        if (tierH < 0.02) continue;
-        const tierPoly = tier.scale < 0.99
-          ? shrinkToCentroid(polygon, tier.scale)
+      for (let i = 0; i < LEVELS; i++) {
+        // t goes from 0 (bottom) to 1 (top of body)
+        const t = i / LEVELS;
+
+        // Smooth taper curve: slow taper at bottom, accelerating toward top
+        // scale = 1.0 at t=0, ~0.95 at t=0.4, ~0.7 at t=0.7, ~0.35 at t=1.0
+        const scale = 1.0 - 0.65 * (t * t);
+
+        const tierPoly = scale < 0.99
+          ? shrinkToCentroid(polygon, Math.max(0.15, scale))
           : polygon;
+
         if (tierPoly) {
-          collectExtrudedPolygon(acc, tierPoly, [], y, tierH);
+          collectExtrudedPolygon(acc, tierPoly, [], y, sliceH);
         }
-        y += tierH;
+        y += sliceH;
       }
 
       // Needle spire — tall hexagonal tapered prism from centroid
@@ -200,8 +206,8 @@ export const LANDMARK_PRESETS = {
         cy /= polygon.length;
 
         const dim = minBBoxDimension(polygon);
-        const baseR = dim * 0.18;  // spire base ~18% of footprint width
-        const topR  = baseR * 0.05; // very sharp needle point
+        const baseR = dim * 0.15;
+        const topR  = baseR * 0.04; // sharp needle
         const segs  = 6;
         const pos   = [];
         const idx   = [];
