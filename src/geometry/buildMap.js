@@ -162,7 +162,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   const BASE        = BASE_THICKNESS_MM;
-  const ROAD_HEIGHT = NOZZLE_MM * 1.75; // 0.7mm — slimmer ridge, still prints reliably
+  const ROAD_HEIGHT = NOZZLE_MM * 0.75; // 0.3mm — 1.5 layers at 0.2mm layer height
   const CLEARANCE   = 1.4; // generous gap around buildings to prevent clipping
 
   // ── 3. Pre-collect building footprints ────────────────────────────────────
