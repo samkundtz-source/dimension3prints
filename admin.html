@@ -115,6 +115,27 @@
       padding: 8px 12px; cursor: pointer; outline: none;
     }
 
+    /* Status tabs */
+    .status-tabs {
+      display: flex; gap: 4px; margin-bottom: 20px;
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+      padding: 4px; width: fit-content;
+    }
+    .status-tab {
+      background: transparent; border: none; border-radius: 8px;
+      color: var(--text-muted); font-family: var(--font); font-size: 13px; font-weight: 500;
+      padding: 8px 16px; cursor: pointer; transition: all 0.15s;
+      display: flex; align-items: center; gap: 6px;
+    }
+    .status-tab:hover { color: var(--text-sec); background: var(--bg-elevated); }
+    .status-tab.active { background: var(--bg-elevated); color: #fff; font-weight: 600; }
+    .tab-count {
+      font-size: 11px; font-weight: 600; font-family: var(--font-mono);
+      background: var(--bg); padding: 1px 6px; border-radius: 10px;
+      color: var(--text-muted); min-width: 20px; text-align: center;
+    }
+    .status-tab.active .tab-count { background: #333; color: var(--text-sec); }
+
     .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
     .empty-state h2 { font-size: 18px; margin-bottom: 8px; color: var(--text-sec); }
 
@@ -148,6 +169,14 @@
           <div class="stat-label">Pending</div>
         </div>
         <div class="stat">
+          <div class="stat-val" id="stat-printing">0</div>
+          <div class="stat-label">Printing</div>
+        </div>
+        <div class="stat">
+          <div class="stat-val" id="stat-shipped">0</div>
+          <div class="stat-label">Shipped</div>
+        </div>
+        <div class="stat">
           <div class="stat-val" id="stat-revenue">$0</div>
           <div class="stat-label">Revenue</div>
         </div>
@@ -156,7 +185,13 @@
     </div>
 
     <div class="orders-wrap">
-      <div class="orders-title">Recent Orders</div>
+      <div class="status-tabs" id="status-tabs">
+        <button class="status-tab active" data-filter="all">All <span class="tab-count" id="tab-all">0</span></button>
+        <button class="status-tab" data-filter="pending">Pending <span class="tab-count" id="tab-pending">0</span></button>
+        <button class="status-tab" data-filter="printing">Printing <span class="tab-count" id="tab-printing">0</span></button>
+        <button class="status-tab" data-filter="shipped">Shipped <span class="tab-count" id="tab-shipped">0</span></button>
+        <button class="status-tab" data-filter="delivered">Delivered <span class="tab-count" id="tab-delivered">0</span></button>
+      </div>
       <div id="orders-list">
         <div class="loading">Loading orders...</div>
       </div>
@@ -166,6 +201,7 @@
   <script>
     let adminPassword = '';
     let orders = [];
+    let activeFilter = 'all';
 
     // ─── Login ───────────────────────────────────────────────────
     document.getElementById('login-btn').addEventListener('click', doLogin);
@@ -225,21 +261,51 @@
       }
     }
 
+    // ─── Tab filtering ─────────────────────────────────────────
+    document.getElementById('status-tabs').addEventListener('click', e => {
+      const tab = e.target.closest('.status-tab');
+      if (!tab) return;
+      activeFilter = tab.dataset.filter;
+      document.querySelectorAll('.status-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      renderOrders();
+    });
+
     function updateStats() {
-      document.getElementById('stat-total').textContent = orders.length;
-      document.getElementById('stat-pending').textContent = orders.filter(o => o.status === 'pending').length;
+      const counts = { all: orders.length, pending: 0, printing: 0, shipped: 0, delivered: 0 };
+      for (const o of orders) {
+        if (counts[o.status] !== undefined) counts[o.status]++;
+      }
+      document.getElementById('stat-total').textContent = counts.all;
+      document.getElementById('stat-pending').textContent = counts.pending;
+      document.getElementById('stat-printing').textContent = counts.printing;
+      document.getElementById('stat-shipped').textContent = counts.shipped;
       const revenue = orders.reduce((sum, o) => sum + (o.amount || 0), 0) / 100;
       document.getElementById('stat-revenue').textContent = '$' + revenue.toFixed(2);
+
+      // Update tab counts
+      document.getElementById('tab-all').textContent = counts.all;
+      document.getElementById('tab-pending').textContent = counts.pending;
+      document.getElementById('tab-printing').textContent = counts.printing;
+      document.getElementById('tab-shipped').textContent = counts.shipped;
+      document.getElementById('tab-delivered').textContent = counts.delivered;
     }
 
     function renderOrders() {
       const list = document.getElementById('orders-list');
+      const filtered = activeFilter === 'all' ? orders : orders.filter(o => o.status === activeFilter);
+
       if (orders.length === 0) {
         list.innerHTML = '<div class="empty-state"><h2>No orders yet</h2><p>Orders will appear here once customers complete checkout.</p></div>';
         return;
       }
+      if (filtered.length === 0) {
+        list.innerHTML = `<div class="empty-state"><h2>No ${activeFilter} orders</h2><p>Orders with "${activeFilter}" status will appear here.</p></div>`;
+        return;
+      }
 
-      list.innerHTML = orders.map((o, i) => {
+      list.innerHTML = filtered.map((o) => {
+        const i = orders.indexOf(o);
         const date = new Date(o.created * 1000);
         const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
         const amount = '$' + (o.amount / 100).toFixed(2);
