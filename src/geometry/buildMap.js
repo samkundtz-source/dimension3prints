@@ -30,18 +30,22 @@ import {
 } from '../utils/helpers.js';
 import { getHexVertices, getShapeVertices } from '../geo/geoMath.js';
 import { clipToHex, bufferLinestring } from '../geo/clipper.js';
+import { landmarkRegistry, generateLandmarkBuilding } from './landmarkPresets.js';
 
 // ─── Colours ──────────────────────────────────────────────────────────────────
 // Preview uses a neutral gray palette so buildings read with depth and shadow.
 // The exported STL/3MF is uncoloured — slicer assigns filament colours.
 export const FEATURE_COLORS = {
-  base:     0xC8C8C8,
-  terrain:  0xC8C8C8,
-  building: 0xB0B0B0,
-  water:    0x1A1A1A,
-  park:     0x1A1A1A,
-  road:     0x1A1A1A,
-  path:     0x1A1A1A,
+  base:      0xC8C8C8,
+  terrain:   0xC8C8C8,
+  building:  0xB0B0B0,
+  water:     0x1A1A1A,
+  park:      0x1A1A1A,
+  road:      0x1A1A1A,
+  path:      0x1A1A1A,
+  // Debug tier colors (only used when debugTiers is enabled)
+  landmark:  0xCC3333,  // red — tier 1 landmark preset
+  tallTower: 0xE88833,  // orange — tier 2 generic tall-tower
 };
 
 export function setInvertedColors(inverted) {
@@ -136,7 +140,7 @@ function sampleTerrainElev(x, y, elevGrid, N, vScale) {
   return clamp(e * vScale, 0, 40);
 }
 
-export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '') {
+export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '', debugTiers = false) {
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -148,8 +152,11 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
   // ── 3 combined accumulators — everything merges into these ────────────────
   const baseAcc     = new GeomAccumulator();  // base plate + terrain → white
-  const buildingAcc = new GeomAccumulator();  // all buildings → white
+  const buildingAcc = new GeomAccumulator();  // all buildings → white (standard tier)
   const blackAcc    = new GeomAccumulator();  // roads + paths + parks + water → black
+  // Debug tier accumulators (only used when debugTiers is on)
+  const landmarkAcc  = debugTiers ? new GeomAccumulator() : null;  // red — tier 1
+  const tallTowerAcc = debugTiers ? new GeomAccumulator() : null;  // orange — tier 2
 
   // ── 1. Base plate ─────────────────────────────────────────────────────────
   onProgress?.('Building base plate…', 65);
@@ -184,6 +191,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       polygon: poly,
       holes: feat.holes,
       tags: feat.tags,
+      osmId: feat.osmId || '',
       bbox: {
         minX: minX - CLEARANCE, maxX: maxX + CLEARANCE,
         minY: minY - CLEARANCE, maxY: maxY + CLEARANCE,
@@ -372,7 +380,19 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const MAX_BLDG_MM    = 35; // hard cap — keeps tall buildings from looking like spires
   const MIN_BLDG_DIM   = NOZZLE_MM; // strictly one nozzle width — anything thinner won't print
 
+  // Helper context for landmark presets (avoids circular imports)
+  const landmarkCtx = {
+    collectExtrudedPolygon,
+    shrinkToCentroid,
+    collectSpire,
+    collectBandedBuilding,
+    minBBoxDimension,
+    deterministicFrac,
+    acc: null, // set per-building below
+  };
+
   let buildingCount = 0;
+  let landmarkCount = 0, tallTowerCount = 0, standardCount = 0;
   onProgress?.('Extruding buildings…', 74);
   for (const bf of buildingFootprints) {
     // Skip buildings too thin to print
@@ -393,12 +413,44 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     }
 
     if (detailedBuildings) {
-      collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+      // ── 3-tier building generation system ──────────────────────────────
+      // Tier 1: Landmark preset (identity-based, NOT height-based)
+      // Tier 2: Generic tall-tower (≥100m real, no preset)
+      // Tier 3: Standard class-based (everything else)
+      const tierResult = landmarkRegistry.selectGenerator(bf.tags, bf.osmId || '', heightM, bf.polygon);
+
+      if (tierResult.tier === 'landmark' && tierResult.presetName) {
+        // ── Tier 1: Landmark with preset geometry ────────────────────
+        const targetAcc = debugTiers ? landmarkAcc : buildingAcc;
+        landmarkCtx.acc = targetAcc;
+        const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
+        if (!applied) {
+          // Preset not found — fallback to standard detailed
+          collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+          standardCount++;
+        } else {
+          landmarkCount++;
+        }
+      } else if (tierResult.tier === 'tall-tower') {
+        // ── Tier 2: Generic tall-tower (≥100m, no preset) ───────────
+        // Simple tapered box with mild setbacks — NO iconic massing
+        const targetAcc = debugTiers ? tallTowerAcc : buildingAcc;
+        collectGenericTallTower(targetAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+        tallTowerCount++;
+      } else {
+        // ── Tier 3: Standard class-based generation ─────────────────
+        collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+        standardCount++;
+      }
     } else {
       // Plain block extrusion — no bevel, no empty space
       collectExtrudedPolygon(buildingAcc, bf.polygon, [], baseY, heightMM);
     }
     buildingCount++;
+  }
+
+  if (detailedBuildings) {
+    console.log(`[Buildings] Tier 1 landmarks: ${landmarkCount}, Tier 2 tall-towers: ${tallTowerCount}, Tier 3 standard: ${standardCount}`);
   }
 
   // ── 5. Water (black slab on top of base) ─────────────────────────────────
@@ -560,7 +612,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     engraveTextOnBottom(blackAcc, orderId);
   }
 
-  // ── Build exactly 3 combined meshes ───────────────────────────────────────
+  // ── Build combined meshes ──────────────────────────────────────────────────
   onProgress?.('Combining geometry…', 92);
   const baseMesh = baseAcc.build('base');
   const bldgMesh = buildingAcc.build('building');
@@ -570,10 +622,21 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   if (bldgMesh) group.add(bldgMesh);
   if (roadMesh) group.add(roadMesh);
 
+  // Debug tier meshes (red landmarks, orange tall-towers)
+  if (debugTiers) {
+    const lmMesh = landmarkAcc?.build('landmark');
+    const ttMesh = tallTowerAcc?.build('tallTower');
+    if (lmMesh) group.add(lmMesh);
+    if (ttMesh) group.add(ttMesh);
+  }
+
   onProgress?.('Model ready.', 95);
   return {
     group,
-    stats: { buildings: buildingCount, roads: roadCount, water: waterCount },
+    stats: {
+      buildings: buildingCount, roads: roadCount, water: waterCount,
+      landmarks: landmarkCount, tallTowers: tallTowerCount,
+    },
   };
 }
 
@@ -1101,10 +1164,9 @@ function classifyBuilding(tags, heightM, polygon) {
   const area = polygon ? Math.abs(signedArea2D(polygon)) : 50;
   const frac = polygon ? deterministicFrac(polygon) : 0.5;
 
-  // Explicit landmark tags always win
-  if (LANDMARK_TAGS.has(t)) return CLASS_LANDMARK;
-  // Very tall buildings (≥50m real) are landmarks
-  if (heightM >= 50) return CLASS_LANDMARK;
+  // Religious/civic landmark tags → civic class (identity-based landmarks
+  // are handled by the Tier 1 LandmarkRegistry, not height thresholds)
+  if (LANDMARK_TAGS.has(t)) return CLASS_CIVIC;
 
   // Industrial
   if (INDUSTRIAL_TAGS.has(t)) return CLASS_INDUSTRIAL;
@@ -1547,6 +1609,33 @@ function collectFiller(acc, polygon, tags, baseY, totalH, heightM) {
     const parapetH = Math.min(0.25, totalH * 0.05);
     collectExtrudedPolygon(acc, polygon, [], baseY, totalH - parapetH);
     collectParapet(acc, polygon, baseY + totalH - parapetH, parapetH, 1.01);
+  }
+}
+
+// ── Tier 2: Generic Tall-Tower ────────────────────────────────────────────
+// For verified tall buildings (≥100m real) with NO landmark preset.
+// Simple tapered box with mild setbacks — NO iconic stepped massing,
+// NO spires unless building data explicitly includes one.
+// Represents "generic skyscraper" honestly without pretending to be iconic.
+function collectGenericTallTower(acc, polygon, tags, baseY, totalH, heightM) {
+  const frac = deterministicFrac(polygon);
+
+  // 2 simple setback stages: lower 65% full width, upper 35% at 85% width
+  const lowerFrac = 0.65;
+  const lowerH = totalH * lowerFrac;
+  const upperH = totalH - lowerH;
+
+  // Lower section with window banding
+  const lowerBands = Math.max(3, Math.round(lowerH / 1.8));
+  collectBandedBuilding(acc, polygon, baseY, lowerH, lowerBands, 0.93, 0.25);
+
+  // Upper section with mild setback
+  const upper = shrinkToCentroid(polygon, 0.85);
+  if (upper) {
+    const upperBands = Math.max(2, Math.round(upperH / 1.8));
+    collectBandedBuilding(acc, upper, baseY + lowerH, upperH, upperBands, 0.93, 0.25);
+  } else {
+    collectExtrudedPolygon(acc, polygon, [], baseY + lowerH, upperH);
   }
 }
 

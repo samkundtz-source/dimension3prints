@@ -168,7 +168,8 @@ export function parseOSMData(json, projection, hexVertices) {
       continue;
     }
 
-    const added = addFeature(type, coords, tags, hexVertices, features);
+    const osmId = `way/${el.id}`;
+    const added = addFeature(type, coords, tags, hexVertices, features, osmId);
     if (!added) skippedClipped++;
     else processedWayIds.add(el.id);
   }
@@ -219,7 +220,7 @@ export function parseOSMData(json, projection, hexVertices) {
       const bucket = type === 'building' ? features.buildings
                    : type === 'water'    ? features.water
                                          : features.parks;
-      bucket.push({ polygon: clipped, holes: innerRings.filter(h => h.length >= 3), tags });
+      bucket.push({ polygon: clipped, holes: innerRings.filter(h => h.length >= 3), tags, osmId: `relation/${el.id}` });
       relationsAdded++;
     }
   }
@@ -309,7 +310,7 @@ function classifyTags(tags) {
 // ── Add feature to bucket ─────────────────────────────────────────────────────
 
 /** Returns true if the feature was added, false if it was rejected/clipped. */
-function addFeature(type, coords, tags, hexVertices, features) {
+function addFeature(type, coords, tags, hexVertices, features, osmId) {
   const isArea = type === 'building' || type === 'water' || type === 'park';
   const isLine = type === 'road' || type === 'path' || type === 'waterway';
 
@@ -325,7 +326,7 @@ function addFeature(type, coords, tags, hexVertices, features) {
     const bucket = type === 'building' ? features.buildings
                  : type === 'water'    ? features.water
                                        : features.parks;
-    bucket.push({ polygon: clipped, holes: [], tags });
+    bucket.push({ polygon: clipped, holes: [], tags, osmId: osmId || '' });
     return true;
 
   } else if (isLine) {
