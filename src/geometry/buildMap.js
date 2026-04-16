@@ -394,8 +394,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     if (detailedBuildings) {
       collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
     } else {
-      // Smooth (beveled-top) block extrusion
-      collectBeveledBuilding(buildingAcc, bf.polygon, baseY, heightMM);
+      // Plain block extrusion — no bevel, no empty space
+      collectExtrudedPolygon(buildingAcc, bf.polygon, [], baseY, heightMM);
     }
     buildingCount++;
   }
