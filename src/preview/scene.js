@@ -5,7 +5,6 @@
 
 import * as THREE from 'three';
 import { OrbitControls }    from 'three/examples/jsm/controls/OrbitControls.js';
-import { mergeVertices }    from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { FEATURE_COLORS } from '../geometry/buildMap.js';
 import { MODEL_RADIUS_MM } from '../utils/helpers.js';
 
@@ -260,18 +259,6 @@ export class SceneManager {
       obj.castShadow    = (type === 'building');
       obj.receiveShadow = (type === 'terrain' || type === 'base');
 
-      // Smooth-shade the building mesh so chamfered top edges read as
-      // a rounded bevel rather than a faceted cut. Merge coincident
-      // vertices first so shared edges actually share normals.
-      if (type === 'building' && !obj.userData._smoothed) {
-        try {
-          const merged = mergeVertices(obj.geometry, 0.01);
-          merged.computeVertexNormals();
-          obj.geometry.dispose();
-          obj.geometry = merged;
-          obj.userData._smoothed = true;
-        } catch { /* non-fatal — leave flat-shaded */ }
-      }
     });
   }
 
