@@ -29,6 +29,7 @@ export async function geocode(query) {
 const OVERPASS_SERVERS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.fr/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
   'https://overpass.openstreetmap.ru/api/interpreter',
   'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
@@ -83,7 +84,7 @@ export async function fetchOSMData(bbox, onProgress) {
       onProgress?.(`Querying ${host}…`, 12 + Math.min(started * 3, 18));
 
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 40000);
+      const timer = setTimeout(() => controller.abort(), 55000);
 
       fetch(server, {
         method: 'POST',
@@ -111,9 +112,10 @@ export async function fetchOSMData(bbox, onProgress) {
         });
     }
 
-    // Start first server immediately, stagger the rest every 8 seconds
+    // Start first server immediately, stagger the rest every 2 seconds
+    // so all 6 servers are in-flight within 10s instead of 40s.
     OVERPASS_SERVERS.forEach((server, i) => {
-      setTimeout(() => tryServer(server), i * 8000);
+      setTimeout(() => tryServer(server), i * 2000);
     });
   });
 }
