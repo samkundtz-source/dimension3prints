@@ -153,6 +153,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const blackAcc    = new GeomAccumulator();  // roads + water floors → black
 
   // ── 0. Pre-collect water polygons ─────────────────────────────────────────
+  const WATER_DEPTH = 1.0;  // mm recessed below base top surface
   const waterPolys  = [];
   for (const feat of (features.water || [])) {
     const poly = clipToHex(feat.polygon, hexInner);
@@ -163,13 +164,20 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const hasWater    = waterPolys.length > 0;
 
   // ── Constants ─────────────────────────────────────────────────────────────
-  const BASE        = BASE_THICKNESS_MM; // always 1.5 mm — solid, never changes
+  const BASE        = BASE_THICKNESS_MM; // 1.5 mm — never changes
+  const waterFloorY = BASE - WATER_DEPTH; // pit floor = 0.5 mm from bottom
   const ROAD_HEIGHT = NOZZLE_MM * 1.0;  // 0.4mm — bold ridge for clean printing
   const CLEARANCE   = 2.0; // gap around buildings — wider = cleaner road edges
 
-  // ── 1. Base plate — always a simple solid prism ───────────────────────────
+  // ── 1. Base plate ─────────────────────────────────────────────────────────
+  // With water: single manifold solid with recessed pits (pit walls reach exactly
+  // BASE level — never higher than the base).  Without water: plain solid prism.
   onProgress?.('Building base plate…', 65);
-  collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
+  if (hasWater) {
+    collectHexBaseWithHoles(baseAcc, hexFull, waterPolys, BASE, waterFloorY);
+  } else {
+    collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
+  }
 
   // ── 2. Terrain ────────────────────────────────────────────────────────────
   if (elevGrid && N > 0) {
@@ -509,15 +517,14 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     roadCount++;
   }
 
-  // ── 6. Water areas — flat black slab flush with base surface ────────────
-  // Base plate is always a plain solid prism — nothing taller than it is added.
-  // Water is shown as a thin black slab sitting at the base top surface so it
-  // reads as dark water against the white base without raising any geometry
-  // above the base level.
+  // ── 6. Water floors (black) ──────────────────────────────────────────────
+  // Thin black slab at the pit floor — gives the dark water colour.
+  // Pit walls (the "borders") rise from waterFloorY up to BASE exactly,
+  // so they are never taller than the base surface.
   if (hasWater) {
     onProgress?.('Building water areas…', 88);
     for (const poly of waterPolys) {
-      collectExtrudedPolygon(blackAcc, poly, [], BASE, 0.3);
+      collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.3);
     }
   }
 
