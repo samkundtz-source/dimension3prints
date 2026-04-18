@@ -829,124 +829,85 @@ function collectHexBase(acc, shapeVerts, chamfer = 0) {
 }
 
 /**
- * Build the base plate as a SINGLE, fully-watertight solid with recessed water pits.
+ * Base plate variant that carves water polygons as recessed pits.
  *
- * All geometry is emitted in ONE acc.add() call using a shared vertex buffer.
- * Every edge between adjacent faces references the SAME vertex indices, so
- * the mesh is 100% manifold — no coincident-but-separate vertices that confuse slicers.
- *
- * Vertex layout in allPos:
- *   [0 .. N-1]                    hex top ring, y = topY
- *   [N .. 2N-1]                   hex bottom ring, y = bot
- *   [2N]                          hex bottom center (for fan)
- *   for each water poly wi (M vertices):
- *     [wTopStart[wi] .. +M-1]     water top ring, y = topY
- *     [wFlrStart[wi] .. +M-1]     water floor ring, y = waterFloorY
+ * The base is taller than normal (topY > BASE_THICKNESS_MM) so the pits
+ * fit inside it without going negative.  Water pit geometry:
+ *   - Top face of base has holes where water bodies are (earcut with holes)
+ *   - White pit walls run from waterFloorY up to topY around each water poly
+ *   - Black floor slab is added by the caller (via blackAcc)
  */
 function collectHexBaseWithHoles(acc, shapeVerts, waterPolys, topY, waterFloorY) {
   const bot = 0;
   const N   = shapeVerts.length;
 
-  // Pre-process each water polygon: deduplicate + ensure CCW.
-  // This MUST be done BEFORE building any geometry so all faces that share
-  // a water-poly edge use bit-for-bit identical vertex positions.
-  const wPolys = waterPolys
-    .map(poly => ensureCCW(deduplicateRing([...poly])))
-    .filter(p => p.length >= 3);
+  // ── Top face with water holes (earcut) ────────────────────────────────────
+  // Re-use flattenWithHoles: outer ring CCW, holes are made CW inside.
+  const outerCCW = ensureCCW([...shapeVerts]);
+  const { flat, holeIndices } = flattenWithHoles(outerCCW, waterPolys);
+  const topTris = earcut(flat, holeIndices.length > 0 ? holeIndices : undefined, 2);
 
-  // Fall back to plain solid base if nothing is left after filtering.
-  if (wPolys.length === 0) {
-    collectHexBase(acc, shapeVerts, 0);
-    return;
-  }
-
-  // ── Build shared vertex buffer ────────────────────────────────────────────
-  const allPos = [];
-  const allIdx = [];
-
-  // Hex top ring: [0..N-1]
-  for (const v of shapeVerts) allPos.push(v.x, topY, -v.y);
-  // Hex bottom ring: [N..2N-1]
-  for (const v of shapeVerts) allPos.push(v.x, bot,  -v.y);
-  // Hex bottom center: [2N]
-  allPos.push(0, bot, 0);
-  const botCenterIdx = 2 * N;
-
-  // Water poly rings — record start indices
-  const wTopStart = [];
-  const wFlrStart = [];
-  for (const wp of wPolys) {
-    wTopStart.push(allPos.length / 3);
-    for (const p of wp) allPos.push(p.x, topY,        -p.y);
-    wFlrStart.push(allPos.length / 3);
-    for (const p of wp) allPos.push(p.x, waterFloorY, -p.y);
-  }
-
-  // ── Bottom face — solid hex fan (downward normals) ────────────────────────
-  for (let i = 0; i < N; i++) {
-    allIdx.push(botCenterIdx, N + (i + 1) % N, N + i);
-  }
-
-  // ── Hex outer side walls (outward-facing) ─────────────────────────────────
-  for (let i = 0; i < N; i++) {
-    const tA = i,     tB = (i + 1) % N;
-    const bA = N + i, bB = N + (i + 1) % N;
-    allIdx.push(tA, bA, tB,  bA, bB, tB);
-  }
-
-  // ── Top face with water holes — earcut with index remapping ───────────────
-  // Build flat2D for earcut: outer ring (CCW) + each water hole (CW = reversed).
-  // Also build eToV: earcut flat-index → allPos vertex index.
-  const hexCCW = ensureCCW([...shapeVerts]); // same order as allPos[0..N-1]
-  const flat2D = [];
-  const eToV   = [];    // earcut flat index → allPos vertex index
-
-  for (let i = 0; i < N; i++) {
-    flat2D.push(hexCCW[i].x, hexCCW[i].y);
-    // hexCCW[i] === shapeVerts[i] when shapeVerts is already CCW (which it always is)
-    eToV.push(i);       // allPos index = i (hex top ring)
-  }
-
-  const earHoles = [];
-  for (let wi = 0; wi < wPolys.length; wi++) {
-    earHoles.push(flat2D.length / 2);
-    const wp = wPolys[wi];
-    const M  = wp.length;
-    // Holes must be CW for earcut → iterate wp in reverse.
-    for (let j = M - 1; j >= 0; j--) {
-      flat2D.push(wp[j].x, wp[j].y);
-      eToV.push(wTopStart[wi] + j);   // allPos index = water top vertex j
+  if (topTris.length > 0) {
+    const nVerts = flat.length / 2;
+    const topPos = [];
+    for (let i = 0; i < nVerts; i++) {
+      topPos.push(flat[i * 2], topY, -flat[i * 2 + 1]);
     }
+    acc.add(topPos, Array.from(topTris));
   }
 
-  const topTris = earcut(flat2D, earHoles.length > 0 ? earHoles : undefined, 2);
-  for (const t of topTris) allIdx.push(eToV[t]);   // remap to shared vertices
+  // ── Bottom face (fan triangulation, downward normals) ─────────────────────
+  const botPos = [0, bot, 0];
+  const botIdx = [];
+  for (const v of shapeVerts) botPos.push(v.x, bot, -v.y);
+  for (let i = 0; i < N; i++) {
+    botIdx.push(0, 1 + (i + 1) % N, 1 + i);
+  }
+  acc.add(botPos, botIdx);
 
-  // ── Pit walls + floor per water poly ─────────────────────────────────────
-  for (let wi = 0; wi < wPolys.length; wi++) {
-    const wp   = wPolys[wi];
-    const M    = wp.length;
-    const tB_  = wTopStart[wi];   // allPos base for top ring of this poly
-    const fB_  = wFlrStart[wi];   // allPos base for floor ring of this poly
+  // ── Outer hex side walls (outward-facing) ─────────────────────────────────
+  const sidePos = [];
+  const sideIdx = [];
+  for (const v of shapeVerts) sidePos.push(v.x, topY,  -v.y); // top ring [0..N-1]
+  for (const v of shapeVerts) sidePos.push(v.x, bot,   -v.y); // bot ring [N..2N-1]
+  for (let i = 0; i < N; i++) {
+    const tA = i, tB = (i + 1) % N, bA = N + i, bB = N + (i + 1) % N;
+    sideIdx.push(tA, bA, tB,  bA, bB, tB);
+  }
+  acc.add(sidePos, sideIdx);
 
-    // Pit walls: inward-facing (reverse winding vs outer hex walls).
-    // Top-ring uses wTopStart[wi]+i (shared with top-face earcut above).
-    // Floor-ring uses wFlrStart[wi]+i (shared with pit-floor earcut below).
+  // ── Water pit walls (inward-facing, white base material) ──────────────────
+  // Each wall runs from the pit floor (waterFloorY) up to the base top (topY).
+  for (const poly of waterPolys) {
+    const M = poly.length;
+    if (M < 2) continue;
+    const pitPos = [];
+    const pitIdx = [];
+    for (const p of poly) pitPos.push(p.x, topY,        -p.y); // top ring [0..M-1]
+    for (const p of poly) pitPos.push(p.x, waterFloorY, -p.y); // bot ring [M..2M-1]
     for (let i = 0; i < M; i++) {
-      const tA = tB_ + i,         tBv = tB_ + (i + 1) % M;
-      const bA = fB_ + i,         bBv = fB_ + (i + 1) % M;
-      allIdx.push(tA, tBv, bA,  tBv, bBv, bA);
+      const tA = i, tB = (i + 1) % M, bA = M + i, bB = M + (i + 1) % M;
+      // Inward-facing: reverse winding relative to outer hex walls
+      pitIdx.push(tA, tB, bA,  tB, bB, bA);
     }
-
-    // Pit floor cap — seals the bottom so the base is a closed solid.
-    // Uses the SAME wFlrStart vertices → every pit-wall→floor edge is shared.
-    const flatF = wp.flatMap(p => [p.x, p.y]);   // already CCW
-    const floorTris = earcut(flatF, undefined, 2);
-    for (const t of floorTris) allIdx.push(fB_ + t);
+    acc.add(pitPos, pitIdx);
   }
 
-  // Emit everything as one solid, manifold mesh.
-  acc.add(allPos, allIdx);
+  // ── Pit floor caps (upward-facing) — CRITICAL for watertight / manifold mesh ─
+  // Without these, the pit has open bottoms → slicer sees non-manifold geometry
+  // and repairs it by filling the hole back in.  These white floors close each pit.
+  // The separate black slab (added by caller) sits on top and provides the colour.
+  for (const poly of waterPolys) {
+    const floorCCW = ensureCCW([...poly]);
+    const flatF    = floorCCW.flatMap(p => [p.x, p.y]);
+    const floorTris = earcut(flatF, undefined, 2);
+    if (floorTris.length === 0) continue;
+    const floorPos = [];
+    for (let i = 0; i < flatF.length / 2; i++) {
+      floorPos.push(flatF[i * 2], waterFloorY, -flatF[i * 2 + 1]);
+    }
+    acc.add(floorPos, Array.from(floorTris));
+  }
 }
 
 // Small extruded prism (n-gon) used for tree bumps
