@@ -208,7 +208,7 @@ async function generate() {
     const lng          = selectedCenter.lng;
     const radiusMeters = getRadiusMeters();
     const vertExag     = getVertExag();
-    const useElevation = el('use-elevation').checked;
+    const useElevation  = el('use-elevation')?.checked || false;
     const terrainRelief = el('terrain-relief')?.checked || false;
 
     // 1. Projection + shape

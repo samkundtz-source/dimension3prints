@@ -31,6 +31,7 @@ const OVERPASS_SERVERS = [
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
   'https://overpass.openstreetmap.ru/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
 ];
 
 /**
@@ -60,37 +61,55 @@ out skel qt;`;
 
 export async function fetchOSMData(bbox, onProgress) {
   const query = buildQuery(bbox);
+  const body  = `data=${encodeURIComponent(query)}`;
 
-  let lastErr;
-  for (const server of OVERPASS_SERVERS) {
-    try {
+  // Staggered parallel: start server[0] immediately, then add more every 8s
+  // if no success yet. First valid response wins — no waiting for slow servers.
+  return new Promise((resolve, reject) => {
+    let done = false;
+    let started = 0;
+    let failed  = 0;
+
+    function tryServer(server) {
+      if (done) return;
+      started++;
       const host = server.replace('https://', '').split('/')[0];
-      onProgress?.(`Querying ${host}…`, 12);
+      onProgress?.(`Querying ${host}…`, 12 + Math.min(started * 3, 18));
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 60000); // 60s per server
-      const resp = await fetch(server, {
+      const timer = setTimeout(() => controller.abort(), 40000);
+
+      fetch(server, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(query)}`,
+        body,
         signal: controller.signal,
-      });
-      clearTimeout(timeout);
-
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-
-      const json = await resp.json();
-      if (!Array.isArray(json.elements)) throw new Error('No elements array in response');
-
-      console.log(`[Overpass] ${json.elements.length} raw elements from ${host}`);
-      return json;
-    } catch (err) {
-      const msg = err.name === 'AbortError' ? 'Request timed out (60s)' : err.message;
-      console.warn(`[Overpass] ${server} failed:`, msg);
-      lastErr = new Error(msg);
+      })
+        .then(r => { clearTimeout(timer); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+        .then(json => {
+          if (!Array.isArray(json.elements)) throw new Error('Bad response');
+          if (done) return;
+          done = true;
+          console.log(`[Overpass] ${json.elements.length} elements from ${host}`);
+          resolve(json);
+        })
+        .catch(err => {
+          clearTimeout(timer);
+          const msg = err.name === 'AbortError' ? 'timed out' : err.message;
+          console.warn(`[Overpass] ${host}: ${msg}`);
+          failed++;
+          if (failed === started && started === OVERPASS_SERVERS.length && !done) {
+            done = true;
+            reject(new Error('All map servers failed. Check your internet connection and try again.'));
+          }
+        });
     }
-  }
-  throw new Error(`All Overpass servers failed. Last error: ${lastErr?.message}`);
+
+    // Start first server immediately, stagger the rest every 8 seconds
+    OVERPASS_SERVERS.forEach((server, i) => {
+      setTimeout(() => tryServer(server), i * 8000);
+    });
+  });
 }
 
 // ─── OSM Parser ───────────────────────────────────────────────────────────────
