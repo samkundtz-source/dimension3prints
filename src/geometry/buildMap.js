@@ -148,23 +148,41 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const N      = elevGrid ? Math.round(Math.sqrt(elevGrid.length)) : 0;
 
   // ── 3 combined accumulators — everything merges into these ────────────────
-  const baseAcc     = new GeomAccumulator();  // base plate + terrain → white
+  const baseAcc     = new GeomAccumulator();  // base plate + terrain + pit walls → white
   const buildingAcc = new GeomAccumulator();  // all buildings → white
-  const blackAcc    = new GeomAccumulator();  // roads + paths + parks + water → black
+  const blackAcc    = new GeomAccumulator();  // roads + water floors → black
+
+  // ── 0. Pre-collect water polygons (needed before base plate to set height) ─
+  const WATER_DEPTH = 3.0; // mm — water is recessed this deep from the base top
+  const waterPolys  = [];
+  for (const feat of (features.water || [])) {
+    const poly = clipToHex(feat.polygon, hexInner);
+    if (!poly || poly.length < 3) continue;
+    if (Math.abs(signedArea2D(poly)) < 1.0) continue; // skip puddles < 1 mm²
+    waterPolys.push(poly);
+  }
+  const hasWater    = waterPolys.length > 0;
+
+  // ── Constants ─────────────────────────────────────────────────────────────
+  // When water is present the base plate is taller so the recess fits inside it.
+  const BASE        = BASE_THICKNESS_MM + (hasWater ? WATER_DEPTH : 0);
+  const waterFloorY = BASE_THICKNESS_MM; // pit floor = normal base-top height
+  const ROAD_HEIGHT = NOZZLE_MM * 1.0;  // 0.4mm — bold ridge for clean printing
+  const CLEARANCE   = 2.0; // gap around buildings — wider = cleaner road edges
 
   // ── 1. Base plate ─────────────────────────────────────────────────────────
   onProgress?.('Building base plate…', 65);
-  collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
+  if (hasWater) {
+    collectHexBaseWithHoles(baseAcc, hexFull, waterPolys, BASE, waterFloorY);
+  } else {
+    collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
+  }
 
   // ── 2. Terrain ────────────────────────────────────────────────────────────
   if (elevGrid && N > 0) {
     onProgress?.('Building terrain…', 68);
-    collectTerrainMesh(baseAcc, elevGrid, N, hexFull, vScale);
+    collectTerrainMesh(baseAcc, elevGrid, N, hexFull, vScale, BASE);
   }
-
-  const BASE        = BASE_THICKNESS_MM;
-  const ROAD_HEIGHT = NOZZLE_MM * 1.0;  // 0.4mm — bold ridge for clean printing
-  const CLEARANCE   = 2.0; // gap around buildings — wider = cleaner road edges
 
   // Road types to render — skip noise (footway, path, cycleway, steps, service)
   const ROAD_TYPES = new Set([
@@ -498,6 +516,17 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     roadCount++;
   }
 
+  // ── 6. Water floors (black) ───────────────────────────────────────────────
+  // Each water polygon is a pit carved into the top of the base plate.
+  // We add a black slab at the pit floor so the recess reads as water.
+  if (hasWater) {
+    onProgress?.('Building water areas…', 88);
+    for (const poly of waterPolys) {
+      // 0.5mm thick black slab sitting on the pit floor
+      collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.5);
+    }
+  }
+
   // ── 7. Order ID engraving on base bottom ─────────────────────────────────
   // Tiny raised text on the bottom face (Y=0) so you can flip the print
   // and identify which order it belongs to.
@@ -520,7 +549,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   return {
     group,
     stats: {
-      buildings: buildingCount, roads: roadCount, water: 0,
+      buildings: buildingCount, roads: roadCount, water: waterPolys.length,
       landmarks: landmarkCount, tallTowers: tallTowerCount,
     },
   };
@@ -798,6 +827,72 @@ function collectHexBase(acc, shapeVerts, chamfer = 0) {
   acc.add(pos, idx);
 }
 
+/**
+ * Base plate variant that carves water polygons as recessed pits.
+ *
+ * The base is taller than normal (topY > BASE_THICKNESS_MM) so the pits
+ * fit inside it without going negative.  Water pit geometry:
+ *   - Top face of base has holes where water bodies are (earcut with holes)
+ *   - White pit walls run from waterFloorY up to topY around each water poly
+ *   - Black floor slab is added by the caller (via blackAcc)
+ */
+function collectHexBaseWithHoles(acc, shapeVerts, waterPolys, topY, waterFloorY) {
+  const bot = 0;
+  const N   = shapeVerts.length;
+
+  // ── Top face with water holes (earcut) ────────────────────────────────────
+  // Re-use flattenWithHoles: outer ring CCW, holes are made CW inside.
+  const outerCCW = ensureCCW([...shapeVerts]);
+  const { flat, holeIndices } = flattenWithHoles(outerCCW, waterPolys);
+  const topTris = earcut(flat, holeIndices.length > 0 ? holeIndices : undefined, 2);
+
+  if (topTris.length > 0) {
+    const nVerts = flat.length / 2;
+    const topPos = [];
+    for (let i = 0; i < nVerts; i++) {
+      topPos.push(flat[i * 2], topY, -flat[i * 2 + 1]);
+    }
+    acc.add(topPos, Array.from(topTris));
+  }
+
+  // ── Bottom face (fan triangulation, downward normals) ─────────────────────
+  const botPos = [0, bot, 0];
+  const botIdx = [];
+  for (const v of shapeVerts) botPos.push(v.x, bot, -v.y);
+  for (let i = 0; i < N; i++) {
+    botIdx.push(0, 1 + (i + 1) % N, 1 + i);
+  }
+  acc.add(botPos, botIdx);
+
+  // ── Outer hex side walls (outward-facing) ─────────────────────────────────
+  const sidePos = [];
+  const sideIdx = [];
+  for (const v of shapeVerts) sidePos.push(v.x, topY,  -v.y); // top ring [0..N-1]
+  for (const v of shapeVerts) sidePos.push(v.x, bot,   -v.y); // bot ring [N..2N-1]
+  for (let i = 0; i < N; i++) {
+    const tA = i, tB = (i + 1) % N, bA = N + i, bB = N + (i + 1) % N;
+    sideIdx.push(tA, bA, tB,  bA, bB, tB);
+  }
+  acc.add(sidePos, sideIdx);
+
+  // ── Water pit walls (inward-facing, white base material) ──────────────────
+  // Each wall runs from the pit floor (waterFloorY) up to the base top (topY).
+  for (const poly of waterPolys) {
+    const M = poly.length;
+    if (M < 2) continue;
+    const pitPos = [];
+    const pitIdx = [];
+    for (const p of poly) pitPos.push(p.x, topY,        -p.y); // top ring [0..M-1]
+    for (const p of poly) pitPos.push(p.x, waterFloorY, -p.y); // bot ring [M..2M-1]
+    for (let i = 0; i < M; i++) {
+      const tA = i, tB = (i + 1) % M, bA = M + i, bB = M + (i + 1) % M;
+      // Inward-facing: reverse winding relative to outer hex walls
+      pitIdx.push(tA, tB, bA,  tB, bB, bA);
+    }
+    acc.add(pitPos, pitIdx);
+  }
+}
+
 // Small extruded prism (n-gon) used for tree bumps
 function collectTreeBump(acc, x, y, baseY, height, radius, segments = 6) {
   const pos = [];
@@ -836,7 +931,7 @@ function collectTreeBump(acc, x, y, baseY, height, radius, segments = 6) {
   acc.add(pos, idx);
 }
 
-function collectTerrainMesh(acc, elevGrid, N, hexVerts, vScale) {
+function collectTerrainMesh(acc, elevGrid, N, hexVerts, vScale, baseY = BASE_THICKNESS_MM) {
   const pos = [];
   const idx = [];
 
@@ -848,7 +943,7 @@ function collectTerrainMesh(acc, elevGrid, N, hexVerts, vScale) {
       const y = v * MODEL_RADIUS_MM;
       const inside = pointInHex({ x, y }, hexVerts);
       const elev   = inside ? clamp(elevGrid[j * N + i] * vScale, 0, 40) : 0;
-      pos.push(x, BASE_THICKNESS_MM + elev, -y);
+      pos.push(x, baseY + elev, -y);
     }
   }
 

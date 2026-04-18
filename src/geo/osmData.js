@@ -45,8 +45,7 @@ function buildQuery(bbox) {
   const { south, west, north, east } = bbox;
   const bb = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
 
-  // Lean query — buildings + roads only. No water, parks, trees.
-  // Fewer elements = faster response, fewer timeouts.
+  // Buildings + roads + water polygons. Water is needed for the recess effect.
   return `[out:json][timeout:90];
 (
   way["building"](${bb});
@@ -54,6 +53,12 @@ function buildQuery(bbox) {
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   relation["building"](${bb});
   relation["building:part"](${bb});
+  way["natural"="water"](${bb});
+  way["water"](${bb});
+  way["waterway"="riverbank"](${bb});
+  way["landuse"="reservoir"](${bb});
+  relation["natural"="water"](${bb});
+  relation["water"](${bb});
 );
 out body;
 >;
