@@ -496,10 +496,19 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW = Math.max(realW, minW);
     const roadMid = feat.points[Math.floor(feat.points.length / 2)];
-    const roadBaseY = roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE;
+
+    // Roads/bridges crossing water: extend the slab DOWN to the water floor
+    // so the road is a solid causeway/pier rather than floating in mid-air.
+    const overWater = hasWater && roadCrossesWater(feat.points, waterPolys);
+    const roadBaseY = overWater
+      ? waterFloorY
+      : (roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE);
+    const roadHeight = overWater
+      ? (BASE + ROAD_SLAB - waterFloorY)  // extends from pit floor up to road top
+      : ROAD_SLAB;
 
     // Base road slab
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, ROAD_SLAB, findOverlappingBuildings);
+    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, roadHeight, findOverlappingBuildings);
 
     // Centerline ridge on major + medium roads — gives depth and road hierarchy
     if (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw)) {
@@ -509,7 +518,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       if (ridgePoly) {
         const ridgeClipped = clipToHex(ridgePoly, hexInner);
         if (ridgeClipped && ridgeClipped.length >= 3) {
-          collectExtrudedPolygon(blackAcc, ridgeClipped, [], roadBaseY + ROAD_SLAB, ridgeH);
+          collectExtrudedPolygon(blackAcc, ridgeClipped, [], roadBaseY + roadHeight, ridgeH);
         }
       }
     }
@@ -584,6 +593,34 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 // ─── Smart road placement ────────────────────────────────────────────────────
 // Tries full width first, then progressively shrinks if buildings block the road.
 // Never lets a road completely disappear — it shrinks to fit.
+
+/**
+ * Ray-cast even-odd point-in-polygon test (handles concave/non-convex polys).
+ */
+function pointInPolygon2D(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    if (((yi > pt.y) !== (yj > pt.y)) &&
+        (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * Returns true if any centerline point of a road falls inside any water polygon.
+ */
+function roadCrossesWater(points, waterPolys) {
+  for (const pt of points) {
+    for (const poly of waterPolys) {
+      if (pointInPolygon2D(pt, poly)) return true;
+    }
+  }
+  return false;
+}
 
 function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings) {
   // Try full width, then progressively smaller
