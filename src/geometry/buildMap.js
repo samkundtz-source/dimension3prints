@@ -395,7 +395,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // slider (8x) the tallest skyscrapers stay under MAX_BLDG_MM
   const BUILD_EXAG     = Math.min(vertExag * 0.5, 3.0);
   const MAX_BLDG_MM    = 35; // hard cap — keeps tall buildings from looking like spires
-  const MIN_BLDG_DIM   = 0.8; // minimum footprint — catches most real buildings
+  const MIN_BLDG_DIM   = NOZZLE_MM; // 0.4mm — only skip what literally can't print
 
   // Helper context for landmark presets (avoids circular imports)
   const landmarkCtx = {
@@ -412,8 +412,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   let landmarkCount = 0, tallTowerCount = 0, standardCount = 0;
   onProgress?.('Extruding buildings…', 74);
   for (const bf of buildingFootprints) {
-    // Skip buildings too thin to print
+    // Skip buildings too small to print — use area so narrow row-houses aren't dropped
     if (minBBoxDimension(bf.polygon) < MIN_BLDG_DIM) continue;
+    if (Math.abs(signedArea2D(bf.polygon)) < 0.3) continue; // < 0.3mm² is sub-nozzle
 
     const heightM  = parseBuildingHeight(bf.tags, bf.polygon);
     const heightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
