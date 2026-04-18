@@ -892,6 +892,22 @@ function collectHexBaseWithHoles(acc, shapeVerts, waterPolys, topY, waterFloorY)
     }
     acc.add(pitPos, pitIdx);
   }
+
+  // ── Pit floor caps (upward-facing) — CRITICAL for watertight / manifold mesh ─
+  // Without these, the pit has open bottoms → slicer sees non-manifold geometry
+  // and repairs it by filling the hole back in.  These white floors close each pit.
+  // The separate black slab (added by caller) sits on top and provides the colour.
+  for (const poly of waterPolys) {
+    const floorCCW = ensureCCW([...poly]);
+    const flatF    = floorCCW.flatMap(p => [p.x, p.y]);
+    const floorTris = earcut(flatF, undefined, 2);
+    if (floorTris.length === 0) continue;
+    const floorPos = [];
+    for (let i = 0; i < flatF.length / 2; i++) {
+      floorPos.push(flatF[i * 2], waterFloorY, -flatF[i * 2 + 1]);
+    }
+    acc.add(floorPos, Array.from(floorTris));
+  }
 }
 
 // Small extruded prism (n-gon) used for tree bumps
