@@ -517,14 +517,39 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     roadCount++;
   }
 
-  // ── 6. Water floors (black) ───────────────────────────────────────────────
+  // ── 6. Water floors (black) + white border planks ────────────────────────
   // Each water polygon is a pit carved into the top of the base plate.
-  // We add a black slab at the pit floor so the recess reads as water.
+  // We add a black slab at the pit floor so the recess reads as water,
+  // then white border planks around the perimeter — they run from the pit
+  // floor (waterFloorY) UP to the base surface (BASE) so they are flush with
+  // the top of the model and visible as a white riverbank ring from above.
   if (hasWater) {
     onProgress?.('Building water areas…', 88);
+    const BORDER_W = 0.8; // mm — width of white border plank inside the pit
     for (const poly of waterPolys) {
-      // 0.5mm thick black slab sitting on the pit floor
+      // Black floor slab at pit bottom
       collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.3);
+
+      // White border planks — one thin prism per edge, going from waterFloorY
+      // to BASE.  Each plank is BORDER_W mm wide, sitting just inside the pit
+      // wall so the top face is visible from above as a white border ring.
+      const ring = ensureCCW(deduplicateRing(poly));
+      const M = ring.length;
+      for (let i = 0; i < M; i++) {
+        const A  = ring[i];
+        const B  = ring[(i + 1) % M];
+        const dx = B.x - A.x;
+        const dy = B.y - A.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 1e-6) continue;
+        // Inward normal (left of A→B for CCW polygon)
+        const nx = -dy / len;
+        const ny =  dx / len;
+        const Ai = { x: A.x + nx * BORDER_W, y: A.y + ny * BORDER_W };
+        const Bi = { x: B.x + nx * BORDER_W, y: B.y + ny * BORDER_W };
+        // Quad [A, B, Bi, Ai] — collectExtrudedPolygon handles winding
+        collectExtrudedPolygon(baseAcc, [A, B, Bi, Ai], [], waterFloorY, WATER_DEPTH);
+      }
     }
   }
 
