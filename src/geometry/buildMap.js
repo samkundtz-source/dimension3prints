@@ -152,8 +152,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const buildingAcc = new GeomAccumulator();  // all buildings → white
   const blackAcc    = new GeomAccumulator();  // roads + water floors → black
 
-  // ── 0. Pre-collect water polygons (needed before base plate to set height) ─
-  const WATER_DEPTH = 3.0; // mm — water is recessed this deep from the base top
+  // ── 0. Pre-collect water polygons ─────────────────────────────────────────
+  const WATER_DEPTH = 1.0; // mm — shallow recess into the base (< half of BASE_THICKNESS_MM)
   const waterPolys  = [];
   for (const feat of (features.water || [])) {
     const poly = clipToHex(feat.polygon, hexInner);
@@ -164,9 +164,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const hasWater    = waterPolys.length > 0;
 
   // ── Constants ─────────────────────────────────────────────────────────────
-  // When water is present the base plate is taller so the recess fits inside it.
-  const BASE        = BASE_THICKNESS_MM + (hasWater ? WATER_DEPTH : 0);
-  const waterFloorY = BASE_THICKNESS_MM; // pit floor = normal base-top height
+  // Base height is always BASE_THICKNESS_MM — one solid object regardless of water.
+  // Water pits are carved DOWN from the top surface into the existing base material.
+  const BASE        = BASE_THICKNESS_MM;                 // 1.5 mm — never changes
+  const waterFloorY = BASE_THICKNESS_MM - WATER_DEPTH;  // 0.5 mm from bottom
   const ROAD_HEIGHT = NOZZLE_MM * 1.0;  // 0.4mm — bold ridge for clean printing
   const CLEARANCE   = 2.0; // gap around buildings — wider = cleaner road edges
 
@@ -523,7 +524,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     onProgress?.('Building water areas…', 88);
     for (const poly of waterPolys) {
       // 0.5mm thick black slab sitting on the pit floor
-      collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.5);
+      collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.3);
     }
   }
 
