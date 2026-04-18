@@ -153,7 +153,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const blackAcc    = new GeomAccumulator();  // roads + water floors → black
 
   // ── 0. Pre-collect water polygons ─────────────────────────────────────────
-  const WATER_DEPTH = 1.0; // mm — shallow recess into the base (< half of BASE_THICKNESS_MM)
+  const WATER_BORDER_H = 1.0;  // mm — border wall height above base surface
+  const WATER_BORDER_W = 0.6;  // mm — border wall width (inward from water edge)
   const waterPolys  = [];
   for (const feat of (features.water || [])) {
     const poly = clipToHex(feat.polygon, hexInner);
@@ -164,20 +165,13 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const hasWater    = waterPolys.length > 0;
 
   // ── Constants ─────────────────────────────────────────────────────────────
-  // Base height is always BASE_THICKNESS_MM — one solid object regardless of water.
-  // Water pits are carved DOWN from the top surface into the existing base material.
-  const BASE        = BASE_THICKNESS_MM;                 // 1.5 mm — never changes
-  const waterFloorY = BASE_THICKNESS_MM - WATER_DEPTH;  // 0.5 mm from bottom
+  const BASE        = BASE_THICKNESS_MM; // always 1.5 mm — solid, never changes
   const ROAD_HEIGHT = NOZZLE_MM * 1.0;  // 0.4mm — bold ridge for clean printing
   const CLEARANCE   = 2.0; // gap around buildings — wider = cleaner road edges
 
-  // ── 1. Base plate ─────────────────────────────────────────────────────────
+  // ── 1. Base plate — always a simple solid prism ───────────────────────────
   onProgress?.('Building base plate…', 65);
-  if (hasWater) {
-    collectHexBaseWithHoles(baseAcc, hexFull, waterPolys, BASE, waterFloorY);
-  } else {
-    collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
-  }
+  collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
 
   // ── 2. Terrain ────────────────────────────────────────────────────────────
   if (elevGrid && N > 0) {
@@ -517,14 +511,46 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     roadCount++;
   }
 
-  // ── 6. Water floors (black) ───────────────────────────────────────────────
-  // Each water polygon is a pit carved into the top of the base plate.
-  // We add a black slab at the pit floor so the recess reads as water.
+  // ── 6. Water areas — raised border walls + flat black slab ──────────────
+  // The base plate is always a plain solid prism (no holes, no carving).
+  // Water areas are defined by:
+  //   • White raised border walls (WATER_BORDER_H tall) around the perimeter,
+  //     built as closed rectangular prisms so they're valid manifold solids.
+  //   • Black slab covering the water area flat on the base surface.
+  // Together these give the "dark water with white riverbank" look without
+  // touching the base solid at all.
   if (hasWater) {
     onProgress?.('Building water areas…', 88);
     for (const poly of waterPolys) {
-      // 0.5mm thick black slab sitting on the pit floor
-      collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.3);
+      const M = poly.length;
+
+      // ── Black water fill ──────────────────────────────────────────────────
+      collectExtrudedPolygon(blackAcc, poly, [], BASE, 0.3);
+
+      // ── White border planks around the perimeter ──────────────────────────
+      // Each edge A→B of the water polygon becomes one rectangular prism:
+      //   outer face = the edge itself, inner face = edge shifted WATER_BORDER_W
+      //   inward, height = WATER_BORDER_H.  For a CCW polygon the left-hand
+      //   normal of A→B points inward.
+      for (let i = 0; i < M; i++) {
+        const A = poly[i];
+        const B = poly[(i + 1) % M];
+
+        const dx = B.x - A.x, dy = B.y - A.y;
+        const len = Math.sqrt(dx * dx + dy * dy);
+        if (len < 1e-6) continue;
+
+        // Left (inward) unit normal for a CCW polygon
+        const nx = -dy / len, ny = dx / len;
+        const iw = WATER_BORDER_W;
+
+        // Inner edge vertices (shifted inward)
+        const Ai = { x: A.x + nx * iw, y: A.y + ny * iw };
+        const Bi = { x: B.x + nx * iw, y: B.y + ny * iw };
+
+        // Quad plank: A → B → Bi → Ai (CCW in XY ✓)
+        collectExtrudedPolygon(baseAcc, [A, B, Bi, Ai], [], BASE, WATER_BORDER_H);
+      }
     }
   }
 
