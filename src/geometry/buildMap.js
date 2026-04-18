@@ -153,8 +153,6 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const blackAcc    = new GeomAccumulator();  // roads + water floors → black
 
   // ── 0. Pre-collect water polygons ─────────────────────────────────────────
-  const WATER_BORDER_H = 1.0;  // mm — border wall height above base surface
-  const WATER_BORDER_W = 0.6;  // mm — border wall width (inward from water edge)
   const waterPolys  = [];
   for (const feat of (features.water || [])) {
     const poly = clipToHex(feat.polygon, hexInner);
@@ -511,46 +509,15 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     roadCount++;
   }
 
-  // ── 6. Water areas — raised border walls + flat black slab ──────────────
-  // The base plate is always a plain solid prism (no holes, no carving).
-  // Water areas are defined by:
-  //   • White raised border walls (WATER_BORDER_H tall) around the perimeter,
-  //     built as closed rectangular prisms so they're valid manifold solids.
-  //   • Black slab covering the water area flat on the base surface.
-  // Together these give the "dark water with white riverbank" look without
-  // touching the base solid at all.
+  // ── 6. Water areas — flat black slab flush with base surface ────────────
+  // Base plate is always a plain solid prism — nothing taller than it is added.
+  // Water is shown as a thin black slab sitting at the base top surface so it
+  // reads as dark water against the white base without raising any geometry
+  // above the base level.
   if (hasWater) {
     onProgress?.('Building water areas…', 88);
     for (const poly of waterPolys) {
-      const M = poly.length;
-
-      // ── Black water fill ──────────────────────────────────────────────────
       collectExtrudedPolygon(blackAcc, poly, [], BASE, 0.3);
-
-      // ── White border planks around the perimeter ──────────────────────────
-      // Each edge A→B of the water polygon becomes one rectangular prism:
-      //   outer face = the edge itself, inner face = edge shifted WATER_BORDER_W
-      //   inward, height = WATER_BORDER_H.  For a CCW polygon the left-hand
-      //   normal of A→B points inward.
-      for (let i = 0; i < M; i++) {
-        const A = poly[i];
-        const B = poly[(i + 1) % M];
-
-        const dx = B.x - A.x, dy = B.y - A.y;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        if (len < 1e-6) continue;
-
-        // Left (inward) unit normal for a CCW polygon
-        const nx = -dy / len, ny = dx / len;
-        const iw = WATER_BORDER_W;
-
-        // Inner edge vertices (shifted inward)
-        const Ai = { x: A.x + nx * iw, y: A.y + ny * iw };
-        const Bi = { x: B.x + nx * iw, y: B.y + ny * iw };
-
-        // Quad plank: A → B → Bi → Ai (CCW in XY ✓)
-        collectExtrudedPolygon(baseAcc, [A, B, Bi, Ai], [], BASE, WATER_BORDER_H);
-      }
     }
   }
 
