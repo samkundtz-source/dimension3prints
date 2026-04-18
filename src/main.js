@@ -214,7 +214,7 @@ async function generate() {
     // 1. Projection + shape
     const projection = createProjection(lat, lng, radiusMeters);
     const shapeVerts = getShapeVertices(MODEL_RADIUS_MM, currentShape);
-    const bbox       = projection.getBBox(1.15);
+    const bbox       = projection.getBBox(1.25); // 25% extra margin catches edge buildings
 
     // 2. Fetch OSM data
     setStatus('Fetching OpenStreetMap data...', 10);

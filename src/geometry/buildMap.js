@@ -395,7 +395,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // slider (8x) the tallest skyscrapers stay under MAX_BLDG_MM
   const BUILD_EXAG     = Math.min(vertExag * 0.5, 3.0);
   const MAX_BLDG_MM    = 35; // hard cap — keeps tall buildings from looking like spires
-  const MIN_BLDG_DIM   = 1.5; // filter tiny sheds/walls — keeps model clean
+  const MIN_BLDG_DIM   = 0.8; // minimum footprint — catches most real buildings
 
   // Helper context for landmark presets (avoids circular imports)
   const landmarkCtx = {
@@ -458,20 +458,42 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     console.log(`[Buildings] Tier 1 landmarks: ${landmarkCount}, Tier 2 tall-towers: ${tallTowerCount}, Tier 3 standard: ${standardCount}`);
   }
 
-  // ── 5. Roads — raised ridge around buildings ─────────────────────────────
+  // ── 5. Roads — layered with centerline ridge on major roads ──────────────
   const ROAD_SLAB = ROAD_HEIGHT;
+
+  // Road class tiers for visual hierarchy
+  const MAJOR_ROADS  = new Set(['motorway','motorway_link','trunk','trunk_link','primary','primary_link']);
+  const MEDIUM_ROADS = new Set(['secondary','secondary_link','tertiary','tertiary_link']);
+  // residential/unclassified/living_street = minor tier
+
   let roadCount = 0;
   onProgress?.('Building roads…', 80);
   for (const feat of features.roads) {
     const hw = feat.tags.highway || 'residential';
-    // Skip noise road types — only render meaningful streets
     if (!ROAD_TYPES.has(hw)) continue;
+
     const realW = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.residential);
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW = Math.max(realW, minW);
     const roadMid = feat.points[Math.floor(feat.points.length / 2)];
     const roadBaseY = roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE;
+
+    // Base road slab
     addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, ROAD_SLAB, findOverlappingBuildings);
+
+    // Centerline ridge on major + medium roads — gives depth and road hierarchy
+    if (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw)) {
+      const ridgeW   = MAJOR_ROADS.has(hw) ? halfW * 0.18 : halfW * 0.14;
+      const ridgeH   = MAJOR_ROADS.has(hw) ? ROAD_SLAB * 0.6 : ROAD_SLAB * 0.4;
+      const ridgePoly = bufferLinestring(feat.points, ridgeW);
+      if (ridgePoly) {
+        const ridgeClipped = clipToHex(ridgePoly, hexInner);
+        if (ridgeClipped && ridgeClipped.length >= 3) {
+          collectExtrudedPolygon(blackAcc, ridgeClipped, [], roadBaseY + ROAD_SLAB, ridgeH);
+        }
+      }
+    }
+
     roadCount++;
   }
 
