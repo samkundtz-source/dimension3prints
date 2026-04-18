@@ -29,8 +29,8 @@ export async function geocode(query) {
 const OVERPASS_SERVERS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.openstreetmap.ru/api/interpreter',
   'https://overpass.private.coffee/api/interpreter',
+  'https://overpass.openstreetmap.ru/api/interpreter',
 ];
 
 /**
@@ -44,27 +44,13 @@ function buildQuery(bbox) {
   const { south, west, north, east } = bbox;
   const bb = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
 
-  return `[out:json][timeout:120];
+  // Lean query — buildings + roads only. No water, parks, trees.
+  // Fewer elements = faster response, fewer timeouts.
+  return `[out:json][timeout:90];
 (
   way["building"](${bb});
-  way["highway"](${bb});
-  way["natural"="water"](${bb});
-  way["waterway"](${bb});
-  way["water"](${bb});
-  way["landuse"="reservoir"](${bb});
-  way["landuse"="basin"](${bb});
-  way["natural"="wetland"](${bb});
-  way["leisure"~"^(park|garden|pitch|playground|nature_reserve)$"](${bb});
-  way["landuse"~"^(park|forest|grass|meadow|recreation_ground|village_green|cemetery)$"](${bb});
-  way["natural"~"^(wood|scrub|grassland|heath)$"](${bb});
-  node["natural"="tree"](${bb});
-  relation["natural"="water"](${bb});
-  relation["water"](${bb});
-  relation["waterway"](${bb});
-  relation["landuse"="reservoir"](${bb});
-  relation["landuse"="basin"](${bb});
-  relation["leisure"~"^(park|garden|pitch|playground|nature_reserve)$"](${bb});
-  relation["landuse"~"^(park|forest|grass|meadow|recreation_ground|village_green|cemetery)$"](${bb});
+  way["building:part"](${bb});
+  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   relation["building"](${bb});
 );
 out body;
@@ -82,7 +68,7 @@ export async function fetchOSMData(bbox, onProgress) {
       onProgress?.(`Querying ${host}…`, 12);
 
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30000); // 30s per server
+      const timeout = setTimeout(() => controller.abort(), 60000); // 60s per server
       const resp = await fetch(server, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -99,7 +85,7 @@ export async function fetchOSMData(bbox, onProgress) {
       console.log(`[Overpass] ${json.elements.length} raw elements from ${host}`);
       return json;
     } catch (err) {
-      const msg = err.name === 'AbortError' ? 'Request timed out (30s)' : err.message;
+      const msg = err.name === 'AbortError' ? 'Request timed out (60s)' : err.message;
       console.warn(`[Overpass] ${server} failed:`, msg);
       lastErr = new Error(msg);
     }
