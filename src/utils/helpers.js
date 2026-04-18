@@ -13,7 +13,7 @@ export const TERRAIN_GRID_SIZE = 20; // 400 pts → 4 API calls to OpenTopoData
 export const DEFAULT_VERT_EXAG = 8;
 
 /** Minimum building height to keep detail printable */
-export const MIN_BUILDING_HEIGHT_MM = 3.0;
+export const MIN_BUILDING_HEIGHT_MM = 2.0;
 
 /** FDM nozzle diameter — nothing in the model can be thinner than this */
 export const NOZZLE_MM = 0.4;
@@ -64,25 +64,25 @@ export const ROAD_WIDTHS_M = {
  * NO value here is below 0.2 — that gives a full road width ≥ 0.4 mm (one nozzle).
  */
 export const ROAD_MIN_VISUAL_HALF_MM = {
-  motorway:      1.0,
-  motorway_link: 0.7,
-  trunk:         0.9,
-  trunk_link:    0.6,
-  primary:       0.8,
-  primary_link:  0.5,
-  secondary:     0.6,
-  secondary_link:0.45,
-  tertiary:      0.5,
-  tertiary_link: 0.4,
-  unclassified:  0.4,
-  residential:   0.35,
-  service:       0.25,
-  living_street: 0.35,
-  pedestrian:    0.4,
-  footway:       0.22,
-  path:          0.2,
-  cycleway:      0.22,
-  steps:         0.2,
+  motorway:      1.5,
+  motorway_link: 1.0,
+  trunk:         1.3,
+  trunk_link:    0.9,
+  primary:       1.1,
+  primary_link:  0.8,
+  secondary:     0.9,
+  secondary_link:0.65,
+  tertiary:      0.7,
+  tertiary_link: 0.55,
+  unclassified:  0.55,
+  residential:   0.5,
+  service:       0.35,
+  living_street: 0.45,
+  pedestrian:    0.5,
+  footway:       0.25,
+  path:          0.22,
+  cycleway:      0.25,
+  steps:         0.22,
 };
 
 // ─── Maths helpers ────────────────────────────────────────────────────────────

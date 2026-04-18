@@ -163,8 +163,15 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   }
 
   const BASE        = BASE_THICKNESS_MM;
-  const ROAD_HEIGHT = NOZZLE_MM * 0.75; // 0.3mm — 1.5 layers at 0.2mm layer height
-  const CLEARANCE   = 1.4; // generous gap around buildings to prevent clipping
+  const ROAD_HEIGHT = NOZZLE_MM * 1.0;  // 0.4mm — bold ridge for clean printing
+  const CLEARANCE   = 2.0; // gap around buildings — wider = cleaner road edges
+
+  // Road types to render — skip noise (footway, path, cycleway, steps, service)
+  const ROAD_TYPES = new Set([
+    'motorway', 'motorway_link', 'trunk', 'trunk_link',
+    'primary', 'primary_link', 'secondary', 'secondary_link',
+    'tertiary', 'tertiary_link', 'unclassified', 'residential', 'living_street',
+  ]);
 
   // ── Terrain-aware base Y helper ──────────────────────────────────────────
   // Returns the Y position for any feature, sitting on the terrain when relief is on.
@@ -388,7 +395,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // slider (8x) the tallest skyscrapers stay under MAX_BLDG_MM
   const BUILD_EXAG     = Math.min(vertExag * 0.5, 3.0);
   const MAX_BLDG_MM    = 35; // hard cap — keeps tall buildings from looking like spires
-  const MIN_BLDG_DIM   = NOZZLE_MM; // strictly one nozzle width — anything thinner won't print
+  const MIN_BLDG_DIM   = 1.5; // filter tiny sheds/walls — keeps model clean
 
   // Helper context for landmark presets (avoids circular imports)
   const landmarkCtx = {
@@ -451,165 +458,24 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     console.log(`[Buildings] Tier 1 landmarks: ${landmarkCount}, Tier 2 tall-towers: ${tallTowerCount}, Tier 3 standard: ${standardCount}`);
   }
 
-  // ── 5. Water (black slab on top of base) ─────────────────────────────────
-  const MIN_AREA_MM2    = 3.0;
-  const WATER_SLAB_H    = NOZZLE_MM * 0.375; // 0.15mm — thinner than roads
-
-  let waterCount = 0;
-  const waterFootprints = [];
-  onProgress?.('Building water…', 78);
-  for (const feat of features.water) {
-    const poly = clipToHex(feat.polygon, hexInner);
-    if (!poly || poly.length < 3) continue;
-    if (Math.abs(signedArea2D(poly)) < MIN_AREA_MM2) continue;
-    if (enclosedByAnyBuilding(poly)) continue;
-    const bldgHoles = findOverlappingBuildings(poly);
-    const allHoles  = [...(feat.holes || []), ...bldgHoles];
-    const waterBaseY = polyTerrainBaseY(poly);
-    collectExtrudedPolygon(blackAcc, poly, allHoles, waterBaseY, WATER_SLAB_H);
-    let wMinX = Infinity, wMaxX = -Infinity, wMinY = Infinity, wMaxY = -Infinity;
-    for (const p of poly) {
-      if (p.x < wMinX) wMinX = p.x; if (p.x > wMaxX) wMaxX = p.x;
-      if (p.y < wMinY) wMinY = p.y; if (p.y > wMaxY) wMaxY = p.y;
-    }
-    waterFootprints.push({ polygon: poly, bbox: { minX: wMinX, maxX: wMaxX, minY: wMinY, maxY: wMaxY } });
-    waterCount++;
-  }
-
-  // ── 5b. Waterways (rivers, streams, canals) — buffered lines ─────────────
-  const WATERWAY_WIDTHS_M = {
-    river: 30, canal: 15, stream: 4, drain: 2, ditch: 1.5,
-  };
-  const WATERWAY_MIN_HALF_MM = 0.8;
-
-  if (features.waterways && features.waterways.length > 0) {
-    onProgress?.('Building waterways…', 79);
-    for (const feat of features.waterways) {
-      const wType = feat.tags.waterway || 'stream';
-      const realW = hScale * (WATERWAY_WIDTHS_M[wType] ?? WATERWAY_WIDTHS_M.stream);
-      const halfW = Math.max(realW, WATERWAY_MIN_HALF_MM);
-      const poly  = bufferLinestring(feat.points, halfW);
-      if (!poly) continue;
-      const clipped = clipToHex(poly, hexInner);
-      if (!clipped || clipped.length < 3) continue;
-      if (enclosedByAnyBuilding(clipped)) continue;
-      const bldgHoles = findOverlappingBuildings(clipped);
-      const wwBaseY = polyTerrainBaseY(clipped);
-      collectExtrudedPolygon(blackAcc, clipped, bldgHoles, wwBaseY, WATER_SLAB_H);
-      let wMinX = Infinity, wMaxX = -Infinity, wMinY = Infinity, wMaxY = -Infinity;
-      for (const p of clipped) {
-        if (p.x < wMinX) wMinX = p.x; if (p.x > wMaxX) wMaxX = p.x;
-        if (p.y < wMinY) wMinY = p.y; if (p.y > wMaxY) wMaxY = p.y;
-      }
-      waterFootprints.push({ polygon: clipped, bbox: { minX: wMinX, maxX: wMaxX, minY: wMinY, maxY: wMaxY } });
-      waterCount++;
-    }
-  }
-
-  // ── 6. Parks — with building gaps ───────────────────────────────────────────
-  const ROAD_SLAB   = ROAD_HEIGHT;
-
-  onProgress?.('Building parks…', 80);
-  for (const feat of features.parks) {
-    const poly = clipToHex(feat.polygon, hexInner);
-    if (!poly || poly.length < 3) continue;
-    if (Math.abs(signedArea2D(poly)) < MIN_AREA_MM2) continue;
-    // Skip park polygons that sit inside a building ring
-    // (prevents landuse=grass inside historic structures from showing
-    // as a black slab in the middle of a ring-shaped building).
-    if (enclosedByAnyBuilding(poly)) continue;
-    const bldgHoles = findOverlappingBuildings(poly);
-    const allHoles  = [...(feat.holes || []), ...bldgHoles];
-    const parkBaseY = polyTerrainBaseY(poly);
-    collectExtrudedPolygon(blackAcc, poly, allHoles, parkBaseY, ROAD_SLAB);
-  }
-
-  // ── 7. Roads — at base bottom, shrink around buildings ────────────────────
+  // ── 5. Roads — raised ridge around buildings ─────────────────────────────
+  const ROAD_SLAB = ROAD_HEIGHT;
   let roadCount = 0;
-  onProgress?.('Building roads…', 84);
+  onProgress?.('Building roads…', 80);
   for (const feat of features.roads) {
-    const hw    = feat.tags.highway || 'residential';
+    const hw = feat.tags.highway || 'residential';
+    // Skip noise road types — only render meaningful streets
+    if (!ROAD_TYPES.has(hw)) continue;
     const realW = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.residential);
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW = Math.max(realW, minW);
-    // Sample terrain at road midpoint
     const roadMid = feat.points[Math.floor(feat.points.length / 2)];
     const roadBaseY = roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE;
     addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, ROAD_SLAB, findOverlappingBuildings);
     roadCount++;
   }
 
-  // ── 8. Paths — at base bottom, shrink around buildings ────────────────────
-  onProgress?.('Building paths…', 88);
-  for (const feat of features.paths) {
-    const hw    = feat.tags.highway || 'path';
-    const realW = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.path);
-    const minW  = ROAD_MIN_VISUAL_HALF_MM[hw] ?? ROAD_MIN_VISUAL_HALF_MM.path;
-    const halfW = Math.max(realW, minW);
-    const pathMid = feat.points[Math.floor(feat.points.length / 2)];
-    const pathBaseY = pathMid ? terrainBaseY(pathMid.x, pathMid.y) : BASE;
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, pathBaseY, ROAD_SLAB, findOverlappingBuildings);
-    roadCount++;
-  }
-
-  // ── 9. Trees (premium detail) — small bumps in the road colour ────────────
-  // Trees are only placed inside park polygons so they don't litter bare base areas.
-  if (premiumDetail && features.trees && features.trees.length > 0 && features.parks.length > 0) {
-    onProgress?.('Planting trees…', 90);
-    const TREE_R = 0.55;
-    const TREE_H = 1.4;
-    // Keep trees off the chamfered edge (chamfer = 0.8mm) plus a margin for the tree footprint
-    const treeHex = getShapeVertices(MODEL_RADIUS_MM - 0.8 - TREE_R - 0.6, shape);
-
-    // Pre-clip park polygons to hex and compute bboxes for fast lookup
-    const parkPolys = [];
-    for (const feat of features.parks) {
-      const poly = clipToHex(feat.polygon, hexInner);
-      if (!poly || poly.length < 3) continue;
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-      for (const p of poly) {
-        if (p.x < minX) minX = p.x;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.y > maxY) maxY = p.y;
-      }
-      parkPolys.push({ poly, minX, maxX, minY, maxY });
-    }
-
-    for (const tree of features.trees) {
-      if (!pointInSimplePolygon({ x: tree.x, y: tree.y }, treeHex)) continue;
-
-      // Must lie inside a park polygon
-      let inPark = false;
-      for (const pk of parkPolys) {
-        if (tree.x < pk.minX || tree.x > pk.maxX || tree.y < pk.minY || tree.y > pk.maxY) continue;
-        if (pointInSimplePolygon({ x: tree.x, y: tree.y }, pk.poly)) { inPark = true; break; }
-      }
-      if (!inPark) continue;
-
-      // Skip trees that fall inside any building footprint via the spatial grid
-      const [cgx, cgy] = gridCell(tree.x, tree.y);
-      let blocked = false;
-      if (cgx >= 0 && cgy >= 0 && cgx < GRID_SIZE && cgy < GRID_SIZE) {
-        const bucket = buildingGrid[gridKey(cgx, cgy)];
-        if (bucket) {
-          for (const bi of bucket) {
-            const bf = buildingFootprints[bi];
-            if (tree.x < bf.bbox.minX || tree.x > bf.bbox.maxX ||
-                tree.y < bf.bbox.minY || tree.y > bf.bbox.maxY) continue;
-            if (pointInSimplePolygon({ x: tree.x, y: tree.y }, bf.polygon)) {
-              blocked = true; break;
-            }
-          }
-        }
-      }
-      if (blocked) continue;
-      const treeBaseY = terrainBaseY(tree.x, tree.y);
-      collectTreeBump(blackAcc, tree.x, tree.y, treeBaseY, TREE_H, TREE_R);
-    }
-  }
-
-  // ── 10. Order ID engraving on base bottom ─────────────────────────────────
+  // ── 7. Order ID engraving on base bottom ─────────────────────────────────
   // Tiny raised text on the bottom face (Y=0) so you can flip the print
   // and identify which order it belongs to.
   if (orderId && orderId.length > 0) {
@@ -631,7 +497,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   return {
     group,
     stats: {
-      buildings: buildingCount, roads: roadCount, water: waterCount,
+      buildings: buildingCount, roads: roadCount, water: 0,
       landmarks: landmarkCount, tallTowers: tallTowerCount,
     },
   };

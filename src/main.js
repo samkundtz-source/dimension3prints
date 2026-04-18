@@ -253,11 +253,8 @@ async function generate() {
 
     // 5. Build 3D model
     setStatus('Building 3D model...', 60);
-    const bathymetry        = el('bathymetry')?.checked !== false;
     const detailedBuildings = el('detailed-buildings')?.checked || false;
-    const premiumDetail     = el('premium-detail')?.checked || false;
-    const featuresToBuild = { ...features, water: bathymetry ? features.water : [] };
-    const result = buildMapModel(featuresToBuild, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, premiumDetail, terrainRelief, activeOrderId);
+    const result = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, false, terrainRelief, activeOrderId);
     const group = result.group;
     const modelStats = result.stats;
 
@@ -313,7 +310,7 @@ function updateLegend() {
   dotBldg.style.background = '#F0F0F0';
   dotRoad.style.background = '#1A1A1A';
   lblBldg.textContent = 'Buildings / Base';
-  lblRoad.textContent = 'Roads / Parks / Water';
+  lblRoad.textContent = 'Roads';
 }
 
 // ─── Model stats ─────────────────────────────────────────────────────────────
@@ -322,7 +319,6 @@ function updateModelStats(stats) {
   el('stats-bar').style.display = '';
   el('stat-buildings').textContent = stats.buildings.toLocaleString();
   el('stat-roads').textContent = stats.roads.toLocaleString();
-  el('stat-water').textContent = stats.water.toLocaleString();
 }
 
 // ─── Region picker ───────────────────────────────────────────────────────────
