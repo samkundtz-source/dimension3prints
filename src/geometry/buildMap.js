@@ -503,6 +503,56 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const halfW = Math.max(realW, minW);
     const roadMid = feat.points[Math.floor(feat.points.length / 2)];
 
+    // ── Bridge: raised deck + solid support column going all the way down ──
+    const isBridge = feat.tags.bridge && feat.tags.bridge !== 'no';
+    if (isBridge) {
+      // Bridge deck is raised 1.2 mm above the normal road surface so it reads
+      // clearly as elevated.  A solid support column (55% road width) runs from
+      // the pit floor (or base plate) all the way up to the underside of the
+      // deck so nothing is left floating.
+      const BRIDGE_RISE  = 1.2;                       // mm above normal road top
+      const deckBottom   = BASE + ROAD_SLAB + BRIDGE_RISE; // underside of deck
+      const deckHeight   = ROAD_SLAB;
+      const supportBaseY = hasWater ? waterFloorY : BASE; // goes all the way down
+      const supportH     = deckBottom - supportBaseY;
+
+      // Support column — 55 % of road width, black, fills the gap beneath deck
+      const supportPoly = bufferLinestring(feat.points, halfW * 0.55);
+      if (supportPoly) {
+        const supportClipped = clipToHex(supportPoly, hexInner);
+        if (supportClipped && supportClipped.length >= 3 &&
+            minBBoxDimension(supportClipped) >= NOZZLE_MM) {
+          collectExtrudedPolygon(blackAcc, supportClipped, [], supportBaseY, supportH);
+        }
+      }
+
+      // Bridge deck — full road width
+      const deckPoly = bufferLinestring(feat.points, halfW);
+      if (deckPoly) {
+        const deckClipped = clipToHex(deckPoly, hexInner);
+        if (deckClipped && deckClipped.length >= 3 &&
+            minBBoxDimension(deckClipped) >= NOZZLE_MM) {
+          collectExtrudedPolygon(blackAcc, deckClipped, [], deckBottom, deckHeight);
+
+          // Centerline ridge on deck for major / medium roads
+          if (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw)) {
+            const ridgeW = MAJOR_ROADS.has(hw) ? halfW * 0.18 : halfW * 0.14;
+            const ridgeH = MAJOR_ROADS.has(hw) ? ROAD_SLAB * 0.6 : ROAD_SLAB * 0.4;
+            const ridgePoly = bufferLinestring(feat.points, ridgeW);
+            if (ridgePoly) {
+              const ridgeClipped = clipToHex(ridgePoly, hexInner);
+              if (ridgeClipped && ridgeClipped.length >= 3) {
+                collectExtrudedPolygon(blackAcc, ridgeClipped, [], deckBottom + deckHeight, ridgeH);
+              }
+            }
+          }
+        }
+      }
+
+      roadCount++;
+      continue; // skip normal road path for bridges
+    }
+
     // When the model has water pits, always start roads from waterFloorY so
     // they can never float above a pit — no per-road detection needed.
     // On solid ground the extra depth is hidden inside the base plate.
