@@ -509,10 +509,11 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const roadBaseY  = hasWater ? waterFloorY : (roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE);
     const roadHeight = hasWater ? (BASE + ROAD_SLAB - waterFloorY) : ROAD_SLAB;
 
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, roadHeight, findOverlappingBuildings);
+    const roadPlaced = addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, roadHeight, findOverlappingBuildings);
 
-    // Centerline ridge — always sits at the road top surface (BASE + ROAD_SLAB)
-    if (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw)) {
+    // Centerline ridge — only if the road slab was actually placed,
+    // otherwise the ridge would float with nothing beneath it.
+    if (roadPlaced && (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw))) {
       const ridgeW   = MAJOR_ROADS.has(hw) ? halfW * 0.18 : halfW * 0.14;
       const ridgeH   = MAJOR_ROADS.has(hw) ? ROAD_SLAB * 0.6 : ROAD_SLAB * 0.4;
       const ridgePoly = bufferLinestring(feat.points, ridgeW);
@@ -678,10 +679,13 @@ function roadCrossesWater(points, waterPolys, halfW = 0) {
   return false;
 }
 
+// Returns true if geometry was generated, false if the road was skipped entirely.
 function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings) {
-  // Try full width, then progressively smaller
   const scales = [1.0, 0.6, 0.4, 0.25];
   const MIN_HALF_W = 0.2;
+  // After clipping the minimum dimension must be at least 2 nozzle widths.
+  // Slivers below this look like floating strips and can't print cleanly.
+  const MIN_DIM = NOZZLE_MM * 2; // 0.8 mm
 
   for (const scale of scales) {
     const w = halfW * scale;
@@ -693,17 +697,22 @@ function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findO
     const clipped = clipToHex(poly, hexInner);
     if (!clipped || clipped.length < 3) continue;
 
+    // Reject sliver polygons — they appear floating because only the top
+    // face is visible (the sides are sub-nozzle thin).
+    if (minBBoxDimension(clipped) < MIN_DIM) continue;
+
     const bldgHoles = findOverlappingBuildings(clipped);
 
     if (bldgHoles.length === 0) {
       collectExtrudedPolygon(acc, clipped, [], baseY, height);
-      return;
+      return true;
     }
 
     if (tryCollectExtruded(acc, clipped, bldgHoles, baseY, height)) {
-      return;
+      return true;
     }
   }
+  return false;
 }
 
 /**
