@@ -505,7 +505,14 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
     // Roads/bridges crossing water: extend the slab DOWN to the water floor
     // so the road is a solid causeway/pier rather than floating in mid-air.
-    const overWater = hasWater && roadCrossesWater(feat.points, waterPolys);
+    // Check BOTH the centerline AND the buffered footprint — a road running
+    // parallel to a water edge has its centreline outside the water polygon
+    // but its buffered width extends over it (the floating-road case).
+    const roadFootprint = hasWater ? bufferLinestring(feat.points, halfW) : null;
+    const overWater = hasWater && (
+      roadCrossesWater(feat.points, waterPolys) ||
+      (roadFootprint && roadCrossesWater(roadFootprint, waterPolys))
+    );
     const roadBaseY = overWater
       ? waterFloorY
       : (roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE);
@@ -601,12 +608,25 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 // Never lets a road completely disappear — it shrinks to fit.
 
 /**
- * Returns true if any vertex of a building polygon falls inside any water polygon.
+ * Returns true if any vertex of a building/road polygon falls inside any water
+ * polygon, OR if the centroid of the polygon is inside any water polygon.
+ * Catches both fully-overlapping and edge-grazing cases.
  */
 function buildingOverWater(polygon, waterPolys) {
+  // Check all vertices
   for (const pt of polygon) {
     for (const wpoly of waterPolys) {
       if (pointInPolygon2D(pt, wpoly)) return true;
+    }
+  }
+  // Also check centroid — catches polygons whose vertices straddle the edge
+  // but whose body is mostly over water
+  if (polygon.length >= 3) {
+    let cx = 0, cy = 0;
+    for (const p of polygon) { cx += p.x; cy += p.y; }
+    cx /= polygon.length; cy /= polygon.length;
+    for (const wpoly of waterPolys) {
+      if (pointInPolygon2D({ x: cx, y: cy }, wpoly)) return true;
     }
   }
   return false;
