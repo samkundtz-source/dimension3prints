@@ -503,14 +503,15 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const halfW = Math.max(realW, minW);
     const roadMid = feat.points[Math.floor(feat.points.length / 2)];
 
-    const roadBaseY = roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE;
+    // When the model has water pits, always start roads from waterFloorY so
+    // they can never float above a pit — no per-road detection needed.
+    // On solid ground the extra depth is hidden inside the base plate.
+    const roadBaseY  = hasWater ? waterFloorY : (roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE);
+    const roadHeight = hasWater ? (BASE + ROAD_SLAB - waterFloorY) : ROAD_SLAB;
 
-    // Base road slab — water detection now happens INSIDE addRoadWithAvoidance
-    // on the actual clipped polygon, so no pre-check is needed here.
-    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, ROAD_SLAB, findOverlappingBuildings, hasWater ? waterPolys : null, waterFloorY);
+    addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, roadHeight, findOverlappingBuildings);
 
-    // Centerline ridge on major + medium roads — sits on top of the road slab.
-    // The ridge top is always at BASE + ROAD_SLAB + ridgeH, regardless of water.
+    // Centerline ridge — always sits at the road top surface (BASE + ROAD_SLAB)
     if (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw)) {
       const ridgeW   = MAJOR_ROADS.has(hw) ? halfW * 0.18 : halfW * 0.14;
       const ridgeH   = MAJOR_ROADS.has(hw) ? ROAD_SLAB * 0.6 : ROAD_SLAB * 0.4;
@@ -518,9 +519,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       if (ridgePoly) {
         const ridgeClipped = clipToHex(ridgePoly, hexInner);
         if (ridgeClipped && ridgeClipped.length >= 3) {
-          // Ridge base = road top surface = BASE + ROAD_SLAB
-          const ridgeBase = roadBaseY + ROAD_SLAB;
-          collectExtrudedPolygon(blackAcc, ridgeClipped, [], ridgeBase, ridgeH);
+          collectExtrudedPolygon(blackAcc, ridgeClipped, [], BASE + ROAD_SLAB, ridgeH);
         }
       }
     }
@@ -679,15 +678,14 @@ function roadCrossesWater(points, waterPolys, halfW = 0) {
   return false;
 }
 
-function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings, waterPolys = null, waterFloorY = 0) {
+function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings) {
   // Try full width, then progressively smaller
   const scales = [1.0, 0.6, 0.4, 0.25];
-  // Strict nozzle minimum — half-width must give a road ≥ 0.4mm wide
   const MIN_HALF_W = 0.2;
 
   for (const scale of scales) {
     const w = halfW * scale;
-    if (w < MIN_HALF_W) break; // Below printable nozzle width — give up
+    if (w < MIN_HALF_W) break;
 
     const poly = bufferLinestring(points, w);
     if (!poly) continue;
@@ -695,33 +693,17 @@ function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findO
     const clipped = clipToHex(poly, hexInner);
     if (!clipped || clipped.length < 3) continue;
 
-    // Water check on the ACTUAL clipped polygon — this is the geometry that
-    // will be extruded, so it's the most accurate possible check.
-    // If any vertex OR the centroid of the clipped polygon is inside a water
-    // polygon, extend the road slab down to the pit floor.
-    let actualBaseY = baseY;
-    let actualHeight = height;
-    if (waterPolys && waterPolys.length > 0) {
-      if (buildingOverWater(clipped, waterPolys)) {
-        actualBaseY   = waterFloorY;
-        actualHeight  = baseY + height - waterFloorY; // keeps same top surface
-      }
-    }
-
     const bldgHoles = findOverlappingBuildings(clipped);
 
     if (bldgHoles.length === 0) {
-      collectExtrudedPolygon(acc, clipped, [], actualBaseY, actualHeight);
+      collectExtrudedPolygon(acc, clipped, [], baseY, height);
       return;
     }
 
-    if (tryCollectExtruded(acc, clipped, bldgHoles, actualBaseY, actualHeight)) {
+    if (tryCollectExtruded(acc, clipped, bldgHoles, baseY, height)) {
       return;
     }
-
-    // Failed — try next smaller width
   }
-  // All widths failed — skip this road segment entirely
 }
 
 /**
