@@ -42,6 +42,7 @@ let generating      = false;
 let generateId      = 0;      // increments each run — stale runs bail out
 let lastGenerateTime = 0;
 let searchDebounceTimer = null;
+let adminMode       = false;  // unlocked via Ctrl+Shift+E
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -144,7 +145,10 @@ function updateShapeOverlay() {
   }).addTo(shapeLayerGroup);
 }
 
-function getRadiusMeters()  { return parseFloat(el('radius-slider').value) * 1000; }
+function getRadiusMeters() {
+  if (adminMode) return parseFloat(el('admin-radius-slider').value) * 1000;
+  return parseFloat(el('radius-slider').value) * 1000;
+}
 function getVertExag()      { return parseFloat(el('vscale-slider').value); }
 
 // ─── Search ───────────────────────────────────────────────────────────────────
@@ -484,11 +488,19 @@ function initControls() {
     }
   });
 
-  // Radius slider
+  // Radius slider (hidden, default 1km for regular users)
   const radiusSlider = el('radius-slider');
   radiusSlider.addEventListener('input', () => {
     const km = parseFloat(radiusSlider.value).toFixed(1);
     el('radius-value').textContent = `${km} km`;
+    updateShapeOverlay();
+  });
+
+  // Admin radius slider (shown only in admin mode, up to 10km)
+  const adminRadiusSlider = el('admin-radius-slider');
+  adminRadiusSlider.addEventListener('input', () => {
+    const km = parseFloat(adminRadiusSlider.value).toFixed(1);
+    el('admin-radius-display').textContent = `${km} km`;
     updateShapeOverlay();
   });
 
@@ -540,8 +552,10 @@ function initControls() {
         .then(r => r.json())
         .then(data => {
           if (data.success) {
+            adminMode = true;
             el('export-stl').style.display = '';
             el('export-3mf').style.display = '';
+            el('admin-radius-section').style.display = '';
             setStatus('Admin mode enabled', 0);
           } else {
             setStatus('Invalid admin password', 0);
@@ -610,10 +624,12 @@ document.addEventListener('DOMContentLoaded', () => {
           activeOrderId = params.get('orderId');
         }
 
-        // If admin mode, auto-show export buttons
+        // If admin mode, auto-show export buttons and radius control
         if (params.get('admin') === '1') {
+          adminMode = true;
           el('export-stl').style.display = '';
           el('export-3mf').style.display = '';
+          el('admin-radius-section').style.display = '';
           setStatus(`Admin mode — Order ${activeOrderId || '?'} — generate then export`, 0);
         }
       }, 500);
