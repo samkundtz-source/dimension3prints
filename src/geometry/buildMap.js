@@ -505,14 +505,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
     // Roads/bridges crossing water: extend the slab DOWN to the water floor
     // so the road is a solid causeway/pier rather than floating in mid-air.
-    // Check BOTH the centerline AND the buffered footprint — a road running
-    // parallel to a water edge has its centreline outside the water polygon
-    // but its buffered width extends over it (the floating-road case).
-    const roadFootprint = hasWater ? bufferLinestring(feat.points, halfW) : null;
-    const overWater = hasWater && (
-      roadCrossesWater(feat.points, waterPolys) ||
-      (roadFootprint && roadCrossesWater(roadFootprint, waterPolys))
-    );
+    // roadCrossesWater samples across the full road width so roads that run
+    // alongside water (centreline outside, physical width inside) are caught.
+    const overWater = hasWater && roadCrossesWater(feat.points, waterPolys, halfW);
     const roadBaseY = overWater
       ? waterFloorY
       : (roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE);
@@ -563,7 +558,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
         const dx = B.x - A.x;
         const dy = B.y - A.y;
         const len = Math.sqrt(dx * dx + dy * dy);
-        if (len < 1e-6) continue;
+        // Skip edges shorter than the border width — they produce a near-zero-
+        // area quad that earcut can triangulate into visible sliver artifacts.
+        if (len < BORDER_W) continue;
         // Inward normal (left of A→B for CCW polygon)
         const nx = -dy / len;
         const ny =  dx / len;
@@ -649,12 +646,40 @@ function pointInPolygon2D(pt, poly) {
 }
 
 /**
- * Returns true if any centerline point of a road falls inside any water polygon.
+ * Returns true if any part of a road (centrerline OR its physical width)
+ * overlaps any water polygon.
+ *
+ * Strategy: for every segment A→B, sample points at t=0, 0.5, 1 along the
+ * segment AND at lateral offsets ±halfW from the centreline.  This catches
+ * roads whose centreline is just outside the water polygon but whose physical
+ * width extends over it (the classic "road runs alongside river" case).
  */
-function roadCrossesWater(points, waterPolys) {
-  for (const pt of points) {
-    for (const poly of waterPolys) {
-      if (pointInPolygon2D(pt, poly)) return true;
+function roadCrossesWater(points, waterPolys, halfW = 0) {
+  const LATERAL = halfW > 0
+    ? [-halfW, -halfW * 0.5, 0, halfW * 0.5, halfW]
+    : [0];
+
+  for (let i = 0; i < points.length; i++) {
+    // Check centerline point itself
+    for (const wpoly of waterPolys) {
+      if (pointInPolygon2D(points[i], wpoly)) return true;
+    }
+    // Check across width along each segment
+    if (halfW > 0 && i < points.length - 1) {
+      const A = points[i], B = points[i + 1];
+      const dx = B.x - A.x, dy = B.y - A.y;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      if (len < 1e-6) continue;
+      const nx = -dy / len, ny = dx / len; // perpendicular (left = inward for CCW)
+      for (const t of [0, 0.33, 0.66, 1]) {
+        const mx = A.x + dx * t, my = A.y + dy * t;
+        for (const off of LATERAL) {
+          const pt = { x: mx + nx * off, y: my + ny * off };
+          for (const wpoly of waterPolys) {
+            if (pointInPolygon2D(pt, wpoly)) return true;
+          }
+        }
+      }
     }
   }
   return false;
@@ -1176,6 +1201,8 @@ function collectExtrudedPolygon(acc, polygon, holes, baseY, heightMM) {
   try {
     const ring = deduplicateRing(polygon);
     if (ring.length < 3) return;
+    // Reject sub-nozzle polygons before earcut — they produce visible sliver triangles
+    if (Math.abs(signedArea2D(ring)) < 0.08) return;
     const topY     = baseY + heightMM;
     const outerCCW = ensureCCW(ring);
     const { flat, holeIndices } = flattenWithHoles(outerCCW, holes || []);
