@@ -108,11 +108,13 @@ function updateShapeOverlay() {
   shapeLayerGroup.clearLayers();
   if (!selectedCenter) return;
 
-  const R    = getRadiusMeters();
-  const proj = createProjection(selectedCenter.lat, selectedCenter.lng, R);
+  const R      = getRadiusMeters();
   const rotRad = getRotationRad();
+  // Rotation is baked into the projection — unproject() applies the inverse
+  // rotation, so getShapeVerticesGeo returns the correct rotated outline.
+  const proj   = createProjection(selectedCenter.lat, selectedCenter.lng, R, rotRad);
 
-  const geoVerts = getShapeVerticesGeo(proj, currentShape, rotRad);
+  const geoVerts = getShapeVerticesGeo(proj, currentShape); // no extra rotation arg
   const verts = geoVerts.map(v => [v.lat, v.lng]);
 
   L.polygon(verts, {
@@ -196,9 +198,11 @@ async function generate() {
     const terrainRelief = el('terrain-relief')?.checked || false;
 
     // 1. Projection + shape
-    const projection = createProjection(lat, lng, radiusMeters);
+    // Rotation is baked into the projection — all projected coordinates
+    // (buildings, roads, water) are automatically rotated in model space.
     const rotRad     = getRotationRad();
-    const shapeVerts = getShapeVertices(MODEL_RADIUS_MM, currentShape, rotRad);
+    const projection = createProjection(lat, lng, radiusMeters, rotRad);
+    const shapeVerts = getShapeVertices(MODEL_RADIUS_MM, currentShape); // no rotation arg
     const bbox       = projection.getBBox(1.25); // 25% extra margin catches edge buildings
 
     // 2. Fetch OSM data

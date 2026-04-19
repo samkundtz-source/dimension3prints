@@ -19,12 +19,24 @@ const METERS_PER_DEG_LAT = 111_320; // metres per degree of latitude (constant)
  * Create a projection anchored at a geographic centre point.
  * @param {number} centerLat
  * @param {number} centerLng
- * @param {number} radiusMeters  – real-world hex circumradius in metres
+ * @param {number} radiusMeters  – real-world circumradius in metres
+ * @param {number} rotationRad  – CCW rotation of the capture area (default 0)
+ *
+ * Rotation is baked into project/unproject so ALL features (buildings,
+ * roads, water) are rotated in model space — not just the clip boundary.
+ * The map overlay uses unproject() on the regular shape vertices and
+ * therefore automatically shows the correct rotated polygon on the map.
  */
-export function createProjection(centerLat, centerLng, radiusMeters) {
+export function createProjection(centerLat, centerLng, radiusMeters, rotationRad = 0) {
   const lat1rad = centerLat * (Math.PI / 180);
   const metersPerDegLng = METERS_PER_DEG_LAT * Math.cos(lat1rad);
   const horizontalScale = MODEL_RADIUS_MM / radiusMeters; // mm per metre
+
+  const cosR =  Math.cos(rotationRad);
+  const sinR =  Math.sin(rotationRad);
+  // Inverse rotation coefficients (used in unproject)
+  const icosR =  cosR;   // cos(-θ) = cos(θ)
+  const isinR = -sinR;   // sin(-θ) = -sin(θ)
 
   return {
     centerLat,
@@ -32,19 +44,31 @@ export function createProjection(centerLat, centerLng, radiusMeters) {
     radiusMeters,
     horizontalScale,
 
-    /** Convert geographic coords → local 2-D model mm {x, y}. */
+    /**
+     * Convert geographic coords → local 2-D model mm {x, y}.
+     * Applies the user-specified CCW rotation so the model is oriented
+     * to match the rotated selection box on the map.
+     */
     project(lat, lng) {
+      const rawX = (lng - centerLng) * metersPerDegLng * horizontalScale;
+      const rawY = (lat - centerLat) * METERS_PER_DEG_LAT * horizontalScale;
       return {
-        x: (lng - centerLng) * metersPerDegLng * horizontalScale,
-        y: (lat - centerLat) * METERS_PER_DEG_LAT * horizontalScale,
+        x: rawX * cosR - rawY * sinR,
+        y: rawX * sinR + rawY * cosR,
       };
     },
 
-    /** Convert local 2-D model mm back to geographic coords. */
+    /**
+     * Convert local 2-D model mm back to geographic coords.
+     * Applies the inverse rotation (used by getShapeVerticesGeo to draw
+     * the correct rotated outline on the Leaflet map).
+     */
     unproject(x, y) {
+      const rawX = x * icosR - y * isinR;
+      const rawY = x * isinR + y * icosR;
       return {
-        lat: centerLat + (y / horizontalScale) / METERS_PER_DEG_LAT,
-        lng: centerLng + (x / horizontalScale) / metersPerDegLng,
+        lat: centerLat + (rawY / horizontalScale) / METERS_PER_DEG_LAT,
+        lng: centerLng + (rawX / horizontalScale) / metersPerDegLng,
       };
     },
 
@@ -54,8 +78,8 @@ export function createProjection(centerLat, centerLng, radiusMeters) {
     },
 
     /**
-     * Bounding box for the Overpass API query.
-     * `margin` > 1 adds a safety border around the hex circumscribed circle.
+     * Bounding box for the Overpass API query — always axis-aligned and
+     * large enough to cover the full rotated selection area.
      */
     getBBox(margin = 1.15) {
       const rDegLat = (radiusMeters * margin) / METERS_PER_DEG_LAT;
