@@ -435,11 +435,17 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     if (minBBoxDimension(bf.polygon) < MIN_BLDG_DIM) continue;
     if (Math.abs(signedArea2D(bf.polygon)) < 0.3) continue; // < 0.3mm² is sub-nozzle
 
-    const heightM  = parseBuildingHeight(bf.tags, bf.polygon);
-    const heightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
+    const heightM   = parseBuildingHeight(bf.tags, bf.polygon);
+    const baseHeightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
 
-    // Terrain-relief mode: lift the building so it sits on the real ground height
-    const baseY = polyTerrainBaseY(bf.polygon);
+    // Terrain-relief mode: lift the building so it sits on the real ground height.
+    // If the building sits over a water pit, extend the base down to the pit floor
+    // so it doesn't float — same treatment as roads over water.
+    const terrainBase = polyTerrainBaseY(bf.polygon);
+    const overWater   = hasWater && buildingOverWater(bf.polygon, waterPolys);
+    const baseY       = overWater ? waterFloorY : terrainBase;
+    // Keep the building top at the same height; extend downward into the pit.
+    const heightMM    = overWater ? (terrainBase + baseHeightMM - waterFloorY) : baseHeightMM;
 
     if (detailedBuildings) {
       // ── 3-tier building generation system ──────────────────────────────
@@ -593,6 +599,18 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 // ─── Smart road placement ────────────────────────────────────────────────────
 // Tries full width first, then progressively shrinks if buildings block the road.
 // Never lets a road completely disappear — it shrinks to fit.
+
+/**
+ * Returns true if any vertex of a building polygon falls inside any water polygon.
+ */
+function buildingOverWater(polygon, waterPolys) {
+  for (const pt of polygon) {
+    for (const wpoly of waterPolys) {
+      if (pointInPolygon2D(pt, wpoly)) return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Ray-cast even-odd point-in-polygon test (handles concave/non-convex polys).
