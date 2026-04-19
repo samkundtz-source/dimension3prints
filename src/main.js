@@ -110,31 +110,10 @@ function updateShapeOverlay() {
 
   const R    = getRadiusMeters();
   const proj = createProjection(selectedCenter.lat, selectedCenter.lng, R);
+  const rotRad = getRotationRad();
 
-  let verts;
-  if (currentShape === 'circle') {
-    // Approximate circle with 64 points
-    const pts = [];
-    for (let i = 0; i < 64; i++) {
-      const angle = (i / 64) * Math.PI * 2;
-      const pt = proj.unproject(
-        MODEL_RADIUS_MM * Math.cos(angle),
-        MODEL_RADIUS_MM * Math.sin(angle)
-      );
-      pts.push([pt.lat, pt.lng]);
-    }
-    L.polygon(pts, {
-      color:       '#ffffff',
-      fillColor:   '#ffffff',
-      fillOpacity: 0.08,
-      weight:      2,
-      dashArray:   '6 4',
-    }).addTo(shapeLayerGroup);
-    return;
-  }
-
-  const geoVerts = getShapeVerticesGeo(proj, currentShape);
-  verts = geoVerts.map(v => [v.lat, v.lng]);
+  const geoVerts = getShapeVerticesGeo(proj, currentShape, rotRad);
+  const verts = geoVerts.map(v => [v.lat, v.lng]);
 
   L.polygon(verts, {
     color:       '#000000',
@@ -150,6 +129,7 @@ function getRadiusMeters() {
   return parseFloat(el('radius-slider').value) * 1000;
 }
 function getVertExag()      { return parseFloat(el('vscale-slider').value); }
+function getRotationRad()   { return parseFloat(el('rotation-slider').value) * (Math.PI / 180); }
 
 // ─── Search ───────────────────────────────────────────────────────────────────
 
@@ -217,7 +197,8 @@ async function generate() {
 
     // 1. Projection + shape
     const projection = createProjection(lat, lng, radiusMeters);
-    const shapeVerts = getShapeVertices(MODEL_RADIUS_MM, currentShape);
+    const rotRad     = getRotationRad();
+    const shapeVerts = getShapeVertices(MODEL_RADIUS_MM, currentShape, rotRad);
     const bbox       = projection.getBBox(1.25); // 25% extra margin catches edge buildings
 
     // 2. Fetch OSM data
@@ -501,6 +482,13 @@ function initControls() {
   adminRadiusSlider.addEventListener('input', () => {
     const km = parseFloat(adminRadiusSlider.value).toFixed(1);
     el('admin-radius-display').textContent = `${km} km`;
+    updateShapeOverlay();
+  });
+
+  // Rotation slider
+  const rotationSlider = el('rotation-slider');
+  rotationSlider.addEventListener('input', () => {
+    el('rotation-value').textContent = `${rotationSlider.value}°`;
     updateShapeOverlay();
   });
 

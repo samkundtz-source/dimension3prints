@@ -90,22 +90,35 @@ export function getHexVertices(radiusMM = MODEL_RADIUS_MM) {
 }
 
 /**
+ * Rotate a list of {x,y} vertices by `rad` radians (CCW) around the origin.
+ */
+function rotateVerts(verts, rad) {
+  if (!rad) return verts;
+  const cos = Math.cos(rad), sin = Math.sin(rad);
+  return verts.map(v => ({
+    x: v.x * cos - v.y * sin,
+    y: v.x * sin + v.y * cos,
+  }));
+}
+
+/**
  * Return shape vertices for any supported shape type.
  * @param {number} radiusMM
- * @param {string} shape - 'hexagon', 'circle', or 'square'
+ * @param {string} shape       - 'hexagon', 'circle', or 'square'
+ * @param {number} rotationRad - optional CCW rotation in radians (default 0)
  */
-export function getShapeVertices(radiusMM = MODEL_RADIUS_MM, shape = 'hexagon') {
+export function getShapeVertices(radiusMM = MODEL_RADIUS_MM, shape = 'hexagon', rotationRad = 0) {
+  let verts;
   if (shape === 'square') {
-    return [
+    verts = [
       { x:  radiusMM, y:  radiusMM },
       { x: -radiusMM, y:  radiusMM },
       { x: -radiusMM, y: -radiusMM },
       { x:  radiusMM, y: -radiusMM },
     ];
-  }
-  if (shape === 'circle') {
-    // Approximate circle with 64 vertices
-    const verts = [];
+  } else if (shape === 'circle') {
+    // Approximate circle with 64 vertices — rotation is a no-op but keep API consistent
+    verts = [];
     for (let i = 0; i < 64; i++) {
       const angle = (i / 64) * Math.PI * 2;
       verts.push({
@@ -113,10 +126,11 @@ export function getShapeVertices(radiusMM = MODEL_RADIUS_MM, shape = 'hexagon') 
         y: radiusMM * Math.sin(angle),
       });
     }
-    return verts;
+  } else {
+    // Default: hexagon
+    verts = getHexVertices(radiusMM);
   }
-  // Default: hexagon
-  return getHexVertices(radiusMM);
+  return rotateVerts(verts, rotationRad);
 }
 
 /**
@@ -130,9 +144,10 @@ export function getHexVerticesGeo(projection) {
 
 /**
  * Return shape vertices in geographic coordinates.
+ * @param {number} rotationRad - optional CCW rotation in radians (default 0)
  */
-export function getShapeVerticesGeo(projection, shape = 'hexagon') {
-  const verts = getShapeVertices(MODEL_RADIUS_MM, shape);
+export function getShapeVerticesGeo(projection, shape = 'hexagon', rotationRad = 0) {
+  const verts = getShapeVertices(MODEL_RADIUS_MM, shape, rotationRad);
   return verts.map(v => projection.unproject(v.x, v.y));
 }
 
