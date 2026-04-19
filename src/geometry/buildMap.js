@@ -552,9 +552,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
         const dx = B.x - A.x;
         const dy = B.y - A.y;
         const len = Math.sqrt(dx * dx + dy * dy);
-        // Skip edges shorter than the border width — they produce a near-zero-
-        // area quad that earcut can triangulate into visible sliver artifacts.
-        if (len < BORDER_W) continue;
+        // Skip only truly degenerate edges (< 0.05 mm). Previously this was
+        // gated at len < BORDER_W (0.8 mm) which skipped many valid short edges
+        // of clipped water polygons, leaving visible gaps in the border ring.
+        if (len < 0.05) continue;
         // Inward normal (left of A→B for CCW polygon)
         const nx = -dy / len;
         const ny =  dx / len;
@@ -966,7 +967,22 @@ function collectHexBaseWithHoles(acc, shapeVerts, waterPolys, topY, waterFloorY)
   // Re-use flattenWithHoles: outer ring CCW, holes are made CW inside.
   const outerCCW = ensureCCW([...shapeVerts]);
   const { flat, holeIndices } = flattenWithHoles(outerCCW, waterPolys);
-  const topTris = earcut(flat, holeIndices.length > 0 ? holeIndices : undefined, 2);
+  const topTrisRaw = earcut(flat, holeIndices.length > 0 ? holeIndices : undefined, 2);
+
+  // Earcut can produce "bridge" triangles that span most of the base plate
+  // when connecting the outer polygon to a hole — these appear as a giant
+  // wedge artifact.  Filter any triangle whose area exceeds 1/4 of the
+  // total shape area (no real base tile should be that large a single piece).
+  const maxTriArea = Math.abs(signedArea2D(shapeVerts)) / 4;
+  const topTris = [];
+  for (let t = 0; t < topTrisRaw.length; t += 3) {
+    const i0 = topTrisRaw[t], i1 = topTrisRaw[t + 1], i2 = topTrisRaw[t + 2];
+    const ax = flat[i0 * 2], ay = flat[i0 * 2 + 1];
+    const bx = flat[i1 * 2], by = flat[i1 * 2 + 1];
+    const cx = flat[i2 * 2], cy = flat[i2 * 2 + 1];
+    const area = Math.abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2;
+    if (area <= maxTriArea) topTris.push(i0, i1, i2);
+  }
 
   if (topTris.length > 0) {
     const nVerts = flat.length / 2;
@@ -974,7 +990,7 @@ function collectHexBaseWithHoles(acc, shapeVerts, waterPolys, topY, waterFloorY)
     for (let i = 0; i < nVerts; i++) {
       topPos.push(flat[i * 2], topY, -flat[i * 2 + 1]);
     }
-    acc.add(topPos, Array.from(topTris));
+    acc.add(topPos, topTris);
   }
 
   // ── Bottom face (fan triangulation, downward normals) ─────────────────────
