@@ -6,22 +6,19 @@
   <title>Cities3ds — Custom 3D Printed City Maps</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,400;0,500;0,600;0,700;0,800;0,900;1,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:ital,wght@0,300;0,400;0,500;0,600;0,700;0,800;0,900;1,400&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
       --bg: #050505;
-      --bg-panel: #080808;
       --bg-card: #0e0e0e;
       --border: #1c1c1c;
-      --border-bright: #2e2e2e;
+      --border-hi: #2a2a2a;
       --text: #f0f0f0;
       --text-sec: #999;
-      --text-dim: #555;
+      --text-dim: #444;
       --font: 'Inter', system-ui, sans-serif;
-      --glow: rgba(255,255,255,0.06);
     }
-
     html { scroll-behavior: smooth; }
     body {
       font-family: var(--font);
@@ -31,8 +28,8 @@
       overflow-x: hidden;
     }
 
-    /* ─── Canvas background ─────────────────────────── */
-    #hero-canvas {
+    /* ── Fixed canvas ──────────────────────────────── */
+    #scene-canvas {
       position: fixed;
       top: 0; left: 0;
       width: 100%; height: 100%;
@@ -40,18 +37,16 @@
       pointer-events: none;
     }
 
-    /* ─── Nav ───────────────────────────────────────── */
+    /* ── Nav ───────────────────────────────────────── */
     nav {
-      position: fixed; top: 0; left: 0; right: 0; z-index: 200;
-      height: 60px;
+      position: fixed; top: 0; left: 0; right: 0; z-index: 300;
+      height: 60px; padding: 0 40px;
       display: flex; align-items: center; justify-content: space-between;
-      padding: 0 40px;
-      background: rgba(5,5,5,0);
-      transition: background 0.5s, border-color 0.5s;
+      transition: background 0.5s, border-color 0.5s, backdrop-filter 0.5s;
       border-bottom: 1px solid transparent;
     }
     nav.scrolled {
-      background: rgba(5,5,5,0.88);
+      background: rgba(5,5,5,0.85);
       backdrop-filter: blur(24px);
       border-bottom-color: var(--border);
     }
@@ -59,79 +54,89 @@
       display: flex; align-items: center; gap: 10px;
       text-decoration: none; color: var(--text);
     }
-    .nav-logo-text { font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
-    .nav-logo-accent { color: var(--text-dim); }
-    .nav-links { display: flex; align-items: center; gap: 32px; }
+    .nav-logo-text { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; }
+    .nav-logo-dim { color: var(--text-dim); }
+    .nav-links { display: flex; align-items: center; gap: 28px; }
     .nav-links a {
       color: var(--text-sec); text-decoration: none; font-size: 13px; font-weight: 500;
       transition: color 0.2s;
     }
     .nav-links a:hover { color: #fff; }
     .nav-cta {
-      background: #fff !important; color: #000 !important; border-radius: 8px;
-      padding: 8px 20px !important; font-weight: 700 !important;
-      transition: all 0.2s !important;
+      background: #fff !important; color: #000 !important;
+      border-radius: 8px; padding: 8px 20px !important; font-weight: 700 !important;
     }
     .nav-cta:hover { background: #e0e0e0 !important; }
 
-    /* ─── Hero ──────────────────────────────────────── */
-    .hero {
-      position: relative; z-index: 10;
-      min-height: 100vh;
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: center;
-      padding: 0 40px;
-      text-align: center;
+    /* ── Scroll driver ─────────────────────────────── */
+    #scroll-driver {
+      position: relative;
+      z-index: 10;
+      height: 600vh; /* ~5 full screens of scroll drives the animation */
     }
 
-    .hero-eyebrow {
+    /* ── Hero overlay (sticky) ─────────────────────── */
+    #hero-overlay {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 0 40px;
+      pointer-events: none; /* let scroll pass through */
+    }
+
+    .hero-badge {
       display: inline-flex; align-items: center; gap: 8px;
       background: rgba(255,255,255,0.04);
-      border: 1px solid rgba(255,255,255,0.09);
+      border: 1px solid rgba(255,255,255,0.08);
       border-radius: 100px;
       padding: 6px 16px 6px 10px;
       font-size: 12px; font-weight: 500; color: var(--text-sec);
       margin-bottom: 32px;
-      animation: fadeUp 1s 0.1s both;
+      animation: fadeUp 1s 0.15s both;
     }
-    .hero-eyebrow-dot {
+    .badge-dot {
       width: 6px; height: 6px; border-radius: 50%;
-      background: #fff; opacity: 0.7;
-      animation: pulse 2s infinite;
+      background: #fff; opacity: 0.6;
+      animation: pulse 2.4s infinite;
     }
-
     @keyframes pulse {
-      0%,100% { opacity: 0.5; transform: scale(1); }
-      50% { opacity: 1; transform: scale(1.3); }
+      0%,100% { opacity: 0.4; transform: scale(1); }
+      50%      { opacity: 1;   transform: scale(1.4); }
     }
 
-    .hero h1 {
-      font-size: clamp(52px, 9vw, 96px);
+    #hero-headline {
+      font-size: clamp(56px, 10vw, 104px);
       font-weight: 900;
-      line-height: 0.95;
-      letter-spacing: -0.04em;
+      line-height: 0.92;
+      letter-spacing: -0.045em;
       margin-bottom: 28px;
-      animation: fadeUp 1s 0.2s both;
+      animation: fadeUp 1s 0.25s both;
     }
-    .hero h1 em {
+    #hero-headline em {
       font-style: normal;
-      background: linear-gradient(135deg, #ffffff 0%, #666 100%);
+      background: linear-gradient(145deg, #fff 30%, #555);
       -webkit-background-clip: text; -webkit-text-fill-color: transparent;
       background-clip: text;
     }
 
-    .hero-sub {
-      font-size: clamp(16px, 2vw, 20px);
+    #hero-sub {
+      font-size: clamp(15px, 1.8vw, 19px);
       color: var(--text-sec);
-      line-height: 1.65;
-      max-width: 520px;
+      line-height: 1.7;
+      max-width: 500px;
       margin: 0 auto 44px;
-      animation: fadeUp 1s 0.35s both;
+      animation: fadeUp 1s 0.38s both;
     }
 
     .hero-btns {
       display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
-      animation: fadeUp 1s 0.45s both;
+      pointer-events: all; /* re-enable for buttons */
+      animation: fadeUp 1s 0.5s both;
     }
     .btn-primary {
       display: inline-flex; align-items: center; gap: 8px;
@@ -141,17 +146,13 @@
       font-family: var(--font); font-size: 15px; font-weight: 700;
       cursor: pointer; text-decoration: none;
       transition: all 0.2s;
-      box-shadow: 0 0 40px rgba(255,255,255,0.12);
+      box-shadow: 0 0 50px rgba(255,255,255,0.1);
     }
-    .btn-primary:hover {
-      background: #e8e8e8;
-      transform: translateY(-2px);
-      box-shadow: 0 0 60px rgba(255,255,255,0.18);
-    }
+    .btn-primary:hover { background: #e8e8e8; transform: translateY(-2px); box-shadow: 0 0 60px rgba(255,255,255,0.18); }
     .btn-ghost {
       display: inline-flex; align-items: center; gap: 8px;
       background: transparent; color: var(--text-sec);
-      border: 1px solid var(--border-bright); border-radius: 10px;
+      border: 1px solid var(--border-hi); border-radius: 10px;
       padding: 15px 30px;
       font-family: var(--font); font-size: 15px; font-weight: 500;
       cursor: pointer; text-decoration: none;
@@ -159,64 +160,86 @@
     }
     .btn-ghost:hover { border-color: #555; color: #fff; }
 
-    .hero-price {
+    #hero-price {
       margin-top: 22px;
       font-size: 13px; color: var(--text-dim);
-      animation: fadeUp 1s 0.55s both;
+      animation: fadeUp 1s 0.6s both;
     }
-    .hero-price strong { color: var(--text-sec); font-weight: 600; }
+    #hero-price strong { color: var(--text-sec); font-weight: 600; }
 
-    /* scroll indicator */
+    /* Scroll hint */
     .scroll-hint {
       position: absolute;
-      bottom: 40px; left: 50%;
-      transform: translateX(-50%);
+      bottom: 36px;
       display: flex; flex-direction: column; align-items: center; gap: 8px;
       color: var(--text-dim); font-size: 10px; letter-spacing: 0.12em;
       text-transform: uppercase;
-      animation: fadeUp 1s 0.9s both;
+      animation: fadeUp 1s 1s both;
     }
-    .scroll-hint-line {
+    .scroll-hint-bar {
       width: 1px; height: 48px;
       background: linear-gradient(to bottom, var(--text-dim), transparent);
-      animation: scrollLine 1.8s ease-in-out infinite;
+      animation: barDrop 2s ease-in-out infinite;
     }
-    @keyframes scrollLine {
+    @keyframes barDrop {
       0% { opacity: 0; transform: scaleY(0) translateY(-100%); }
       40% { opacity: 1; }
-      100% { opacity: 0; transform: scaleY(1) translateY(0); }
+      100% { opacity: 0; transform: scaleY(1); }
     }
 
     @keyframes fadeUp {
-      from { opacity: 0; transform: translateY(28px); }
+      from { opacity: 0; transform: translateY(30px); }
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ─── Showcase strip ────────────────────────────── */
-    .showcase {
-      position: relative; z-index: 10;
-      padding: 0 40px 100px;
+    /* ── Phase label (mid-animation overlay) ──────── */
+    #phase-label-wrap {
+      position: sticky;
+      top: 0;
+      height: 0; /* zero height so it doesn't push content */
+      z-index: 20;
+      overflow: visible;
+      pointer-events: none;
     }
-    .showcase-frame {
-      max-width: 1100px; margin: 0 auto;
-      border-radius: 20px;
-      border: 1px solid var(--border-bright);
+    #phase-label {
+      position: absolute;
+      bottom: 52px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 11px; font-weight: 500; letter-spacing: 0.14em;
+      text-transform: uppercase; color: var(--text-sec);
+      opacity: 0;
+      transition: opacity 0.5s;
+      white-space: nowrap;
+    }
+    #phase-progress-bar {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 120px; height: 1px;
+      background: rgba(255,255,255,0.1);
       overflow: hidden;
-      background: var(--bg-card);
-      box-shadow: 0 0 80px rgba(255,255,255,0.03), 0 60px 120px rgba(0,0,0,0.6);
-      aspect-ratio: 16/9;
-      display: flex; align-items: center; justify-content: center;
     }
-    .showcase-frame img {
-      width: 100%; height: 100%; object-fit: cover;
+    #phase-progress-fill {
+      height: 100%;
+      background: rgba(255,255,255,0.5);
+      width: 0%;
+      transition: width 0.1s linear;
     }
 
-    /* ─── Sections ──────────────────────────────────── */
-    .content-section {
-      position: relative; z-index: 10;
-      padding: 120px 40px;
+    /* ── Content sections (below scroll driver) ────── */
+    .content-wrap {
+      position: relative;
+      z-index: 10;
+      background: var(--bg);
     }
-    .content-section.alt { background: rgba(10,10,10,0.6); backdrop-filter: blur(8px); }
+
+    .content-section {
+      padding: 120px 40px;
+      border-top: 1px solid var(--border);
+    }
+    .content-section.alt { background: rgba(8,8,8,1); }
     .section-inner { max-width: 1100px; margin: 0 auto; }
 
     .section-label {
@@ -224,26 +247,23 @@
       letter-spacing: 0.12em; color: var(--text-dim); margin-bottom: 14px;
     }
     .section-title {
-      font-size: clamp(30px, 4.5vw, 48px); font-weight: 800;
-      letter-spacing: -0.03em; line-height: 1.1; margin-bottom: 18px;
+      font-size: clamp(30px, 4.5vw, 48px);
+      font-weight: 800; letter-spacing: -0.03em; line-height: 1.1;
+      margin-bottom: 18px;
     }
-    .section-desc {
-      font-size: 16px; color: var(--text-sec); max-width: 520px; line-height: 1.65;
-    }
+    .section-desc { font-size: 16px; color: var(--text-sec); max-width: 520px; line-height: 1.7; }
 
-    /* ─── Steps ─────────────────────────────────────── */
+    /* Steps */
     .steps {
-      display: grid; grid-template-columns: repeat(3,1fr); gap: 2px;
-      margin-top: 64px;
+      display: grid; grid-template-columns: repeat(3,1fr);
       border: 1px solid var(--border);
-      border-radius: 18px;
-      overflow: hidden;
+      border-radius: 18px; overflow: hidden;
+      margin-top: 64px;
     }
     .step {
-      background: var(--bg-card);
-      padding: 40px 32px;
-      transition: background 0.3s;
+      background: var(--bg-card); padding: 40px 32px;
       border-right: 1px solid var(--border);
+      transition: background 0.3s;
     }
     .step:last-child { border-right: none; }
     .step:hover { background: #131313; }
@@ -251,81 +271,26 @@
       font-size: 52px; font-weight: 900;
       color: rgba(255,255,255,0.04);
       line-height: 1; margin-bottom: 20px;
-      font-variant-numeric: tabular-nums;
     }
-    .step h3 {
-      font-size: 17px; font-weight: 700; margin-bottom: 10px;
-      letter-spacing: -0.01em;
-    }
-    .step p { font-size: 14px; color: var(--text-sec); line-height: 1.65; }
+    .step h3 { font-size: 17px; font-weight: 700; margin-bottom: 10px; letter-spacing: -0.01em; }
+    .step p { font-size: 14px; color: var(--text-sec); line-height: 1.7; }
 
-    /* ─── Feature cards ─────────────────────────────── */
-    .features-grid {
-      display: grid; grid-template-columns: repeat(2,1fr); gap: 16px;
-      margin-top: 64px;
-    }
-    .feature-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 32px;
-      transition: border-color 0.3s, transform 0.3s;
-    }
-    .feature-card:hover { border-color: #2a2a2a; transform: translateY(-3px); }
-    .feature-icon {
-      width: 44px; height: 44px;
-      border-radius: 12px;
-      background: rgba(255,255,255,0.04);
-      border: 1px solid var(--border);
-      display: flex; align-items: center; justify-content: center;
-      margin-bottom: 18px;
-    }
-    .feature-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.01em; }
-    .feature-card p { font-size: 13px; color: var(--text-sec); line-height: 1.65; }
-
-    /* ─── Stats bar ─────────────────────────────────── */
-    .stats-row {
-      display: grid; grid-template-columns: repeat(3,1fr);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      overflow: hidden;
-      margin-top: 64px;
-    }
-    .stat-item {
-      padding: 40px 32px;
-      border-right: 1px solid var(--border);
-      text-align: center;
-    }
-    .stat-item:last-child { border-right: none; }
-    .stat-num {
-      font-size: 48px; font-weight: 900; letter-spacing: -0.04em;
-      line-height: 1;
-    }
-    .stat-label { font-size: 13px; color: var(--text-sec); margin-top: 8px; }
-
-    /* ─── Gallery ───────────────────────────────────── */
+    /* Gallery */
     .gallery-grid {
       display: grid; grid-template-columns: repeat(3,1fr); gap: 12px;
       margin-top: 64px;
     }
     .gallery-item {
-      border-radius: 14px;
-      border: 1px solid var(--border);
-      overflow: hidden;
-      aspect-ratio: 1;
-      background: var(--bg-card);
+      border-radius: 14px; border: 1px solid var(--border);
+      overflow: hidden; aspect-ratio: 1; background: var(--bg-card);
       transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
       position: relative;
     }
-    .gallery-item:hover {
-      border-color: #333;
-      transform: translateY(-6px) scale(1.01);
-      box-shadow: 0 20px 60px rgba(0,0,0,0.5);
-    }
+    .gallery-item:hover { border-color: #333; transform: translateY(-6px) scale(1.01); box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
     .gallery-item img { width: 100%; height: 100%; object-fit: cover; }
     .gallery-placeholder {
-      display: flex; align-items: center; justify-content: center;
-      height: 100%; color: var(--text-dim); font-size: 12px; text-align: center; padding: 20px;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      height: 100%; color: var(--text-dim); font-size: 12px; gap: 6px;
     }
     .gallery-caption {
       position: absolute; bottom: 0; left: 0; right: 0;
@@ -333,19 +298,48 @@
       padding: 24px 16px 14px; font-size: 13px; font-weight: 500;
     }
 
-    /* ─── Pricing ───────────────────────────────────── */
+    /* Features */
+    .features-grid {
+      display: grid; grid-template-columns: repeat(2,1fr); gap: 16px;
+      margin-top: 64px;
+    }
+    .feature-card {
+      background: var(--bg-card); border: 1px solid var(--border);
+      border-radius: 16px; padding: 32px;
+      transition: border-color 0.3s, transform 0.3s;
+    }
+    .feature-card:hover { border-color: #2a2a2a; transform: translateY(-3px); }
+    .feature-icon {
+      width: 44px; height: 44px; border-radius: 12px;
+      background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center; margin-bottom: 18px;
+    }
+    .feature-card h3 { font-size: 16px; font-weight: 700; margin-bottom: 8px; letter-spacing: -0.01em; }
+    .feature-card p { font-size: 13px; color: var(--text-sec); line-height: 1.7; }
+
+    /* Stats */
+    .stats-row {
+      display: grid; grid-template-columns: repeat(3,1fr);
+      border: 1px solid var(--border); border-radius: 16px;
+      overflow: hidden; margin-top: 64px;
+    }
+    .stat-item {
+      padding: 40px 32px; text-align: center;
+      border-right: 1px solid var(--border);
+    }
+    .stat-item:last-child { border-right: none; }
+    .stat-num { font-size: 48px; font-weight: 900; letter-spacing: -0.04em; line-height: 1; }
+    .stat-label { font-size: 13px; color: var(--text-sec); margin-top: 8px; }
+
+    /* Pricing */
     .price-wrap {
       max-width: 440px; margin: 64px auto 0;
-      background: var(--bg-card);
-      border: 1px solid var(--border-bright);
-      border-radius: 20px;
-      padding: 48px;
-      text-align: center;
-      box-shadow: 0 0 80px rgba(255,255,255,0.03);
+      background: var(--bg-card); border: 1px solid var(--border-hi);
+      border-radius: 20px; padding: 48px; text-align: center;
+      box-shadow: 0 0 80px rgba(255,255,255,0.02);
     }
     .price-amount {
-      font-size: 64px; font-weight: 900; letter-spacing: -0.04em; line-height: 1;
-      margin-bottom: 8px;
+      font-size: 64px; font-weight: 900; letter-spacing: -0.04em; line-height: 1; margin-bottom: 8px;
     }
     .price-amount sub { font-size: 22px; font-weight: 500; color: var(--text-sec); vertical-align: middle; }
     .price-desc { font-size: 14px; color: var(--text-sec); margin-bottom: 32px; }
@@ -353,70 +347,53 @@
     .price-list li {
       display: flex; align-items: center; gap: 12px;
       font-size: 14px; color: var(--text-sec);
-      padding: 10px 0;
-      border-bottom: 1px solid var(--border);
+      padding: 10px 0; border-bottom: 1px solid var(--border);
     }
-    .price-list li::before {
-      content: '';
-      width: 5px; height: 5px; border-radius: 50%;
-      background: #fff; flex-shrink: 0;
-    }
+    .price-list li::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: #fff; flex-shrink: 0; }
 
-    /* ─── CTA ───────────────────────────────────────── */
+    /* CTA */
     .cta-section {
-      position: relative; z-index: 10;
-      padding: 140px 40px;
-      text-align: center;
-      overflow: hidden;
+      padding: 140px 40px; text-align: center;
+      position: relative; overflow: hidden;
     }
     .cta-glow {
-      position: absolute; top: 50%; left: 50%;
-      transform: translate(-50%,-50%);
-      width: 600px; height: 400px;
-      background: radial-gradient(ellipse, rgba(255,255,255,0.04) 0%, transparent 70%);
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      width: 700px; height: 500px;
+      background: radial-gradient(ellipse, rgba(255,255,255,0.035) 0%, transparent 70%);
       pointer-events: none;
     }
     .cta-section h2 {
-      font-size: clamp(36px, 6vw, 64px);
-      font-weight: 900; letter-spacing: -0.04em;
-      margin-bottom: 16px; position: relative;
+      font-size: clamp(36px, 6vw, 66px); font-weight: 900;
+      letter-spacing: -0.04em; margin-bottom: 16px; position: relative;
     }
-    .cta-section p {
-      font-size: 18px; color: var(--text-sec); margin-bottom: 36px; position: relative;
-    }
+    .cta-section p { font-size: 18px; color: var(--text-sec); margin-bottom: 36px; position: relative; }
 
-    /* ─── Footer ────────────────────────────────────── */
+    /* Footer */
     footer {
-      position: relative; z-index: 10;
       border-top: 1px solid var(--border);
       padding: 32px 40px;
       display: flex; align-items: center; justify-content: space-between;
-      font-size: 12px; color: var(--text-dim);
-      flex-wrap: wrap; gap: 16px;
+      font-size: 12px; color: var(--text-dim); flex-wrap: wrap; gap: 16px;
     }
     footer a { color: var(--text-sec); text-decoration: none; transition: color 0.2s; }
     footer a:hover { color: #fff; }
     .footer-links { display: flex; gap: 24px; }
 
-    /* ─── Scroll reveal ─────────────────────────────── */
+    /* Scroll reveal */
     .reveal {
-      opacity: 0;
-      transform: translateY(40px);
-      transition: opacity 0.8s cubic-bezier(0.16,1,0.3,1),
-                  transform 0.8s cubic-bezier(0.16,1,0.3,1);
+      opacity: 0; transform: translateY(36px);
+      transition: opacity 0.8s cubic-bezier(0.16,1,0.3,1), transform 0.8s cubic-bezier(0.16,1,0.3,1);
     }
-    .reveal.visible { opacity: 1; transform: translateY(0); }
-    .reveal-delay-1 { transition-delay: 0.1s; }
-    .reveal-delay-2 { transition-delay: 0.2s; }
-    .reveal-delay-3 { transition-delay: 0.3s; }
-    .reveal-delay-4 { transition-delay: 0.4s; }
+    .reveal.visible { opacity: 1; transform: none; }
+    .reveal-d1 { transition-delay: 0.1s; }
+    .reveal-d2 { transition-delay: 0.2s; }
+    .reveal-d3 { transition-delay: 0.3s; }
+    .reveal-d4 { transition-delay: 0.4s; }
 
-    /* ─── Responsive ────────────────────────────────── */
     @media (max-width: 768px) {
       nav { padding: 0 20px; }
       .nav-links a:not(.nav-cta) { display: none; }
-      .hero { padding: 0 20px; }
-      .showcase { padding: 0 20px 60px; }
+      #hero-overlay, .content-section { padding: 0 20px; }
       .content-section { padding: 80px 20px; }
       .steps { grid-template-columns: 1fr; }
       .step { border-right: none; border-bottom: 1px solid var(--border); }
@@ -435,17 +412,17 @@
 </head>
 <body>
 
-  <!-- ── 3D Background canvas ────────────────────────── -->
-  <canvas id="hero-canvas"></canvas>
+  <!-- Fixed 3D canvas -->
+  <canvas id="scene-canvas"></canvas>
 
-  <!-- ── Nav ─────────────────────────────────────────── -->
+  <!-- Nav -->
   <nav id="nav">
     <a href="/" class="nav-logo">
-      <svg width="24" height="24" viewBox="0 0 32 32" fill="none">
+      <svg width="22" height="22" viewBox="0 0 32 32" fill="none">
         <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2" fill="none"/>
-        <path d="M16 8L22.66 11.5V20.5L16 24L9.34 20.5V11.5L16 8Z" fill="currentColor" opacity="0.4"/>
+        <path d="M16 8L22.66 11.5V20.5L16 24L9.34 20.5V11.5L16 8Z" fill="currentColor" opacity="0.35"/>
       </svg>
-      <span class="nav-logo-text">Cities<span class="nav-logo-accent">3d</span>s</span>
+      <span class="nav-logo-text">Cities<span class="nav-logo-dim">3d</span>s</span>
     </a>
     <div class="nav-links">
       <a href="#how-it-works">How It Works</a>
@@ -455,432 +432,625 @@
     </div>
   </nav>
 
-  <!-- ── Hero ─────────────────────────────────────────── -->
-  <section class="hero">
-    <div class="hero-eyebrow">
-      <span class="hero-eyebrow-dot"></span>
-      3D Printed to Order — Ships in 5–10 Days
+  <!-- ─────── Scroll driver: 600vh gives ~5 screens of animation space ──── -->
+  <div id="scroll-driver">
+
+    <!-- Hero text (sticky, fades on scroll) -->
+    <div id="hero-overlay">
+      <div class="hero-badge">
+        <span class="badge-dot"></span>
+        3D Printed to Order — Ships in 5–10 Days
+      </div>
+      <h1 id="hero-headline">Your City,<br/><em>in 3D.</em></h1>
+      <p id="hero-sub">
+        Pick any place on Earth. We generate a real 3D model
+        with actual buildings, roads, and terrain — then print and ship it to you.
+      </p>
+      <div class="hero-btns">
+        <a href="/app.html" class="btn-primary">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polygon points="5 3 19 12 5 21 5 3"/>
+          </svg>
+          Start Making
+        </a>
+        <a href="#how-it-works" class="btn-ghost">See How It Works</a>
+      </div>
+      <p id="hero-price">Starting at <strong>$35</strong> + shipping</p>
+
+      <div class="scroll-hint">
+        <div class="scroll-hint-bar"></div>
+        <span>Scroll</span>
+      </div>
     </div>
-    <h1>Your City,<br/><em>in 3D.</em></h1>
-    <p class="hero-sub">
-      Pick any place on Earth. We generate a real 3D model with actual buildings,
-      roads, and terrain — then print and ship it to your door.
-    </p>
-    <div class="hero-btns">
-      <a href="/app.html" class="btn-primary">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+
+    <!-- Mid-animation phase labels -->
+    <div id="phase-label-wrap">
+      <div id="phase-label">Scanning city data</div>
+      <div id="phase-progress-bar"><div id="phase-progress-fill"></div></div>
+    </div>
+
+  </div><!-- /scroll-driver -->
+
+  <!-- ─── Content (solid bg covers canvas) ──── -->
+  <div class="content-wrap">
+
+    <!-- How it works -->
+    <section class="content-section" id="how-it-works">
+      <div class="section-inner">
+        <div class="section-label reveal">How It Works</div>
+        <div class="section-title reveal reveal-d1">Three steps to your custom map.</div>
+        <p class="section-desc reveal reveal-d2">No design skills needed. Pick a location, preview it in 3D, and we handle the rest.</p>
+        <div class="steps">
+          <div class="step reveal reveal-d1">
+            <div class="step-num">01</div>
+            <h3>Pick Your Location</h3>
+            <p>Search any city, neighborhood, or landmark on Earth. Adjust the capture radius and vertical scale to get the perfect frame.</p>
+          </div>
+          <div class="step reveal reveal-d2">
+            <div class="step-num">02</div>
+            <h3>Preview in 3D</h3>
+            <p>See your model come to life with real buildings, roads, parks, and terrain. Rotate and zoom before ordering.</p>
+          </div>
+          <div class="step reveal reveal-d3">
+            <div class="step-num">03</div>
+            <h3>We Print &amp; Ship</h3>
+            <p>Place your order and we 3D print your model in high-quality PETG on professional equipment. Ships in 5–10 business days.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Stats -->
+    <section class="content-section alt">
+      <div class="section-inner">
+        <div class="stats-row">
+          <div class="stat-item reveal reveal-d1">
+            <div class="stat-num">~1km</div>
+            <div class="stat-label">Default capture radius</div>
+          </div>
+          <div class="stat-item reveal reveal-d2">
+            <div class="stat-num">110mm</div>
+            <div class="stat-label">Hexagonal base size</div>
+          </div>
+          <div class="stat-item reveal reveal-d3">
+            <div class="stat-num">∞</div>
+            <div class="stat-label">Locations available</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Features -->
+    <section class="content-section" id="features">
+      <div class="section-inner">
+        <div class="section-label reveal">Features</div>
+        <div class="section-title reveal reveal-d1">Every detail, captured.</div>
+        <div class="features-grid">
+          <div class="feature-card reveal reveal-d1">
+            <div class="feature-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 21h18M3 7v1a3 3 0 006 0V7M15 7v1a3 3 0 006 0V7M3 7h18M6 21V11M18 21V11"/>
+              </svg>
+            </div>
+            <h3>Real Building Data</h3>
+            <p>Every building pulled from OpenStreetMap with accurate footprints and heights. Skyscrapers, houses, churches — all there.</p>
+          </div>
+          <div class="feature-card reveal reveal-d2">
+            <div class="feature-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
+              </svg>
+            </div>
+            <h3>Two-Tone Printing</h3>
+            <p>Crisp white buildings on a dark street grid. Multi-material printing makes every feature instantly readable.</p>
+          </div>
+          <div class="feature-card reveal reveal-d3">
+            <div class="feature-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/>
+                <circle cx="12" cy="10" r="3"/>
+              </svg>
+            </div>
+            <h3>Anywhere on Earth</h3>
+            <p>From the streets of Tokyo to a small town in Iowa. If it's on the map, we can print it.</p>
+          </div>
+          <div class="feature-card reveal reveal-d4">
+            <div class="feature-icon">
+              <svg width="20" height="20" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z"/>
+              </svg>
+            </div>
+            <h3>Hexagonal Design</h3>
+            <p>110mm hex footprint looks stunning on a desk or shelf. Collect multiple tiles to build a larger cityscape.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Gallery -->
+    <section class="content-section alt" id="gallery">
+      <div class="section-inner">
+        <div class="section-label reveal">Gallery</div>
+        <div class="section-title reveal reveal-d1">Made with Cities3ds.</div>
+        <p class="section-desc reveal reveal-d2">Real prints from real places. Each one unique, made to order.</p>
+        <div class="gallery-grid" id="gallery-grid">
+          <!-- Populated by JS from /api/content, fallback below -->
+          <div class="gallery-item reveal reveal-d1"><div class="gallery-placeholder"><svg width="28" height="28" viewBox="0 0 32 32" fill="none" opacity="0.15"><path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2"/></svg><span>Photo 1</span></div></div>
+          <div class="gallery-item reveal reveal-d2"><div class="gallery-placeholder"><svg width="28" height="28" viewBox="0 0 32 32" fill="none" opacity="0.15"><path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2"/></svg><span>Photo 2</span></div></div>
+          <div class="gallery-item reveal reveal-d3"><div class="gallery-placeholder"><svg width="28" height="28" viewBox="0 0 32 32" fill="none" opacity="0.15"><path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2"/></svg><span>Photo 3</span></div></div>
+          <div class="gallery-item reveal reveal-d2"><div class="gallery-placeholder"><svg width="28" height="28" viewBox="0 0 32 32" fill="none" opacity="0.15"><path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2"/></svg><span>Photo 4</span></div></div>
+          <div class="gallery-item reveal reveal-d3"><div class="gallery-placeholder"><svg width="28" height="28" viewBox="0 0 32 32" fill="none" opacity="0.15"><path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2"/></svg><span>Photo 5</span></div></div>
+          <div class="gallery-item reveal reveal-d4"><div class="gallery-placeholder"><svg width="28" height="28" viewBox="0 0 32 32" fill="none" opacity="0.15"><path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2"/></svg><span>Photo 6</span></div></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Pricing -->
+    <section class="content-section" id="pricing">
+      <div class="section-inner" style="text-align:center">
+        <div class="section-label reveal">Pricing</div>
+        <div class="section-title reveal reveal-d1">Simple, transparent pricing.</div>
+        <div class="price-wrap reveal reveal-d2">
+          <div class="price-amount">$35 <sub>USD</sub></div>
+          <p class="price-desc">Per custom 3D printed map model</p>
+          <ul class="price-list">
+            <li>Custom location of your choice</li>
+            <li>Real buildings, roads, parks &amp; water</li>
+            <li>Two-tone multi-color print</li>
+            <li>110mm hexagonal base</li>
+            <li>High-quality PETG material</li>
+            <li>Ships in 5–10 business days</li>
+          </ul>
+          <a href="/app.html" class="btn-primary" style="width:100%;justify-content:center;font-size:16px;padding:18px">
+            Start Making Yours
+          </a>
+        </div>
+      </div>
+    </section>
+
+    <!-- CTA -->
+    <section class="cta-section content-section" style="border-top:1px solid var(--border)">
+      <div class="cta-glow"></div>
+      <h2 class="reveal">Ready to print<br/>your city?</h2>
+      <p class="reveal reveal-d1">Design your custom 3D map model in under a minute.</p>
+      <a href="/app.html" class="btn-primary reveal reveal-d2">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
           <polygon points="5 3 19 12 5 21 5 3"/>
         </svg>
         Start Making
       </a>
-      <a href="#how-it-works" class="btn-ghost">See How It Works</a>
-    </div>
-    <p class="hero-price">Starting at <strong>$35</strong> + shipping</p>
+    </section>
 
-    <div class="scroll-hint">
-      <div class="scroll-hint-line"></div>
-      <span>Scroll</span>
-    </div>
-  </section>
-
-  <!-- ── Showcase image ────────────────────────────────── -->
-  <div class="showcase">
-    <div class="showcase-frame reveal">
-      <img src="/images/Screenshot 2026-04-18 174143.png" alt="3D printed city map showcase" />
-    </div>
+    <footer>
+      <div style="display:flex;align-items:center;gap:8px;color:var(--text-dim)">
+        <svg width="16" height="16" viewBox="0 0 32 32" fill="none">
+          <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2"/>
+        </svg>
+        <span style="font-size:13px;font-weight:700;letter-spacing:-0.01em">Cities3ds</span>
+      </div>
+      <span>&copy; 2025 Cities3ds. All rights reserved.</span>
+      <div class="footer-links">
+        <a href="#">Privacy</a>
+        <a href="#">Terms</a>
+        <a href="mailto:hello@cities3ds.com">Contact</a>
+      </div>
+    </footer>
   </div>
 
-  <!-- ── How it works ──────────────────────────────────── -->
-  <section class="content-section alt" id="how-it-works">
-    <div class="section-inner">
-      <div class="section-label reveal">How It Works</div>
-      <div class="section-title reveal reveal-delay-1">Three steps to your custom map.</div>
-      <p class="section-desc reveal reveal-delay-2">No design skills needed. Pick a location, preview it in 3D, and we handle the rest.</p>
-
-      <div class="steps">
-        <div class="step reveal reveal-delay-1">
-          <div class="step-num">01</div>
-          <h3>Pick Your Location</h3>
-          <p>Search any city, neighborhood, or landmark on Earth. Adjust the capture radius and vertical scale to get the perfect frame.</p>
-        </div>
-        <div class="step reveal reveal-delay-2">
-          <div class="step-num">02</div>
-          <h3>Preview in 3D</h3>
-          <p>See your model come to life with real buildings, roads, parks, and terrain. Rotate, zoom, and customize before ordering.</p>
-        </div>
-        <div class="step reveal reveal-delay-3">
-          <div class="step-num">03</div>
-          <h3>We Print &amp; Ship</h3>
-          <p>Place your order and we 3D print your model in high-quality PETG. Ships to your door in 5–10 business days.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Stats ─────────────────────────────────────────── -->
-  <section class="content-section" id="stats">
-    <div class="section-inner">
-      <div class="stats-row">
-        <div class="stat-item reveal reveal-delay-1">
-          <div class="stat-num">~1km</div>
-          <div class="stat-label">Default capture radius</div>
-        </div>
-        <div class="stat-item reveal reveal-delay-2">
-          <div class="stat-num">110mm</div>
-          <div class="stat-label">Hexagonal base size</div>
-        </div>
-        <div class="stat-item reveal reveal-delay-3">
-          <div class="stat-num">∞</div>
-          <div class="stat-label">Locations on Earth</div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Features ──────────────────────────────────────── -->
-  <section class="content-section alt" id="features">
-    <div class="section-inner">
-      <div class="section-label reveal">Features</div>
-      <div class="section-title reveal reveal-delay-1">Every detail, captured.</div>
-
-      <div class="features-grid">
-        <div class="feature-card reveal reveal-delay-1">
-          <div class="feature-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 21h18M3 7v1a3 3 0 006 0V7M15 7v1a3 3 0 006 0V7M3 7h18M6 21V11M18 21V11"/>
-            </svg>
-          </div>
-          <h3>Real Building Data</h3>
-          <p>Every building pulled from OpenStreetMap with accurate footprints and heights. Skyscrapers, houses, churches — all there.</p>
-        </div>
-        <div class="feature-card reveal reveal-delay-2">
-          <div class="feature-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/>
-            </svg>
-          </div>
-          <h3>Two-Tone Printing</h3>
-          <p>Crisp white buildings on a dark street grid. Multi-material printing makes buildings and roads read instantly at a glance.</p>
-        </div>
-        <div class="feature-card reveal reveal-delay-3">
-          <div class="feature-icon">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z"/><circle cx="12" cy="10" r="3"/>
-            </svg>
-          </div>
-          <h3>Anywhere on Earth</h3>
-          <p>From the streets of Tokyo to a small town in Iowa. If it's on the map, we can print it.</p>
-        </div>
-        <div class="feature-card reveal reveal-delay-4">
-          <div class="feature-icon">
-            <svg width="20" height="20" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z"/>
-            </svg>
-          </div>
-          <h3>Hexagonal Design</h3>
-          <p>110mm hex footprint looks stunning on a desk or shelf. Collect multiple tiles to build a larger continuous cityscape.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Gallery ────────────────────────────────────────── -->
-  <section class="content-section" id="gallery">
-    <div class="section-inner">
-      <div class="section-label reveal">Gallery</div>
-      <div class="section-title reveal reveal-delay-1">Made with Cities3ds.</div>
-      <p class="section-desc reveal reveal-delay-2">Real prints from real places. Each one unique, made to order.</p>
-
-      <div class="gallery-grid">
-        <div class="gallery-item reveal reveal-delay-1">
-          <div class="gallery-placeholder">Photo 1<br/><span style="font-size:10px;color:#333;margin-top:4px;display:block">Add /images/gallery-1.jpg</span></div>
-        </div>
-        <div class="gallery-item reveal reveal-delay-2">
-          <div class="gallery-placeholder">Photo 2<br/><span style="font-size:10px;color:#333;margin-top:4px;display:block">Add /images/gallery-2.jpg</span></div>
-        </div>
-        <div class="gallery-item reveal reveal-delay-3">
-          <div class="gallery-placeholder">Photo 3<br/><span style="font-size:10px;color:#333;margin-top:4px;display:block">Add /images/gallery-3.jpg</span></div>
-        </div>
-        <div class="gallery-item reveal reveal-delay-2">
-          <div class="gallery-placeholder">Photo 4<br/><span style="font-size:10px;color:#333;margin-top:4px;display:block">Add /images/gallery-4.jpg</span></div>
-        </div>
-        <div class="gallery-item reveal reveal-delay-3">
-          <div class="gallery-placeholder">Photo 5<br/><span style="font-size:10px;color:#333;margin-top:4px;display:block">Add /images/gallery-5.jpg</span></div>
-        </div>
-        <div class="gallery-item reveal reveal-delay-4">
-          <div class="gallery-placeholder">Photo 6<br/><span style="font-size:10px;color:#333;margin-top:4px;display:block">Add /images/gallery-6.jpg</span></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── Pricing ────────────────────────────────────────── -->
-  <section class="content-section alt" id="pricing">
-    <div class="section-inner" style="text-align:center">
-      <div class="section-label reveal">Pricing</div>
-      <div class="section-title reveal reveal-delay-1">Simple, transparent pricing.</div>
-
-      <div class="price-wrap reveal reveal-delay-2">
-        <div class="price-amount">$35 <sub>USD</sub></div>
-        <p class="price-desc">Per custom 3D printed map model</p>
-        <ul class="price-list">
-          <li>Custom location of your choice</li>
-          <li>Real buildings, roads, parks &amp; water</li>
-          <li>Two-tone multi-color print</li>
-          <li>110mm hexagonal base</li>
-          <li>High-quality PETG material</li>
-          <li>Ships in 5–10 business days</li>
-        </ul>
-        <a href="/app.html" class="btn-primary" style="width:100%;justify-content:center;font-size:16px;padding:18px">
-          Start Making Yours
-        </a>
-      </div>
-    </div>
-  </section>
-
-  <!-- ── CTA ───────────────────────────────────────────── -->
-  <section class="cta-section">
-    <div class="cta-glow"></div>
-    <h2 class="reveal">Ready to print<br/>your city?</h2>
-    <p class="reveal reveal-delay-1">Design your custom 3D map model in under a minute.</p>
-    <a href="/app.html" class="btn-primary reveal reveal-delay-2">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-        <polygon points="5 3 19 12 5 21 5 3"/>
-      </svg>
-      Start Making
-    </a>
-  </section>
-
-  <!-- ── Footer ─────────────────────────────────────────── -->
-  <footer>
-    <div class="nav-logo" style="text-decoration:none;display:flex;align-items:center;gap:8px;color:var(--text-dim)">
-      <svg width="18" height="18" viewBox="0 0 32 32" fill="none">
-        <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2" fill="none"/>
-      </svg>
-      <span style="font-size:14px;font-weight:700;letter-spacing:-0.01em">Cities3ds</span>
-    </div>
-    <span>&copy; 2025 Cities3ds. All rights reserved.</span>
-    <div class="footer-links">
-      <a href="#">Privacy</a>
-      <a href="#">Terms</a>
-      <a href="mailto:hello@cities3ds.com">Contact</a>
-    </div>
-  </footer>
-
-  <!-- ── Three.js city background ──────────────────────── -->
+  <!-- ─── Three.js: Scroll-driven print animation ──────── -->
   <script type="importmap">
     { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.163.0/build/three.module.js" } }
   </script>
   <script type="module">
     import * as THREE from 'three';
 
-    /* ── Scene setup ─────────────────────────────────── */
-    const canvas  = document.getElementById('hero-canvas');
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    // ── Seeded RNG ──────────────────────────────────────
+    function mulberry32(seed) {
+      return () => {
+        seed |= 0; seed = (seed + 0x6D2B79F5) | 0;
+        let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+    const rng = mulberry32(1337);
+
+    // ── Lerp helpers ──────────────────────────────────
+    function lp(a, b, t) { return a + (b - a) * t; }
+    function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+    function easeOut3(t) { return 1 - Math.pow(1 - t, 3); }
+    function easeInOut(t) { return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t+2,2)/2; }
+    function smoothstep(edge0, edge1, x) { const t = clamp01((x-edge0)/(edge1-edge0)); return t*t*(3-2*t); }
+
+    // ── Scene ─────────────────────────────────────────
+    const canvas   = document.getElementById('scene-canvas');
+    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: false });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.8));
     renderer.setSize(window.innerWidth, window.innerHeight);
     renderer.setClearColor(0x050505, 1);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
 
-    const scene = new THREE.Scene();
-    scene.fog = new THREE.FogExp2(0x050505, 0.012);
+    const scene  = new THREE.Scene();
+    scene.fog    = new THREE.FogExp2(0x050505, 0.015);
 
-    const camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 300);
-    camera.position.set(0, 22, 48);
-    camera.lookAt(0, 0, 0);
+    const camera = new THREE.PerspectiveCamera(52, window.innerWidth / window.innerHeight, 0.1, 400);
 
-    /* ── Lights ──────────────────────────────────────── */
-    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
-    dirLight.position.set(20, 40, 20);
-    scene.add(dirLight);
-
-    const rimLight = new THREE.DirectionalLight(0xffffff, 0.3);
-    rimLight.position.set(-20, 10, -30);
-    scene.add(rimLight);
-
-    /* ── Materials ───────────────────────────────────── */
-    const matBase  = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.9, metalness: 0 });
-    const matBldgA = new THREE.MeshStandardMaterial({ color: 0xf0f0f0, roughness: 0.7, metalness: 0.05 });
-    const matBldgB = new THREE.MeshStandardMaterial({ color: 0xd0d0d0, roughness: 0.75, metalness: 0.05 });
-    const matBldgC = new THREE.MeshStandardMaterial({ color: 0xa0a0a0, roughness: 0.8, metalness: 0 });
-    const matRoad  = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1, metalness: 0 });
-    const matGlow  = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.3, metalness: 0.2, emissive: 0xffffff, emissiveIntensity: 0.05 });
-
-    const bldgMats = [matBldgA, matBldgB, matBldgC, matGlow];
-
-    /* ── Hex grid helpers ────────────────────────────── */
-    function hexCorners(cx, cz, r) {
-      const pts = [];
-      for (let i = 0; i < 6; i++) {
-        const a = (Math.PI / 3) * i - Math.PI / 6;
-        pts.push(new THREE.Vector3(cx + r * Math.cos(a), 0, cz + r * Math.sin(a)));
-      }
-      return pts;
-    }
-
-    function hexCenter(col, row, r) {
-      const w = r * Math.sqrt(3);
-      const x = col * w + (row % 2) * w * 0.5;
-      const z = row * r * 1.5;
-      return { x, z };
-    }
-
-    /* ── Procedural city tiles ───────────────────────── */
-    const cityGroup = new THREE.Group();
-    scene.add(cityGroup);
-
-    const HEX_R  = 7;
-    const COLS   = 6;
-    const ROWS   = 6;
-    const rng = mulberry32(42);
-
-    function mulberry32(a) {
-      return function() {
-        a |= 0; a = a + 0x6D2B79F5 | 0;
-        let t = Math.imul(a ^ a >>> 15, 1 | a);
-        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
-        return ((t ^ t >>> 14) >>> 0) / 4294967296;
-      };
-    }
-
-    const buildingData = []; // { mesh, targetY, currentY, delay }
-
-    for (let row = -Math.floor(ROWS/2); row <= Math.floor(ROWS/2); row++) {
-      for (let col = -Math.floor(COLS/2); col <= Math.floor(COLS/2); col++) {
-        const { x, z } = hexCenter(col, row, HEX_R);
-
-        // Base hex pad
-        const hexShape = new THREE.Shape();
-        const corners  = hexCorners(0, 0, HEX_R - 0.15);
-        hexShape.moveTo(corners[0].x, corners[0].z);
-        for (let i = 1; i < 6; i++) hexShape.lineTo(corners[i].x, corners[i].z);
-        hexShape.closePath();
-
-        const hexGeo  = new THREE.ExtrudeGeometry(hexShape, { depth: 0.25, bevelEnabled: false });
-        hexGeo.rotateX(-Math.PI / 2);
-        const hexMesh = new THREE.Mesh(hexGeo, matBase);
-        hexMesh.position.set(x, -0.25, z);
-        cityGroup.add(hexMesh);
-
-        // Buildings inside this hex cell
-        const numB = Math.floor(rng() * 6) + 3;
-        for (let b = 0; b < numB; b++) {
-          const angle  = rng() * Math.PI * 2;
-          const dist   = rng() * HEX_R * 0.72;
-          const bx     = x + Math.cos(angle) * dist;
-          const bz     = z + Math.sin(angle) * dist;
-
-          const isLandmark = rng() < 0.08;
-          const isTall     = rng() < 0.15;
-          const w  = isLandmark ? rng() * 1.0 + 1.0 : rng() * 1.5 + 0.5;
-          const d  = isLandmark ? rng() * 1.0 + 1.0 : rng() * 1.5 + 0.5;
-          const h  = isLandmark ? rng() * 8 + 6
-                   : isTall     ? rng() * 5 + 3
-                   :              rng() * 2.5 + 0.4;
-
-          const geo  = new THREE.BoxGeometry(w, h, d);
-          const mat  = bldgMats[Math.floor(rng() * bldgMats.length)];
-          const mesh = new THREE.Mesh(geo, mat);
-          mesh.rotation.y = rng() * Math.PI * 2;
-          mesh.position.set(bx, -h, bz); // start underground
-          cityGroup.add(mesh);
-          buildingData.push({ mesh, targetY: h / 2, delay: rng() * 2.5 + 0.3 });
-        }
-
-        // Road lines between hex cells (thin boxes)
-        if (rng() > 0.25) {
-          const { x: nx, z: nz } = hexCenter(col + 1, row, HEX_R);
-          addRoadSegment(x, z, nx, nz);
-        }
-        if (rng() > 0.25) {
-          const { x: nx, z: nz } = hexCenter(col, row + 1, HEX_R);
-          addRoadSegment(x, z, nx, nz);
-        }
-      }
-    }
-
-    function addRoadSegment(x1, z1, x2, z2) {
-      const dx  = x2 - x1, dz = z2 - z1;
-      const len = Math.sqrt(dx*dx + dz*dz);
-      const geo = new THREE.BoxGeometry(len, 0.06, 0.7);
-      const m   = new THREE.Mesh(geo, matRoad);
-      m.position.set((x1+x2)/2, 0.03, (z1+z2)/2);
-      m.rotation.y = Math.atan2(dz, dx);
-      cityGroup.add(m);
-    }
-
-    /* ── Particle field ───────────────────────────────── */
-    const particleCount = 400;
-    const pPositions    = new Float32Array(particleCount * 3);
-    for (let i = 0; i < particleCount; i++) {
-      pPositions[i*3]   = (Math.random() - 0.5) * 120;
-      pPositions[i*3+1] = Math.random() * 60;
-      pPositions[i*3+2] = (Math.random() - 0.5) * 120;
-    }
-    const pGeo = new THREE.BufferGeometry();
-    pGeo.setAttribute('position', new THREE.BufferAttribute(pPositions, 3));
-    const pMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.18, transparent: true, opacity: 0.25 });
-    scene.add(new THREE.Points(pGeo, pMat));
-
-    /* ── Grid plane ───────────────────────────────────── */
-    const gridHelper = new THREE.GridHelper(200, 60, 0x1a1a1a, 0x111111);
-    gridHelper.position.y = -0.01;
-    scene.add(gridHelper);
-
-    /* ── Animation state ──────────────────────────────── */
-    let scrollY    = 0;
-    let time       = 0;
-    let buildTimer = 0;
-    const INTRO_DURATION = 3.0; // seconds for buildings to rise
-
-    window.addEventListener('scroll', () => { scrollY = window.scrollY; });
-
-    /* ── Resize ───────────────────────────────────────── */
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    /* ── Render loop ──────────────────────────────────── */
-    let last = performance.now();
+    // ── Lights ────────────────────────────────────────
+    scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+
+    const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+    sun.position.set(18, 40, 22);
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.camera.near = 0.5;
+    sun.shadow.camera.far  = 200;
+    sun.shadow.camera.left = sun.shadow.camera.bottom = -60;
+    sun.shadow.camera.right = sun.shadow.camera.top   =  60;
+    scene.add(sun);
+
+    const rim = new THREE.DirectionalLight(0xffffff, 0.25);
+    rim.position.set(-22, 12, -30);
+    scene.add(rim);
+
+    // ── Materials ─────────────────────────────────────
+    const mBase  = new THREE.MeshStandardMaterial({ color: 0x111111, roughness: 0.95, metalness: 0 });
+    const mRoad  = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 1, metalness: 0 });
+    const mBW    = new THREE.MeshStandardMaterial({ color: 0xfafafa, roughness: 0.7, metalness: 0.05 });
+    const mBM    = new THREE.MeshStandardMaterial({ color: 0xd8d8d8, roughness: 0.75, metalness: 0.04 });
+    const mBD    = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, roughness: 0.8, metalness: 0 });
+    const mGlass = new THREE.MeshStandardMaterial({
+      color: 0xffffff, roughness: 0.15, metalness: 0.6,
+      emissive: 0xffffff, emissiveIntensity: 0.04,
+    });
+    const bMats  = [mBW, mBW, mBM, mBD, mGlass];
+
+    // ── Print-plane material ──────────────────────────
+    const mPlane = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0,
+      side: THREE.DoubleSide,
+    });
+
+    // ── Hex geometry helpers ──────────────────────────
+    const HEX_R = 22; // model radius in scene units
+
+    function hexShape2D(r) {
+      const shape = new THREE.Shape();
+      for (let i = 0; i < 6; i++) {
+        const a = Math.PI / 3 * i - Math.PI / 6;
+        const x = r * Math.cos(a), y = r * Math.sin(a);
+        i === 0 ? shape.moveTo(x, y) : shape.lineTo(x, y);
+      }
+      shape.closePath();
+      return shape;
+    }
+
+    // ── Base hex plate ────────────────────────────────
+    const baseGeo  = new THREE.ExtrudeGeometry(hexShape2D(HEX_R - 0.1), { depth: 0.6, bevelEnabled: false });
+    baseGeo.rotateX(-Math.PI / 2);
+    const baseMesh = new THREE.Mesh(baseGeo, mBase);
+    baseMesh.position.y = -0.6;
+    baseMesh.receiveShadow = true;
+    scene.add(baseMesh);
+
+    // ── Hex ring glow edge ────────────────────────────
+    const ringGeo = new THREE.TorusGeometry(HEX_R, 0.06, 4, 6);
+    ringGeo.rotateX(Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0 });
+    const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+    ringMesh.position.y = 0.05;
+    scene.add(ringMesh);
+
+    // ── Background grid ───────────────────────────────
+    const grid = new THREE.GridHelper(300, 80, 0x111111, 0x0d0d0d);
+    grid.position.y = -0.01;
+    scene.add(grid);
+
+    // ── Road network (lines radiating + rings) ────────
+    const roadGroup = new THREE.Group();
+    scene.add(roadGroup);
+
+    const roadData = []; // { mesh, dist (normalized 0-1) }
+
+    function addRoad(x1, z1, x2, z2, w = 0.55) {
+      const dx = x2 - x1, dz = z2 - z1;
+      const len = Math.sqrt(dx*dx + dz*dz);
+      if (len < 0.1) return;
+      const geo  = new THREE.BoxGeometry(len, 0.08, w);
+      const mesh = new THREE.Mesh(geo, mRoad.clone());
+      mesh.position.set((x1+x2)/2, 0.04, (z1+z2)/2);
+      mesh.rotation.y = Math.atan2(dz, dx);
+      mesh.receiveShadow = true;
+      mesh.castShadow    = false;
+      roadGroup.add(mesh);
+      // dist = how far the midpoint is from center (0=center,1=edge)
+      const midDist = Math.sqrt(((x1+x2)/2)**2 + ((z1+z2)/2)**2) / HEX_R;
+      roadData.push({ mesh, dist: clamp01(midDist) });
+    }
+
+    // Radial streets
+    const SPOKE_ANGLES = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330];
+    for (const deg of SPOKE_ANGLES) {
+      const a = (deg * Math.PI) / 180;
+      const rings = [7, 12, 17, HEX_R * 0.92];
+      for (let i = 0; i < rings.length - 1; i++) {
+        addRoad(
+          Math.cos(a) * rings[i],   Math.sin(a) * rings[i],
+          Math.cos(a) * rings[i+1], Math.sin(a) * rings[i+1],
+          deg % 60 === 0 ? 0.9 : 0.55,
+        );
+      }
+    }
+    // Circumferential rings
+    for (const r of [7, 12, 17]) {
+      const segs = r < 10 ? 6 : 12;
+      for (let i = 0; i < segs; i++) {
+        const a1 = (i / segs) * Math.PI * 2 - Math.PI / 6;
+        const a2 = ((i+1) / segs) * Math.PI * 2 - Math.PI / 6;
+        addRoad(Math.cos(a1)*r, Math.sin(a1)*r, Math.cos(a2)*r, Math.sin(a2)*r, 0.55);
+      }
+    }
+
+    // ── Buildings ─────────────────────────────────────
+    const buildingGroup = new THREE.Group();
+    scene.add(buildingGroup);
+
+    const buildings = []; // { mesh, finalY, height, ring (0-1) }
+
+    function addBuilding(x, z, w, d, h, mat) {
+      const geo  = new THREE.BoxGeometry(w, h, d);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow    = true;
+      mesh.receiveShadow = true;
+      mesh.position.set(x, -h, z); // start underground
+      mesh.rotation.y = rng() * Math.PI * 2;
+      buildingGroup.add(mesh);
+      const ring = Math.sqrt(x*x + z*z) / HEX_R; // 0=center,1=edge
+      buildings.push({ mesh, finalY: h / 2, height: h, ring: clamp01(ring) });
+    }
+
+    // ── Downtown core (center, tall) ──────────────────
+    const downtownR = 6;
+    for (let i = 0; i < 28; i++) {
+      const a = rng() * Math.PI * 2;
+      const d = rng() * downtownR;
+      const w = rng() * 1.2 + 0.8;
+      const dp = rng() * 1.2 + 0.8;
+      const h  = rng() * 7 + 4;
+      addBuilding(Math.cos(a)*d, Math.sin(a)*d, w, dp, h, bMats[Math.floor(rng()*bMats.length)]);
+    }
+    // Super-tall landmarks
+    for (let i = 0; i < 6; i++) {
+      const a = rng() * Math.PI * 2;
+      const d = rng() * downtownR * 0.6;
+      addBuilding(Math.cos(a)*d, Math.sin(a)*d, 1.0 + rng()*0.6, 1.0 + rng()*0.6, 10 + rng()*8, mGlass);
+    }
+
+    // ── Midtown (ring 7-14) ────────────────────────────
+    for (let i = 0; i < 80; i++) {
+      const a = rng() * Math.PI * 2;
+      const d = 7 + rng() * 7;
+      const w = rng() * 1.5 + 0.6;
+      const dp = rng() * 1.5 + 0.6;
+      const h  = rng() * 4 + 1.2;
+      addBuilding(Math.cos(a)*d, Math.sin(a)*d, w, dp, h, bMats[Math.floor(rng()*bMats.length)]);
+    }
+
+    // ── Suburbs (ring 14-20) ──────────────────────────
+    for (let i = 0; i < 110; i++) {
+      const a = rng() * Math.PI * 2;
+      const d = 14 + rng() * 6.5;
+      const w = rng() * 1.8 + 0.5;
+      const dp = rng() * 1.8 + 0.5;
+      const h  = rng() * 1.8 + 0.3;
+      addBuilding(Math.cos(a)*d, Math.sin(a)*d, w, dp, h, bMats[Math.floor(rng()*bMats.length)]);
+    }
+
+    // ── Location pin (center marker) ─────────────────
+    const pinGroup = new THREE.Group();
+    scene.add(pinGroup);
+    pinGroup.visible = false;
+
+    const pinRingGeo = new THREE.TorusGeometry(2.5, 0.15, 8, 32);
+    const pinRingMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
+    const pinRing    = new THREE.Mesh(pinRingGeo, pinRingMat);
+    pinRing.rotation.x = Math.PI / 2;
+    pinGroup.add(pinRing);
+
+    const pinDotGeo = new THREE.SphereGeometry(0.4, 16, 16);
+    const pinDotMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    const pinDot    = new THREE.Mesh(pinDotGeo, pinDotMat);
+    pinGroup.add(pinDot);
+
+    // ── Print plane ───────────────────────────────────
+    const printPlaneGeo = new THREE.PlaneGeometry(HEX_R * 2.2, HEX_R * 2.2);
+    printPlaneGeo.rotateX(-Math.PI / 2);
+    const printPlaneMesh = new THREE.Mesh(printPlaneGeo, mPlane);
+    scene.add(printPlaneMesh);
+
+    // Glow line below the print plane
+    const glowLineGeo = new THREE.PlaneGeometry(HEX_R * 2.2, 0.4);
+    glowLineGeo.rotateX(-Math.PI / 2);
+    const glowLineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0, side: THREE.DoubleSide });
+    const glowLineMesh = new THREE.Mesh(glowLineGeo, glowLineMat);
+    scene.add(glowLineMesh);
+
+    // ── Particles ─────────────────────────────────────
+    const PCOUNT = 350;
+    const pPos   = new Float32Array(PCOUNT * 3);
+    for (let i = 0; i < PCOUNT; i++) {
+      pPos[i*3]   = (rng() - 0.5) * 140;
+      pPos[i*3+1] = rng() * 70;
+      pPos[i*3+2] = (rng() - 0.5) * 140;
+    }
+    const pGeo = new THREE.BufferGeometry();
+    pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+    const pMat = new THREE.PointsMaterial({ color: 0xffffff, size: 0.14, transparent: true, opacity: 0.2 });
+    scene.add(new THREE.Points(pGeo, pMat));
+
+    // ── Scroll state ──────────────────────────────────
+    let rawProgress = 0;
+    let curProgress = 0; // smoothed
+
+    const scrollDriver = document.getElementById('scroll-driver');
+
+    function updateRawProgress() {
+      const total = scrollDriver.offsetHeight - window.innerHeight;
+      rawProgress = total > 0 ? clamp01(window.scrollY / total) : 0;
+    }
+
+    window.addEventListener('scroll', updateRawProgress, { passive: true });
+    updateRawProgress();
+
+    // ── Phase labels ──────────────────────────────────
+    const phaseLabel = document.getElementById('phase-label');
+    const phaseFill  = document.getElementById('phase-progress-fill');
+    const heroOverlay = document.getElementById('hero-overlay');
+
+    const PHASES = [
+      { start: 0.05, end: 0.25, text: '— Scanning city data —' },
+      { start: 0.25, end: 0.50, text: '— Generating road network —' },
+      { start: 0.50, end: 0.78, text: '— Raising structures —' },
+      { start: 0.78, end: 0.92, text: '— Completing your model —' },
+      { start: 0.92, end: 1.00, text: '— Your city. —' },
+    ];
+
+    // ── Camera keyframes ──────────────────────────────
+    // [progress, posX, posY, posZ, targetX, targetY, targetZ]
+    const camKeys = [
+      [0.00,  0, 62, 1.5,   0, 0, 0  ],  // top-down
+      [0.15,  0, 52, 12,    0, 0, 0  ],  // tilting
+      [0.35,  12, 38, 36,   0, 2, 0  ],  // 3/4 angle coming in
+      [0.60,  18, 28, 46,   0, 3, 0  ],  // settled 3/4
+      [0.80,  22, 24, 48,   0, 4, 0  ],  // slight pull-back
+      [1.00,  22, 24, 48,   0, 4, 0  ],  // hold (orbit added by orbitAngle)
+    ];
+
+    function interpCamKeys(p) {
+      let i = 0;
+      while (i < camKeys.length - 2 && p > camKeys[i+1][0]) i++;
+      const k0 = camKeys[i], k1 = camKeys[i+1];
+      const t = (p - k0[0]) / Math.max(0.001, k1[0] - k0[0]);
+      const e = easeInOut(clamp01(t));
+      return {
+        px: lp(k0[1], k1[1], e), py: lp(k0[2], k1[2], e), pz: lp(k0[3], k1[3], e),
+        tx: lp(k0[4], k1[4], e), ty: lp(k0[5], k1[5], e), tz: lp(k0[6], k1[6], e),
+      };
+    }
+
+    // ── Render loop ───────────────────────────────────
+    let time = 0;
+    let lastNow = performance.now();
+    let orbitAngle = 0;
+
     function animate(now) {
       requestAnimationFrame(animate);
-      const dt = Math.min((now - last) / 1000, 0.05);
-      last = now;
+      const dt = Math.min((now - lastNow) / 1000, 0.05);
+      lastNow = now;
       time += dt;
-      buildTimer = Math.min(buildTimer + dt, INTRO_DURATION + 1);
 
-      // Rise buildings on load
-      for (const b of buildingData) {
-        if (buildTimer < b.delay) continue;
-        const t = Math.min((buildTimer - b.delay) / 1.2, 1);
-        const ease = 1 - Math.pow(1 - t, 3); // ease-out-cubic
-        b.mesh.position.y = -b.targetY + b.targetY * 2 * ease - b.targetY + b.targetY;
-        // simpler: lerp from underground to final
-        b.mesh.position.y = THREE.MathUtils.lerp(-b.targetY * 2, b.targetY, ease);
+      // Smooth progress
+      curProgress += (rawProgress - curProgress) * 0.06;
+      const p = curProgress;
+
+      // ── Hero text fade out ─────────────────────────
+      const heroAlpha = 1 - smoothstep(0.02, 0.14, p);
+      heroOverlay.style.opacity = heroAlpha;
+
+      // ── Phase label ───────────────────────────────
+      let activePhase = null;
+      for (const ph of PHASES) {
+        if (p >= ph.start && p <= ph.end + 0.04) { activePhase = ph; break; }
+      }
+      if (activePhase) {
+        const labelAlpha = smoothstep(activePhase.start, activePhase.start + 0.04, p)
+                         * (1 - smoothstep(activePhase.end, activePhase.end + 0.04, p));
+        phaseLabel.style.opacity = labelAlpha;
+        phaseLabel.textContent   = activePhase.text;
+        const phasePct = (p - activePhase.start) / (activePhase.end - activePhase.start) * 100;
+        phaseFill.style.width = clamp01(phasePct / 100) * 100 + '%';
+      } else {
+        phaseLabel.style.opacity = 0;
       }
 
-      // Scroll-driven camera: drift up + pull back as user scrolls
-      const scrollFrac = Math.min(scrollY / (document.body.scrollHeight - window.innerHeight), 1);
-      const camTargetY = 22 + scrollFrac * 14;
-      const camTargetZ = 48 + scrollFrac * 20;
-      camera.position.y += (camTargetY - camera.position.y) * 0.04;
-      camera.position.z += (camTargetZ - camera.position.z) * 0.04;
+      // ── Base plate & ring visibility ───────────────
+      const baseAlpha = smoothstep(0.00, 0.08, p);
+      // Fade base in (it starts black so this is subtle — mainly for ring)
+      ringMat.opacity = smoothstep(0.05, 0.15, p) * 0.35;
 
-      // Slow auto-rotate
-      cityGroup.rotation.y = time * 0.04;
+      // ── Location pin ──────────────────────────────
+      const pinAlpha  = smoothstep(0.05, 0.12, p) * (1 - smoothstep(0.20, 0.28, p));
+      pinGroup.visible = pinAlpha > 0.01;
+      pinGroup.position.y = lp(8, 0.5, smoothstep(0.05, 0.12, p)); // drops from above
+      pinRingMat.opacity  = pinAlpha * 0.85;
+      pinDotMat.opacity   = pinAlpha;
+      // Pulse ring
+      const pinScale = 1 + Math.sin(time * 3) * 0.08 * pinAlpha;
+      pinRing.scale.set(pinScale, 1, pinScale);
 
-      // Subtle camera bob
-      camera.position.x = Math.sin(time * 0.15) * 3;
-      camera.lookAt(0, 2, 0);
+      // ── Roads appear (center→edge) ─────────────────
+      // Roads with dist < roadFront are visible
+      const roadFront = smoothstep(0.15, 0.50, p); // 0=all hidden, 1=all shown
+      for (const rd of roadData) {
+        const visible = rd.dist <= roadFront;
+        rd.mesh.visible = visible;
+        if (visible) {
+          // Fade in as the "print front" passes
+          rd.mesh.material.opacity = smoothstep(rd.dist - 0.05, rd.dist + 0.03, roadFront);
+          rd.mesh.material.transparent = rd.mesh.material.opacity < 1;
+        }
+      }
 
-      // Drift particles upward slowly
-      const pos = pGeo.attributes.position.array;
-      for (let i = 0; i < particleCount; i++) {
-        pos[i*3+1] += 0.01;
-        if (pos[i*3+1] > 60) pos[i*3+1] = 0;
+      // ── Print plane ──────────────────────────────
+      // Active during building phase (0.45→0.78)
+      const planeActive = smoothstep(0.44, 0.50, p) * (1 - smoothstep(0.77, 0.82, p));
+      const planeY = lp(-HEX_R * 0.5, HEX_R * 1.1, smoothstep(0.44, 0.80, p));
+      printPlaneMesh.position.y = planeY;
+      mPlane.opacity = planeActive * 0.07;
+      glowLineMesh.position.y = planeY - 0.18;
+      glowLineMat.opacity = planeActive * 0.4;
+
+      // ── Buildings rise (driven by print plane Y) ──
+      const buildFront = smoothstep(0.45, 0.80, p); // 0=all underground, 1=all up
+      for (const bld of buildings) {
+        // Each building rises when the print plane passes its ring position
+        // ring=0 → rises early, ring=1 → rises last
+        const bRise = smoothstep(bld.ring, bld.ring + 0.18, buildFront);
+        bld.mesh.position.y = lp(-bld.height * 1.5, bld.finalY, easeOut3(bRise));
+        bld.mesh.visible = bRise > 0.01;
+      }
+
+      // ── Orbit during final phase ───────────────────
+      if (p > 0.75) {
+        const orbitSpeed = smoothstep(0.75, 0.92, p) * 0.22;
+        orbitAngle += dt * orbitSpeed;
+      }
+
+      // ── Camera ───────────────────────────────────
+      const ck = interpCamKeys(Math.min(p, 0.98));
+      const orbitR = Math.sqrt(ck.px * ck.px + ck.pz * ck.pz);
+      const baseAngle = Math.atan2(ck.pz, ck.px);
+      const finalAngle = baseAngle + orbitAngle;
+      camera.position.set(
+        Math.cos(finalAngle) * orbitR,
+        ck.py,
+        Math.sin(finalAngle) * orbitR,
+      );
+      // Subtle breathe
+      camera.position.y += Math.sin(time * 0.3) * 0.3;
+      camera.lookAt(ck.tx, ck.ty, ck.tz);
+
+      // ── Drift particles ──────────────────────────
+      const pa = pGeo.attributes.position.array;
+      for (let i = 0; i < PCOUNT; i++) {
+        pa[i*3+1] += 0.012;
+        if (pa[i*3+1] > 70) pa[i*3+1] = 0;
       }
       pGeo.attributes.position.needsUpdate = true;
 
@@ -888,20 +1058,53 @@
     }
     requestAnimationFrame(animate);
 
-    /* ── Scroll reveal ────────────────────────────────── */
-    const revealEls = document.querySelectorAll('.reveal');
-    const io = new IntersectionObserver((entries) => {
+    // ── Scroll reveal for content sections ───────────
+    const revEls = document.querySelectorAll('.reveal');
+    const io = new IntersectionObserver(entries => {
       for (const e of entries) {
         if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); }
       }
-    }, { threshold: 0.12 });
-    revealEls.forEach(el => io.observe(el));
+    }, { threshold: 0.1 });
+    revEls.forEach(el => io.observe(el));
 
-    /* ── Nav scroll ───────────────────────────────────── */
+    // ── Nav glass on scroll ───────────────────────────
     const nav = document.getElementById('nav');
     window.addEventListener('scroll', () => {
-      nav.classList.toggle('scrolled', window.scrollY > 60);
+      nav.classList.toggle('scrolled', window.scrollY > 80);
     }, { passive: true });
+
+    // ── Load dynamic content from /api/content ────────
+    (async () => {
+      try {
+        const res  = await fetch('/api/content');
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.content) return;
+        const c = data.content;
+
+        // Hero text overrides
+        if (c.heroHeadline)  document.getElementById('hero-headline').innerHTML = c.heroHeadline;
+        if (c.heroSub)       document.getElementById('hero-sub').textContent    = c.heroSub;
+
+        // Gallery
+        const galleryGrid = document.getElementById('gallery-grid');
+        const items = c.gallery || [];
+        if (items.some(i => i.url)) {
+          galleryGrid.innerHTML = items.map((item, idx) => {
+            const delay = ['', ' reveal-d1', ' reveal-d2', ' reveal-d3', ' reveal-d2', ' reveal-d3'][idx] || '';
+            if (item.url) {
+              return `<div class="gallery-item reveal${delay}">
+                <img src="${item.url}" alt="${item.caption || 'Gallery ' + (idx+1)}" />
+                ${item.caption ? `<div class="gallery-caption">${item.caption}</div>` : ''}
+              </div>`;
+            }
+            return `<div class="gallery-item reveal${delay}"><div class="gallery-placeholder"><svg width="28" height="28" viewBox="0 0 32 32" fill="none" opacity="0.15"><path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2"/></svg><span>Photo ${idx+1}</span></div></div>`;
+          }).join('');
+          // Re-observe new elements
+          galleryGrid.querySelectorAll('.reveal').forEach(el => io.observe(el));
+        }
+      } catch { /* use static defaults */ }
+    })();
   </script>
 </body>
 </html>

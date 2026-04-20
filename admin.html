@@ -263,6 +263,7 @@
     <div class="page-tabs">
       <button class="page-tab active" data-page="orders">Orders</button>
       <button class="page-tab" data-page="limits">Limits</button>
+      <button class="page-tab" data-page="frontpage">Front Page</button>
     </div>
 
     <div class="page-content active" id="page-orders">
@@ -331,7 +332,81 @@
       </div>
     </div><!-- /page-limits -->
 
+    <!-- ── Front Page content manager ─────────────────── -->
+    <div class="page-content" id="page-frontpage">
+      <div class="settings-wrap" style="max-width:820px">
+
+        <!-- Hero text -->
+        <div class="settings-card">
+          <h2>Hero Text</h2>
+          <p>Overrides the headline and subtitle shown in the landing page hero. Use <code style="font-family:var(--font-mono);font-size:11px;background:#1a1a1a;padding:2px 6px;border-radius:4px">&lt;br/&gt;</code> and <code style="font-family:var(--font-mono);font-size:11px;background:#1a1a1a;padding:2px 6px;border-radius:4px">&lt;em&gt;&lt;/em&gt;</code> for formatting. Leave blank to use site defaults.</p>
+          <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
+            <div class="settings-label">Headline HTML</div>
+            <textarea class="settings-textarea" id="fp-headline" rows="2" placeholder="Your City,&lt;br/&gt;&lt;em&gt;in 3D.&lt;/em&gt;"></textarea>
+          </div>
+          <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;margin-top:16px">
+            <div class="settings-label">Subtitle</div>
+            <textarea class="settings-textarea" id="fp-sub" rows="3" placeholder="Pick any place on Earth…"></textarea>
+          </div>
+        </div>
+
+        <!-- Gallery images -->
+        <div class="settings-card">
+          <h2>Gallery Images</h2>
+          <p>Enter image URLs (relative paths like <code style="font-family:var(--font-mono);font-size:11px;background:#1a1a1a;padding:2px 6px;border-radius:4px">/images/photo.jpg</code> or full https:// URLs) and optional captions. Empty slots show a placeholder on the site.</p>
+          <div id="gallery-slots"></div>
+        </div>
+
+        <!-- Preview -->
+        <div class="settings-card" id="gallery-preview-card" style="display:none">
+          <h2>Image Preview</h2>
+          <div id="gallery-preview-grid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:4px"></div>
+        </div>
+
+        <div style="display:flex;align-items:center;gap:12px;margin-top:4px">
+          <button class="btn-save" id="save-frontpage-btn">Save Front Page</button>
+          <span class="save-status" id="fp-save-status"></span>
+        </div>
+      </div>
+    </div><!-- /page-frontpage -->
+
   </div>
+
+  <style>
+    .gallery-slot {
+      display:grid;
+      grid-template-columns: 1fr 220px;
+      gap: 10px;
+      margin-bottom: 14px;
+      align-items: center;
+    }
+    .gallery-slot-num {
+      font-size:11px;font-weight:600;color:var(--text-muted);
+      text-transform:uppercase;letter-spacing:0.05em;
+      margin-bottom: 5px;
+    }
+    .fp-input {
+      width:100%;
+      background: #141414; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-family: var(--font-mono); font-size: 13px;
+      padding: 9px 12px; outline: none;
+    }
+    .fp-input:focus { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.07); }
+    .fp-caption {
+      background: #141414; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-family: var(--font); font-size: 13px;
+      padding: 9px 12px; outline: none; width: 100%;
+    }
+    .fp-caption:focus { border-color: #fff; }
+    .preview-thumb {
+      width:100%; aspect-ratio:1;
+      border-radius:10px; border:1px solid var(--border);
+      background:var(--bg-elevated);
+      object-fit:cover;
+      display:flex; align-items:center; justify-content:center;
+      font-size:11px; color:var(--text-muted);
+    }
+  </style>
 
   <script>
     let adminPassword = '';
@@ -530,6 +605,7 @@
       document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
       document.getElementById('page-' + page).classList.add('active');
       if (page === 'limits') loadSettings();
+      if (page === 'frontpage') loadFrontPageContent();
     });
 
     // ─── Settings ────────────────────────────────────────────
@@ -596,6 +672,111 @@
       }
       btn.disabled = false;
       setTimeout(() => { status.textContent = ''; }, 3000);
+    });
+
+    // ─── Front Page content ────────────────────────────────────
+    let fpContent = null;
+
+    function buildGallerySlots(gallery) {
+      const container = document.getElementById('gallery-slots');
+      container.innerHTML = '';
+      for (let i = 0; i < 6; i++) {
+        const item = gallery[i] || { url: '', caption: '' };
+        const slot = document.createElement('div');
+        slot.style.marginBottom = '20px';
+        slot.innerHTML = `
+          <div class="gallery-slot-num">Photo ${i+1}</div>
+          <div class="gallery-slot">
+            <div>
+              <input class="fp-input" id="gurl-${i}" placeholder="https://... or /images/photo.jpg" value="${escHtml(item.url)}" />
+            </div>
+            <div>
+              <input class="fp-caption" id="gcap-${i}" placeholder="Caption (optional)" value="${escHtml(item.caption)}" />
+            </div>
+          </div>`;
+        container.appendChild(slot);
+
+        // Live preview on URL change
+        document.getElementById('gurl-' + i)?.addEventListener('input', updateGalleryPreview);
+      }
+      updateGalleryPreview();
+    }
+
+    function escHtml(s) {
+      return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function updateGalleryPreview() {
+      const urls = Array.from({ length: 6 }, (_, i) => document.getElementById('gurl-' + i)?.value || '');
+      const hasAny = urls.some(u => u.trim());
+      const previewCard = document.getElementById('gallery-preview-card');
+      const previewGrid = document.getElementById('gallery-preview-grid');
+      previewCard.style.display = hasAny ? '' : 'none';
+      previewGrid.innerHTML = urls.map((url, i) =>
+        url.trim()
+          ? `<img class="preview-thumb" src="${escHtml(url)}" alt="Photo ${i+1}" onerror="this.style.outline='1px solid #ff6b6b';this.alt='⚠ Not found'" />`
+          : `<div class="preview-thumb" style="display:flex;align-items:center;justify-content:center">empty</div>`
+      ).join('');
+    }
+
+    async function loadFrontPageContent() {
+      try {
+        const resp = await fetch('/api/content');
+        const data = await resp.json();
+        fpContent = data.content || {};
+      } catch {
+        fpContent = {};
+      }
+
+      const DEFAULT_HEADLINE = 'Your City,<br/><em>in 3D.</em>';
+      const DEFAULT_SUB = 'Pick any place on Earth. We generate a real 3D model with actual buildings, roads, and terrain — then print and ship it to you.';
+
+      document.getElementById('fp-headline').value = fpContent.heroHeadline === DEFAULT_HEADLINE ? '' : (fpContent.heroHeadline || '');
+      document.getElementById('fp-sub').value       = fpContent.heroSub === DEFAULT_SUB ? '' : (fpContent.heroSub || '');
+      buildGallerySlots(fpContent.gallery || Array(6).fill({ url: '', caption: '' }));
+    }
+
+    document.getElementById('save-frontpage-btn').addEventListener('click', async () => {
+      const btn    = document.getElementById('save-frontpage-btn');
+      const status = document.getElementById('fp-save-status');
+      btn.disabled = true;
+      status.textContent = 'Saving…';
+      status.style.color = 'var(--text-muted)';
+
+      const gallery = Array.from({ length: 6 }, (_, i) => ({
+        url:     (document.getElementById('gurl-' + i)?.value || '').trim(),
+        caption: (document.getElementById('gcap-' + i)?.value || '').trim(),
+      }));
+
+      const heroHeadlineRaw = document.getElementById('fp-headline').value.trim();
+      const heroSubRaw      = document.getElementById('fp-sub').value.trim();
+
+      try {
+        const resp = await fetch('/api/admin-update-content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            password: adminPassword,
+            heroHeadline: heroHeadlineRaw || null,
+            heroSub:      heroSubRaw      || null,
+            gallery,
+          }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+          fpContent = data.content;
+          status.textContent = '✓ Saved — changes live on the site';
+          status.style.color = '#66bb6a';
+        } else {
+          status.textContent = 'Error: ' + (data.error || 'Unknown');
+          status.style.color = '#ff6b6b';
+        }
+      } catch (err) {
+        status.textContent = 'Failed: ' + err.message;
+        status.style.color = '#ff6b6b';
+      }
+      btn.disabled = false;
+      setTimeout(() => { status.textContent = ''; }, 4000);
     });
 
     async function updateStatus(sessionId, status, i) {

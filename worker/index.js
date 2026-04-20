@@ -366,6 +366,71 @@ async function handleUpdateSettings(request, env) {
   return jsonResponse({ success: true, settings: updated });
 }
 
+// ─── Site content (KV-backed) ─────────────────────────────────────────────────
+
+const DEFAULT_GALLERY = Array.from({ length: 6 }, () => ({ url: '', caption: '' }));
+
+const DEFAULT_CONTENT = {
+  heroHeadline: 'Your City,<br/><em>in 3D.</em>',
+  heroSub: 'Pick any place on Earth. We generate a real 3D model with actual buildings, roads, and terrain — then print and ship it to you.',
+  gallery: DEFAULT_GALLERY,
+};
+
+async function getContent(env) {
+  if (!env.SETTINGS) return { ...DEFAULT_CONTENT };
+  try {
+    const raw = await env.SETTINGS.get('site_content', 'json');
+    if (!raw) return { ...DEFAULT_CONTENT };
+    return {
+      heroHeadline: raw.heroHeadline ?? DEFAULT_CONTENT.heroHeadline,
+      heroSub:      raw.heroSub      ?? DEFAULT_CONTENT.heroSub,
+      gallery:      Array.isArray(raw.gallery)
+                      ? raw.gallery.slice(0, 6).map(g => ({ url: String(g.url || ''), caption: String(g.caption || '') }))
+                      : DEFAULT_GALLERY,
+    };
+  } catch {
+    return { ...DEFAULT_CONTENT };
+  }
+}
+
+// Public — landing page fetches this to hydrate gallery + hero text
+async function handleGetContent(request, env) {
+  const content = await getContent(env);
+  return new Response(JSON.stringify({ content }), {
+    headers: {
+      'Content-Type': 'application/json',
+      'Cache-Control': 'public, max-age=60',
+    },
+  });
+}
+
+// Admin — update site content
+async function handleUpdateContent(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+  if (!env.SETTINGS) return jsonResponse({ error: 'KV namespace SETTINGS not bound' }, 500);
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+  if (body.password !== env.ADMIN_PASSWORD) return jsonResponse({ error: 'Unauthorized' }, 401);
+
+  const current = await getContent(env);
+  const gallery = Array.isArray(body.gallery)
+    ? body.gallery.slice(0, 6).map(g => ({
+        url:     String(g.url     || '').slice(0, 500),
+        caption: String(g.caption || '').slice(0, 100),
+      }))
+    : current.gallery;
+
+  const updated = {
+    heroHeadline: body.heroHeadline != null ? String(body.heroHeadline).slice(0, 200) : current.heroHeadline,
+    heroSub:      body.heroSub      != null ? String(body.heroSub).slice(0, 400)      : current.heroSub,
+    gallery,
+  };
+
+  await env.SETTINGS.put('site_content', JSON.stringify(updated));
+  return jsonResponse({ success: true, content: updated });
+}
+
 // Public endpoint — storefront checks order availability
 async function handleOrderAvailability(request, env) {
   if (request.method !== 'GET' && request.method !== 'POST') {
@@ -406,9 +471,11 @@ export default {
       case '/api/admin-verify':         return handleAdminVerify(request, env);
       case '/api/admin-orders':         return handleAdminOrders(request, env);
       case '/api/admin-update-order':   return handleAdminUpdateOrder(request, env);
-      case '/api/admin-settings':       return handleGetSettings(request, env);
-      case '/api/admin-update-settings':return handleUpdateSettings(request, env);
-      case '/api/order-availability':   return handleOrderAvailability(request, env);
+      case '/api/admin-settings':        return handleGetSettings(request, env);
+      case '/api/admin-update-settings': return handleUpdateSettings(request, env);
+      case '/api/order-availability':    return handleOrderAvailability(request, env);
+      case '/api/content':               return handleGetContent(request, env);
+      case '/api/admin-update-content':  return handleUpdateContent(request, env);
     }
 
     // Everything else → static assets
