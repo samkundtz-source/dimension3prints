@@ -575,6 +575,19 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       }
     }
 
+    // Roads crossing water pits: fill the pit beneath the road with white base
+    // material (waterFloorY → BASE) so the road slab sits on solid ground
+    // rather than floating above the open pit.
+    if (roadPlaced && hasWater && roadCrossesWater(feat.points, waterPolys, halfW)) {
+      const infillPoly = bufferLinestring(feat.points, halfW);
+      if (infillPoly) {
+        const infillClipped = clipToHex(infillPoly, hexInner);
+        if (infillClipped && infillClipped.length >= 3) {
+          collectExtrudedPolygon(baseAcc, infillClipped, [], waterFloorY, BASE - waterFloorY);
+        }
+      }
+    }
+
     roadCount++;
   }
 
