@@ -553,11 +553,11 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       continue; // skip normal road path for bridges
     }
 
-    // When the model has water pits, always start roads from waterFloorY so
-    // they can never float above a pit — no per-road detection needed.
-    // On solid ground the extra depth is hidden inside the base plate.
-    const roadBaseY  = hasWater ? waterFloorY : (roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE);
-    const roadHeight = hasWater ? (BASE + ROAD_SLAB - waterFloorY) : ROAD_SLAB;
+    // Roads always sit on the base plate surface (or terrain when relief is on).
+    // Height is always ROAD_SLAB (0.4 mm) — hard cap so roads are never taller
+    // than one slab regardless of water pits or terrain variation below them.
+    const roadBaseY  = roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE;
+    const roadHeight = ROAD_SLAB; // 0.4 mm — never more
 
     const roadPlaced = addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, roadHeight, findOverlappingBuildings);
 
@@ -570,7 +570,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       if (ridgePoly) {
         const ridgeClipped = clipToHex(ridgePoly, hexInner);
         if (ridgeClipped && ridgeClipped.length >= 3) {
-          collectExtrudedPolygon(blackAcc, ridgeClipped, [], BASE + ROAD_SLAB, ridgeH);
+          collectExtrudedPolygon(blackAcc, ridgeClipped, [], roadBaseY + ROAD_SLAB, ridgeH);
         }
       }
     }
