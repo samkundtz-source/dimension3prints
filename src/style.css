@@ -410,3 +410,85 @@ html, body {
   0% { transform: translateX(-100%); }
   100% { transform: translateX(100%); }
 }
+
+/* ── Mobile Layout ─────────────────────────────────────────────────────────── */
+#mobile-nav { display: none; }
+
+@media (max-width: 768px) {
+  :root { --mob-nav: 58px; }
+
+  .header-badge { display: none; }
+  #status-bar { display: none; }
+
+  /* Stack workspace vertically so nav sits below */
+  #app { flex-direction: column; }
+  .workspace {
+    position: relative;
+    overflow: hidden;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* Sidebar becomes an overlay panel */
+  .sidebar {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    border-right: none;
+    z-index: 5;
+    display: none;
+    flex-direction: column;
+  }
+  .sidebar.mob-active { display: flex; }
+
+  /* Map tile takes ~42% of viewport height on mobile */
+  .sidebar-map {
+    flex: none;
+    height: 42vh;
+    min-height: 180px;
+  }
+
+  /* Preview overlay */
+  .preview-area {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    z-index: 5;
+    display: none;
+    flex-direction: column;
+  }
+  .preview-area.mob-active { display: flex; }
+
+  /* Slightly larger generate button for touch */
+  .btn-generate { padding: 14px 20px; font-size: 15px; }
+
+  /* Bottom tab bar */
+  #mobile-nav {
+    display: flex;
+    height: var(--mob-nav);
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    z-index: 200;
+  }
+
+  .mob-tab {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: color 0.15s;
+    padding: 8px 4px;
+  }
+  .mob-tab svg { width: 22px; height: 22px; stroke-width: 1.8; }
+  .mob-tab.active { color: #fff; }
+}
