@@ -43,7 +43,7 @@ export class SceneManager {
     });
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    this.renderer.setClearColor(0x87CEEB);
+    this.renderer.setClearColor(0x0d0d0d);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
     this.renderer.toneMapping       = THREE.ACESFilmicToneMapping;
@@ -66,15 +66,15 @@ export class SceneManager {
     this.controls.maxPolarAngle  = Math.PI / 2 + 0.05;
     this.controls.target.set(0, BASE_THICKNESS_REF / 2, 0);
 
-    // Lighting — outdoor daylight setup for gray buildings against blue sky
-    const hemi = new THREE.HemisphereLight(0x8ecaff, 0xd4c5a0, 0.7);
+    // Lighting — dark studio setup for crisp black-and-white model
+    const hemi = new THREE.HemisphereLight(0x444444, 0x111111, 0.6);
     this.scene.add(hemi);
 
-    const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+    const ambient = new THREE.AmbientLight(0xffffff, 0.25);
     this.scene.add(ambient);
 
-    // Main sun light — bright white from top-right
-    const key = new THREE.DirectionalLight(0xffffff, 1.6);
+    // Main key light — cool white from top-right
+    const key = new THREE.DirectionalLight(0xffffff, 2.0);
     key.position.set(80, 250, 120);
     key.castShadow = true;
     key.shadow.mapSize.set(2048, 2048);
@@ -84,23 +84,23 @@ export class SceneManager {
     key.shadow.camera.right = key.shadow.camera.top   =  MODEL_RADIUS_MM * 2;
     key.shadow.bias = -0.0008;
     key.shadow.normalBias = 0.025;
-    key.shadow.radius = 6; // softer shadow edges
+    key.shadow.radius = 4;
     this.scene.add(key);
 
-    // Cool fill from opposite side
-    const fill = new THREE.DirectionalLight(0xc8dcff, 0.5);
+    // Warm fill from opposite side
+    const fill = new THREE.DirectionalLight(0xffffff, 0.4);
     fill.position.set(-60, 60, -100);
     this.scene.add(fill);
 
-    // Rim light from behind for edge definition
-    const rim = new THREE.DirectionalLight(0xffffff, 0.3);
+    // Rim light for edge definition on white buildings
+    const rim = new THREE.DirectionalLight(0xffffff, 0.25);
     rim.position.set(0, 40, -150);
     this.scene.add(rim);
 
-    // Ground plane — light neutral to match sky
+    // Ground plane — near-black to match dark background
     const groundGeo = new THREE.PlaneGeometry(MODEL_RADIUS_MM * 8, MODEL_RADIUS_MM * 8);
     const groundMat = new THREE.MeshStandardMaterial({
-      color: 0x7a9aad,
+      color: 0x111111,
       roughness: 0.95,
       metalness: 0,
     });

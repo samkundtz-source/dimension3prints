@@ -2,10 +2,12 @@
  * 3D model assembly — generates buildings FIRST, then fits roads around them.
  *
  * Output: exactly 3 meshes (no more):
- *   1. 'base'     — white base plate + terrain (1 mesh)
+ *   1. 'base'     — white solid base plate + terrain (1 mesh)
  *   2. 'building' — white buildings (1 mesh)
- *   3. 'road'     — black roads + paths + parks + water (1 mesh)
+ *   3. 'road'     — black roads + water + parks (1 mesh)
  *
+ * Water is rendered as flat black slabs ON TOP of the base plate (same as
+ * roads). No earcut-with-holes, no pit-carving, no crash risk.
  * Roads that overlap buildings are shrunk to fit rather than disappearing.
  * All geometry is solid (no hollow or degenerate triangles).
  */
@@ -148,49 +150,33 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const N      = elevGrid ? Math.round(Math.sqrt(elevGrid.length)) : 0;
 
   // ── 3 combined accumulators — everything merges into these ────────────────
-  const baseAcc     = new GeomAccumulator();  // base plate + terrain + pit walls → white
+  const baseAcc     = new GeomAccumulator();  // base plate + terrain → white
   const buildingAcc = new GeomAccumulator();  // all buildings → white
-  const blackAcc    = new GeomAccumulator();  // roads + water floors → black
+  const blackAcc    = new GeomAccumulator();  // roads + water slabs → black
 
   // ── 0. Pre-collect water polygons ─────────────────────────────────────────
-  const WATER_DEPTH = 1.0; // mm — shallow recess into the base (< half of BASE_THICKNESS_MM)
-  const hexArea     = Math.abs(signedArea2D(hexFull)); // total hex area in mm²
-  const waterPolys  = [];
+  // Water is rendered as flat black slabs sitting ON TOP of the solid base
+  // (identical approach to roads). No earcut-with-holes, no pits, no crashes.
+  const hexArea    = Math.abs(signedArea2D(hexFull)); // total hex area in mm²
+  const waterPolys = [];
   for (const feat of (features.water || [])) {
     let poly;
     try { poly = clipToHex(feat.polygon, hexInner); } catch { continue; }
     if (!poly || poly.length < 3) continue;
     const area = Math.abs(signedArea2D(poly));
-    if (area < 1.0) continue;              // skip puddles < 1 mm²
-    if (area > hexArea * 0.90) continue;   // skip seas/oceans that nearly fill the hex
-    if (poly.length > 300) continue;       // skip overly complex polygons (earcut instability)
+    if (area < 1.0) continue;            // skip puddles < 1 mm²
+    if (area > hexArea * 0.95) continue; // skip seas/oceans that almost fill the hex
     waterPolys.push(poly);
   }
-  const hasWater    = waterPolys.length > 0;
 
   // ── Constants ─────────────────────────────────────────────────────────────
-  // Base height is always BASE_THICKNESS_MM — one solid object regardless of water.
-  // Water pits are carved DOWN from the top surface into the existing base material.
-  const BASE        = BASE_THICKNESS_MM;                 // 1.5 mm — never changes
-  const waterFloorY = BASE_THICKNESS_MM - WATER_DEPTH;  // 0.5 mm from bottom
-  const ROAD_HEIGHT = NOZZLE_MM * 1.0;  // 0.4mm — bold ridge for clean printing
-  const CLEARANCE   = 2.0; // gap around buildings — wider = cleaner road edges
+  const BASE        = BASE_THICKNESS_MM; // 1.5 mm — always solid, no holes
+  const ROAD_HEIGHT = NOZZLE_MM * 1.0;  // 0.4 mm — one layer ridge for clean printing
+  const CLEARANCE   = 2.0;              // gap around buildings — wider = cleaner road edges
 
-  // ── 1. Base plate ─────────────────────────────────────────────────────────
+  // ── 1. Base plate — always solid, never carved ────────────────────────────
   onProgress?.('Building base plate…', 65);
-  if (hasWater) {
-    try {
-      collectHexBaseWithHoles(baseAcc, hexFull, waterPolys, BASE, waterFloorY);
-    } catch (e) {
-      // Earcut failed for this water layout — fall back to a plain flat base.
-      // The water features will simply be white (same as base) rather than
-      // causing the whole generation to fail.
-      console.warn('[buildMap] collectHexBaseWithHoles failed, using plain base:', e?.message);
-      collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
-    }
-  } else {
-    collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
-  }
+  collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
 
   // ── 2. Terrain ────────────────────────────────────────────────────────────
   if (elevGrid && N > 0) {
@@ -452,13 +438,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const baseHeightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
 
     // Terrain-relief mode: lift the building so it sits on the real ground height.
-    // If the building sits over a water pit, extend the base down to the pit floor
-    // so it doesn't float — same treatment as roads over water.
+    // Base plate is always solid — buildings always sit at BASE (or terrain Y).
     const terrainBase = polyTerrainBaseY(bf.polygon);
-    const overWater   = hasWater && buildingOverWater(bf.polygon, waterPolys);
-    const baseY       = overWater ? waterFloorY : terrainBase;
-    // Keep the building top at the same height; extend downward into the pit.
-    const heightMM    = overWater ? (terrainBase + baseHeightMM - waterFloorY) : baseHeightMM;
+    const baseY       = terrainBase;
+    const heightMM    = baseHeightMM;
 
     if (detailedBuildings) {
       // ── 3-tier building generation system ──────────────────────────────
@@ -523,10 +506,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       // clearly as elevated.  A solid support column (55% road width) runs from
       // the pit floor (or base plate) all the way up to the underside of the
       // deck so nothing is left floating.
-      const BRIDGE_RISE  = 1.2;                       // mm above normal road top
+      const BRIDGE_RISE  = 1.2;                        // mm above normal road top
       const deckBottom   = BASE + ROAD_SLAB + BRIDGE_RISE; // underside of deck
       const deckHeight   = ROAD_SLAB;
-      const supportBaseY = hasWater ? waterFloorY : BASE; // goes all the way down
+      const supportBaseY = BASE;                        // base plate is always solid
       const supportH     = deckBottom - supportBaseY;
 
       // Support column — 55 % of road width, black, fills the gap beneath deck
@@ -588,61 +571,20 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       }
     }
 
-    // Roads crossing water pits: fill the pit beneath the road with white base
-    // material (waterFloorY → BASE) so the road slab sits on solid ground
-    // rather than floating above the open pit.
-    if (roadPlaced && hasWater && roadCrossesWater(feat.points, waterPolys, halfW)) {
-      try {
-        const infillPoly = bufferLinestring(feat.points, halfW);
-        if (infillPoly) {
-          const infillClipped = clipToHex(infillPoly, hexInner);
-          if (infillClipped && infillClipped.length >= 3) {
-            collectExtrudedPolygon(baseAcc, infillClipped, [], waterFloorY, BASE - waterFloorY);
-          }
-        }
-      } catch { /* skip causeway fill for this road segment */ }
-    }
-
     roadCount++;
   }
 
-  // ── 6. Water floors (black) + white border planks ────────────────────────
-  // Each water polygon is a pit carved into the top of the base plate.
-  // We add a black slab at the pit floor so the recess reads as water,
-  // then white border planks around the perimeter — they run from the pit
-  // floor (waterFloorY) UP to the base surface (BASE) so they are flush with
-  // the top of the model and visible as a white riverbank ring from above.
-  // Each polygon is wrapped in its own try/catch so one bad polygon can't
-  // kill the rest. Failing polys are silently skipped (stay white/base level).
-  if (hasWater) {
+  // ── 6. Water areas (black slabs sitting on the solid base) ──────────────
+  // Water is rendered identically to roads — a flat black slab extruded
+  // NOZZLE_MM above the base surface. No earcut-with-holes, no pits, no
+  // crashes. One try/catch per polygon so bad geometry skips gracefully.
+  if (waterPolys.length > 0) {
     onProgress?.('Building water areas…', 88);
-    const BORDER_W = 0.8; // mm — width of white border plank inside the pit
     for (const poly of waterPolys) {
       try {
-        // Black floor slab at pit bottom
-        collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.3);
-
-        // White border planks — one thin prism per edge, going from waterFloorY
-        // to BASE.  Each plank is BORDER_W mm wide, sitting just inside the pit
-        // wall so the top face is visible from above as a white border ring.
-        const ring = ensureCCW(deduplicateRing(poly));
-        const M = ring.length;
-        for (let i = 0; i < M; i++) {
-          const A  = ring[i];
-          const B  = ring[(i + 1) % M];
-          const dx = B.x - A.x;
-          const dy = B.y - A.y;
-          const len = Math.sqrt(dx * dx + dy * dy);
-          if (len < 0.05) continue;
-          const nx = -dy / len;
-          const ny =  dx / len;
-          const Ai = { x: A.x + nx * BORDER_W, y: A.y + ny * BORDER_W };
-          const Bi = { x: B.x + nx * BORDER_W, y: B.y + ny * BORDER_W };
-          collectExtrudedPolygon(baseAcc, [A, B, Bi, Ai], [], waterFloorY, WATER_DEPTH);
-        }
+        collectExtrudedPolygon(blackAcc, poly, [], BASE, NOZZLE_MM);
       } catch (e) {
         console.warn('[buildMap] Skipping water polygon (geometry error):', e?.message);
-        // Polygon is simply left as white base — generation continues.
       }
     }
   }
@@ -678,87 +620,6 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 // ─── Smart road placement ────────────────────────────────────────────────────
 // Tries full width first, then progressively shrinks if buildings block the road.
 // Never lets a road completely disappear — it shrinks to fit.
-
-/**
- * Returns true if any vertex of a building/road polygon falls inside any water
- * polygon, OR if the centroid of the polygon is inside any water polygon.
- * Catches both fully-overlapping and edge-grazing cases.
- */
-function buildingOverWater(polygon, waterPolys) {
-  // Check all vertices
-  for (const pt of polygon) {
-    for (const wpoly of waterPolys) {
-      if (pointInPolygon2D(pt, wpoly)) return true;
-    }
-  }
-  // Also check centroid — catches polygons whose vertices straddle the edge
-  // but whose body is mostly over water
-  if (polygon.length >= 3) {
-    let cx = 0, cy = 0;
-    for (const p of polygon) { cx += p.x; cy += p.y; }
-    cx /= polygon.length; cy /= polygon.length;
-    for (const wpoly of waterPolys) {
-      if (pointInPolygon2D({ x: cx, y: cy }, wpoly)) return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Ray-cast even-odd point-in-polygon test (handles concave/non-convex polys).
- */
-function pointInPolygon2D(pt, poly) {
-  let inside = false;
-  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-    const xi = poly[i].x, yi = poly[i].y;
-    const xj = poly[j].x, yj = poly[j].y;
-    if (((yi > pt.y) !== (yj > pt.y)) &&
-        (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)) {
-      inside = !inside;
-    }
-  }
-  return inside;
-}
-
-/**
- * Returns true if any part of a road (centrerline OR its physical width)
- * overlaps any water polygon.
- *
- * Strategy: for every segment A→B, sample points at t=0, 0.5, 1 along the
- * segment AND at lateral offsets ±halfW from the centreline.  This catches
- * roads whose centreline is just outside the water polygon but whose physical
- * width extends over it (the classic "road runs alongside river" case).
- */
-function roadCrossesWater(points, waterPolys, halfW = 0) {
-  const LATERAL = halfW > 0
-    ? [-halfW, -halfW * 0.5, 0, halfW * 0.5, halfW]
-    : [0];
-
-  for (let i = 0; i < points.length; i++) {
-    // Check centerline point itself
-    for (const wpoly of waterPolys) {
-      if (pointInPolygon2D(points[i], wpoly)) return true;
-    }
-    // Check across width along each segment
-    if (halfW > 0 && i < points.length - 1) {
-      const A = points[i], B = points[i + 1];
-      const dx = B.x - A.x, dy = B.y - A.y;
-      const len = Math.sqrt(dx * dx + dy * dy);
-      if (len < 1e-6) continue;
-      const nx = -dy / len, ny = dx / len; // perpendicular (left = inward for CCW)
-      for (const t of [0, 0.33, 0.66, 1]) {
-        const mx = A.x + dx * t, my = A.y + dy * t;
-        for (const off of LATERAL) {
-          const pt = { x: mx + nx * off, y: my + ny * off };
-          for (const wpoly of waterPolys) {
-            if (pointInPolygon2D(pt, wpoly)) return true;
-          }
-        }
-      }
-    }
-  }
-  return false;
-}
 
 // Returns true if geometry was generated, false if the road was skipped entirely.
 function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings) {
@@ -1030,102 +891,6 @@ function collectHexBase(acc, shapeVerts, chamfer = 0) {
   acc.add(pos, idx);
 }
 
-/**
- * Base plate variant that carves water polygons as recessed pits.
- *
- * The base is taller than normal (topY > BASE_THICKNESS_MM) so the pits
- * fit inside it without going negative.  Water pit geometry:
- *   - Top face of base has holes where water bodies are (earcut with holes)
- *   - White pit walls run from waterFloorY up to topY around each water poly
- *   - Black floor slab is added by the caller (via blackAcc)
- */
-function collectHexBaseWithHoles(acc, shapeVerts, waterPolys, topY, waterFloorY) {
-  const bot = 0;
-  const N   = shapeVerts.length;
-
-  // ── Top face with water holes (earcut) ────────────────────────────────────
-  // Re-use flattenWithHoles: outer ring CCW, holes are made CW inside.
-  const outerCCW = ensureCCW([...shapeVerts]);
-  const { flat, holeIndices } = flattenWithHoles(outerCCW, waterPolys);
-  const topTrisRaw = earcut(flat, holeIndices.length > 0 ? holeIndices : undefined, 2);
-
-  // Earcut can produce "bridge" triangles that span most of the base plate
-  // when connecting the outer polygon to a hole — these appear as a giant
-  // wedge artifact.  Filter any triangle whose area exceeds 1/4 of the
-  // total shape area (no real base tile should be that large a single piece).
-  const maxTriArea = Math.abs(signedArea2D(shapeVerts)) / 4;
-  const topTris = [];
-  for (let t = 0; t < topTrisRaw.length; t += 3) {
-    const i0 = topTrisRaw[t], i1 = topTrisRaw[t + 1], i2 = topTrisRaw[t + 2];
-    const ax = flat[i0 * 2], ay = flat[i0 * 2 + 1];
-    const bx = flat[i1 * 2], by = flat[i1 * 2 + 1];
-    const cx = flat[i2 * 2], cy = flat[i2 * 2 + 1];
-    const area = Math.abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2;
-    if (area <= maxTriArea) topTris.push(i0, i1, i2);
-  }
-
-  if (topTris.length > 0) {
-    const nVerts = flat.length / 2;
-    const topPos = [];
-    for (let i = 0; i < nVerts; i++) {
-      topPos.push(flat[i * 2], topY, -flat[i * 2 + 1]);
-    }
-    acc.add(topPos, topTris);
-  }
-
-  // ── Bottom face (fan triangulation, downward normals) ─────────────────────
-  const botPos = [0, bot, 0];
-  const botIdx = [];
-  for (const v of shapeVerts) botPos.push(v.x, bot, -v.y);
-  for (let i = 0; i < N; i++) {
-    botIdx.push(0, 1 + (i + 1) % N, 1 + i);
-  }
-  acc.add(botPos, botIdx);
-
-  // ── Outer hex side walls (outward-facing) ─────────────────────────────────
-  const sidePos = [];
-  const sideIdx = [];
-  for (const v of shapeVerts) sidePos.push(v.x, topY,  -v.y); // top ring [0..N-1]
-  for (const v of shapeVerts) sidePos.push(v.x, bot,   -v.y); // bot ring [N..2N-1]
-  for (let i = 0; i < N; i++) {
-    const tA = i, tB = (i + 1) % N, bA = N + i, bB = N + (i + 1) % N;
-    sideIdx.push(tA, bA, tB,  bA, bB, tB);
-  }
-  acc.add(sidePos, sideIdx);
-
-  // ── Water pit walls (inward-facing, white base material) ──────────────────
-  // Each wall runs from the pit floor (waterFloorY) up to the base top (topY).
-  for (const poly of waterPolys) {
-    const M = poly.length;
-    if (M < 2) continue;
-    const pitPos = [];
-    const pitIdx = [];
-    for (const p of poly) pitPos.push(p.x, topY,        -p.y); // top ring [0..M-1]
-    for (const p of poly) pitPos.push(p.x, waterFloorY, -p.y); // bot ring [M..2M-1]
-    for (let i = 0; i < M; i++) {
-      const tA = i, tB = (i + 1) % M, bA = M + i, bB = M + (i + 1) % M;
-      // Inward-facing: reverse winding relative to outer hex walls
-      pitIdx.push(tA, tB, bA,  tB, bB, bA);
-    }
-    acc.add(pitPos, pitIdx);
-  }
-
-  // ── Pit floor caps (upward-facing) — CRITICAL for watertight / manifold mesh ─
-  // Without these, the pit has open bottoms → slicer sees non-manifold geometry
-  // and repairs it by filling the hole back in.  These white floors close each pit.
-  // The separate black slab (added by caller) sits on top and provides the colour.
-  for (const poly of waterPolys) {
-    const floorCCW = ensureCCW([...poly]);
-    const flatF    = floorCCW.flatMap(p => [p.x, p.y]);
-    const floorTris = earcut(flatF, undefined, 2);
-    if (floorTris.length === 0) continue;
-    const floorPos = [];
-    for (let i = 0; i < flatF.length / 2; i++) {
-      floorPos.push(flatF[i * 2], waterFloorY, -flatF[i * 2 + 1]);
-    }
-    acc.add(floorPos, Array.from(floorTris));
-  }
-}
 
 // Small extruded prism (n-gon) used for tree bumps
 function collectTreeBump(acc, x, y, baseY, height, radius, segments = 6) {
