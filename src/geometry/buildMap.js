@@ -155,43 +155,26 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const blackAcc    = new GeomAccumulator();  // roads + water slabs → black
 
   // ── 0. Pre-collect water polygons ─────────────────────────────────────────
-  // Water is physically recessed 0.5 mm into the base plate so it reads as a
-  // real water body from above. Each polygon is individually validated and
-  // simplified before being passed to earcut. If earcut fails for any reason
-  // we fall back to a solid base plate + flat black slabs (no crash).
-  const hexArea    = Math.abs(signedArea2D(hexFull)); // total hex area in mm²
+  const hexArea    = Math.abs(signedArea2D(hexFull));
   const waterPolys = [];
   for (const feat of (features.water || [])) {
     let poly;
     try { poly = clipToHex(feat.polygon, hexInner); } catch { continue; }
     if (!poly || poly.length < 3) continue;
     const area = Math.abs(signedArea2D(poly));
-    if (area < 1.0)              continue; // skip puddles < 1 mm²
-    if (area > hexArea * 0.90)   continue; // skip seas / oceans that fill the hex
+    if (area < 1.0)            continue; // skip puddles < 1 mm²
+    if (area > hexArea * 0.95) continue; // skip seas/oceans that fill the hex
     waterPolys.push(poly);
   }
 
   // ── Constants ─────────────────────────────────────────────────────────────
-  const BASE        = BASE_THICKNESS_MM;          // 1.5 mm
-  const WATER_DEPTH = 0.5;                        // mm recession depth
-  const waterFloorY = BASE - WATER_DEPTH;         // 1.0 mm from bottom
-  const ROAD_HEIGHT = NOZZLE_MM;                  // 0.4 mm
+  const BASE        = BASE_THICKNESS_MM; // 1.5 mm — always solid, no holes
+  const ROAD_HEIGHT = NOZZLE_MM;         // 0.4 mm
   const CLEARANCE   = 2.0;
 
-  // ── 1. Base plate ─────────────────────────────────────────────────────────
+  // ── 1. Base plate — always solid, never carved ────────────────────────────
   onProgress?.('Building base plate…', 65);
-
-  // Attempt base plate with recessed water holes. tryCollectHexBaseWithHoles
-  // is wrapped in every safety guard imaginable and returns false if anything
-  // goes wrong — in which case we fall back to a plain solid base plate and
-  // render water as flat black slabs at surface level (still looks good).
-  const waterHolesOK = waterPolys.length > 0
-    ? tryCollectHexBaseWithHoles(baseAcc, hexFull, waterPolys, BASE, waterFloorY)
-    : false;
-
-  if (!waterHolesOK) {
-    collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
-  }
+  collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
 
   // ── 2. Terrain ────────────────────────────────────────────────────────────
   if (elevGrid && N > 0) {
@@ -589,51 +572,15 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     roadCount++;
   }
 
-  // ── 6. Water areas ────────────────────────────────────────────────────────
-  // If earcut succeeded: black floor at waterFloorY + white perimeter borders.
-  // If earcut failed (fallback): flat black slabs at BASE level like roads.
-  // Every polygon is individually wrapped — one bad poly can never kill the rest.
+  // ── 6. Water areas (flat black slabs on solid base) ─────────────────────
+  // Water rendered identically to roads — NOZZLE_MM black slab at BASE level.
+  // No earcut holes, no pits, always works. One try/catch per polygon.
   if (waterPolys.length > 0) {
     onProgress?.('Building water areas…', 88);
-    // Width of white bank/border visible from above (inside the water edge)
-    const BORDER_W = 0.7; // mm
-
     for (const poly of waterPolys) {
       try {
-        if (waterHolesOK) {
-          // ── Recession mode ─────────────────────────────────────────────
-          // Thin black floor slab sitting at the bottom of the 0.5mm pit
-          collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.2);
-
-          // White border planks around the full perimeter of each water polygon.
-          // Each plank is a thin quad that fills the recession wall face from
-          // waterFloorY up to BASE, BORDER_W mm wide inside the water boundary.
-          // From above they look like crisp white riverbanks.
-          const ring = ensureCCW(deduplicateRing(poly));
-          const M = ring.length;
-          for (let i = 0; i < M; i++) {
-            try {
-              const A   = ring[i];
-              const B   = ring[(i + 1) % M];
-              const dx  = B.x - A.x;
-              const dy  = B.y - A.y;
-              const len = Math.sqrt(dx * dx + dy * dy);
-              if (len < 0.1) continue; // skip degenerate edges
-              // Inward normal for a CCW ring (points into the water polygon)
-              const nx = -dy / len;
-              const ny =  dx / len;
-              const Ai = { x: A.x + nx * BORDER_W, y: A.y + ny * BORDER_W };
-              const Bi = { x: B.x + nx * BORDER_W, y: B.y + ny * BORDER_W };
-              // Plank: outer edge at water boundary, inner edge BORDER_W inside
-              collectExtrudedPolygon(baseAcc, [A, B, Bi, Ai], [], waterFloorY, WATER_DEPTH);
-            } catch { /* skip this individual plank — rest continue */ }
-          }
-        } else {
-          // ── Flat fallback (no recession) ───────────────────────────────
-          collectExtrudedPolygon(blackAcc, poly, [], BASE, NOZZLE_MM);
-        }
+        collectExtrudedPolygon(blackAcc, poly, [], BASE, NOZZLE_MM);
       } catch (e) {
-        // Last-resort catch — polygon is simply skipped, generation continues
         console.warn('[buildMap] Skipping water polygon:', e?.message);
       }
     }
@@ -877,158 +824,6 @@ function engraveTextOnBottom(acc, text) {
     }
     cursorX += (CHAR_W + CHAR_GAP) * PIXEL_SIZE;
   }
-}
-
-// ─── Safe water-hole base plate ──────────────────────────────────────────────
-/**
- * Attempts to build the base plate top face with water polygons as recessed
- * holes using earcut. Returns TRUE on success, FALSE on any failure.
- *
- * When this returns false the caller must fall back to a plain solid base.
- *
- * Safety layers (in order):
- *  1. Each water polygon is individually deduplicated + validated before use
- *  2. Polygons with >MAX_WATER_VERTS vertices are uniformly sampled down
- *  3. The earcut call itself is wrapped in try/catch
- *  4. Earcut deviation is checked — any value > 0.05 is rejected
- *  5. Giant "bridge" triangles (earcut artefact) are filtered by area
- *  6. Every subsequent geometry step (bottom, sides, pit walls, floors) is
- *     individually wrapped so a single bad polygon can't kill the rest
- *  7. The entire function returns false on any unrecoverable failure
- */
-function tryCollectHexBaseWithHoles(acc, shapeVerts, waterPolys, topY, waterFloorY) {
-  const MAX_WATER_VERTS = 80; // max vertices per water polygon after simplification
-  const bot = 0;
-  const N   = shapeVerts.length;
-
-  // ── 1. Prepare + validate water polygons ─────────────────────────────────
-  const safePolys = [];
-  for (const raw of waterPolys) {
-    try {
-      let ring = deduplicateRing(raw);
-      if (!ring || ring.length < 3) continue;
-
-      // Simplify complex polygons by uniform vertex sampling
-      if (ring.length > MAX_WATER_VERTS) {
-        const step  = Math.ceil(ring.length / MAX_WATER_VERTS);
-        const simp  = [];
-        for (let i = 0; i < ring.length; i += step) simp.push(ring[i]);
-        if (simp.length < 3) continue;
-        ring = simp;
-      }
-
-      // Reject any polygon whose signed area is effectively zero
-      if (Math.abs(signedArea2D(ring)) < 0.5) continue;
-
-      safePolys.push(ring);
-    } catch { /* skip invalid polygon */ }
-  }
-
-  if (safePolys.length === 0) return false;
-
-  // ── 2. Build flat earcut array (outer CCW + holes — flattenWithHoles
-  //       internally forces each hole to CW winding) ──────────────────────
-  let flat, holeIndices;
-  try {
-    const outerCCW = ensureCCW([...shapeVerts]);
-    ({ flat, holeIndices } = flattenWithHoles(outerCCW, safePolys));
-  } catch { return false; }
-
-  // ── 3. Run earcut ─────────────────────────────────────────────────────────
-  let rawTris;
-  try {
-    rawTris = earcut(flat, holeIndices.length > 0 ? holeIndices : undefined, 2);
-  } catch { return false; }
-
-  if (!rawTris || rawTris.length === 0) return false;
-
-  // ── 4. Deviation check — reject poor-quality triangulations ──────────────
-  try {
-    const dev = earcut.deviation(flat, holeIndices.length > 0 ? holeIndices : undefined, 2, rawTris);
-    if (Math.abs(dev) > 0.05) {
-      console.warn('[buildMap] earcut deviation too high:', dev, '— using solid base');
-      return false;
-    }
-  } catch { return false; }
-
-  // ── 5. Filter giant bridge triangles ─────────────────────────────────────
-  const maxTriArea = Math.abs(signedArea2D(shapeVerts)) / 4;
-  const topTris = [];
-  for (let t = 0; t < rawTris.length; t += 3) {
-    const i0 = rawTris[t], i1 = rawTris[t + 1], i2 = rawTris[t + 2];
-    const ax = flat[i0 * 2], ay = flat[i0 * 2 + 1];
-    const bx = flat[i1 * 2], by = flat[i1 * 2 + 1];
-    const cx = flat[i2 * 2], cy = flat[i2 * 2 + 1];
-    const area = Math.abs((bx - ax) * (cy - ay) - (cx - ax) * (by - ay)) / 2;
-    if (area <= maxTriArea) topTris.push(i0, i1, i2);
-  }
-  if (topTris.length === 0) return false;
-
-  // ── 6. Emit top face (base plate with holes) ──────────────────────────────
-  try {
-    const nVerts = flat.length / 2;
-    const topPos = [];
-    for (let i = 0; i < nVerts; i++) topPos.push(flat[i * 2], topY, -flat[i * 2 + 1]);
-    acc.add(topPos, topTris);
-  } catch { return false; }
-
-  // ── 7. Bottom face ────────────────────────────────────────────────────────
-  try {
-    const bPos = [0, bot, 0];
-    const bIdx = [];
-    for (const v of shapeVerts) bPos.push(v.x, bot, -v.y);
-    for (let i = 0; i < N; i++) bIdx.push(0, 1 + (i + 1) % N, 1 + i);
-    acc.add(bPos, bIdx);
-  } catch { /* bottom face missing — rest still valid */ }
-
-  // ── 8. Outer hex side walls ───────────────────────────────────────────────
-  try {
-    const sPos = [], sIdx = [];
-    for (const v of shapeVerts) sPos.push(v.x, topY, -v.y); // top ring
-    for (const v of shapeVerts) sPos.push(v.x, bot,  -v.y); // bot ring
-    for (let i = 0; i < N; i++) {
-      const tA = i, tB = (i + 1) % N, bA = N + i, bB = N + (i + 1) % N;
-      sIdx.push(tA, bA, tB,  bA, bB, tB);
-    }
-    acc.add(sPos, sIdx);
-  } catch {}
-
-  // ── 9. Pit walls — one per water polygon, each individually safe ──────────
-  //    Vertical white walls that run from waterFloorY up to topY around the
-  //    inside edge of each water polygon (visible as the recession sides).
-  for (const poly of safePolys) {
-    try {
-      const M   = poly.length;
-      const pPos = [], pIdx = [];
-      for (const p of poly) pPos.push(p.x, topY,        -p.y); // [0..M-1]
-      for (const p of poly) pPos.push(p.x, waterFloorY, -p.y); // [M..2M-1]
-      for (let i = 0; i < M; i++) {
-        const tA = i, tB = (i + 1) % M, bA = M + i, bB = M + (i + 1) % M;
-        pIdx.push(tA, tB, bA,  tB, bB, bA); // inward-facing winding
-      }
-      acc.add(pPos, pIdx);
-    } catch { /* skip this polygon's pit wall — others continue */ }
-  }
-
-  // ── 10. Pit floor caps — watertight bottom of each recession ─────────────
-  //    Upward-facing white face at waterFloorY so the mesh is manifold.
-  //    The separate black slab (added in section 6) sits on top of this.
-  for (const poly of safePolys) {
-    try {
-      const floorCCW = ensureCCW([...poly]);
-      const flatF    = floorCCW.flatMap(p => [p.x, p.y]);
-      const fTris    = earcut(flatF, undefined, 2);
-      if (!fTris || fTris.length === 0) continue;
-      if (Math.abs(earcut.deviation(flatF, undefined, 2, fTris)) > 0.1) continue;
-      const fPos = [];
-      for (let i = 0; i < flatF.length / 2; i++) {
-        fPos.push(flatF[i * 2], waterFloorY, -flatF[i * 2 + 1]);
-      }
-      acc.add(fPos, Array.from(fTris));
-    } catch { /* skip this floor cap — pit wall still seals the mesh */ }
-  }
-
-  return true; // everything succeeded
 }
 
 function collectHexBase(acc, shapeVerts, chamfer = 0) {
