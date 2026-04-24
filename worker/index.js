@@ -199,27 +199,99 @@ async function handleOrderInfo(request, env) {
 
 // ─── Admin endpoints ────────────────────────────────────────────────────────
 
+// Brute-force protection: 5 failures per IP → 15-min lockout
+const RATE_LIMIT_MAX  = 5;
+const RATE_LIMIT_SECS = 15 * 60; // 15 minutes
+
+async function checkRateLimit(env, ip) {
+  if (!env.SETTINGS) return { blocked: false }; // KV not available — degrade gracefully
+  const key = `ratelimit:${ip}`;
+  let record;
+  try {
+    record = await env.SETTINGS.get(key, 'json');
+  } catch {
+    return { blocked: false };
+  }
+  if (!record) return { blocked: false, count: 0 };
+  if (record.count >= RATE_LIMIT_MAX) {
+    const elapsed = Math.floor(Date.now() / 1000) - record.ts;
+    if (elapsed < RATE_LIMIT_SECS) {
+      const retryAfter = RATE_LIMIT_SECS - elapsed;
+      return { blocked: true, retryAfter };
+    }
+    // Window expired — clear it
+    await env.SETTINGS.delete(key).catch(() => {});
+    return { blocked: false, count: 0 };
+  }
+  return { blocked: false, count: record.count };
+}
+
+async function recordFailedAttempt(env, ip) {
+  if (!env.SETTINGS) return;
+  const key = `ratelimit:${ip}`;
+  let record;
+  try { record = await env.SETTINGS.get(key, 'json'); } catch { record = null; }
+  const now = Math.floor(Date.now() / 1000);
+  const newRecord = {
+    count: (record?.count ?? 0) + 1,
+    ts:    record?.ts ?? now, // keep original window start
+  };
+  await env.SETTINGS.put(key, JSON.stringify(newRecord), { expirationTtl: RATE_LIMIT_SECS });
+}
+
+async function clearRateLimit(env, ip) {
+  if (!env.SETTINGS) return;
+  await env.SETTINGS.delete(`ratelimit:${ip}`).catch(() => {});
+}
+
+function getClientIP(request) {
+  return (
+    request.headers.get('CF-Connecting-IP') ||
+    request.headers.get('X-Forwarded-For')?.split(',')[0].trim() ||
+    'unknown'
+  );
+}
+
 async function handleAdminVerify(request, env) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
   if (!env.ADMIN_PASSWORD)       return jsonResponse({ error: 'Admin password not configured' }, 500);
+
+  const ip = getClientIP(request);
+
+  // Check rate limit before even reading the body
+  const rl = await checkRateLimit(env, ip);
+  if (rl.blocked) {
+    const mins = Math.ceil(rl.retryAfter / 60);
+    return jsonResponse({ error: `Too many failed attempts. Try again in ${mins} minute${mins !== 1 ? 's' : ''}.` }, 429);
+  }
 
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
 
   if (body.password === env.ADMIN_PASSWORD) {
+    await clearRateLimit(env, ip); // successful login clears lockout
     return jsonResponse({ success: true });
   }
-  return jsonResponse({ error: 'Invalid password' }, 401);
+
+  await recordFailedAttempt(env, ip);
+  const remaining = RATE_LIMIT_MAX - (rl.count ?? 0) - 1;
+  const hint = remaining > 0 ? ` (${remaining} attempt${remaining !== 1 ? 's' : ''} remaining)` : ' — you are now locked out for 15 minutes.';
+  return jsonResponse({ error: `Invalid password${hint}` }, 401);
 }
 
 async function handleAdminOrders(request, env) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
   if (!env.STRIPE_SECRET_KEY)    return jsonResponse({ error: 'Server is missing STRIPE_SECRET_KEY' }, 500);
 
+  const ip = getClientIP(request);
+  const rl = await checkRateLimit(env, ip);
+  if (rl.blocked) return jsonResponse({ error: 'Too many failed attempts. Try again later.' }, 429);
+
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
 
   if (body.password !== env.ADMIN_PASSWORD) {
+    await recordFailedAttempt(env, ip);
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
 
@@ -283,10 +355,15 @@ async function handleAdminUpdateOrder(request, env) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
   if (!env.STRIPE_SECRET_KEY)    return jsonResponse({ error: 'Server is missing STRIPE_SECRET_KEY' }, 500);
 
+  const ip = getClientIP(request);
+  const rl = await checkRateLimit(env, ip);
+  if (rl.blocked) return jsonResponse({ error: 'Too many failed attempts. Try again later.' }, 429);
+
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
 
   if (body.password !== env.ADMIN_PASSWORD) {
+    await recordFailedAttempt(env, ip);
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
 
@@ -339,9 +416,15 @@ async function getSettings(env) {
 
 async function handleGetSettings(request, env) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+  const ip = getClientIP(request);
+  const rl = await checkRateLimit(env, ip);
+  if (rl.blocked) return jsonResponse({ error: 'Too many failed attempts. Try again later.' }, 429);
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
-  if (body.password !== env.ADMIN_PASSWORD) return jsonResponse({ error: 'Unauthorized' }, 401);
+  if (body.password !== env.ADMIN_PASSWORD) {
+    await recordFailedAttempt(env, ip);
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
 
   const settings = await getSettings(env);
   return jsonResponse({ settings });
@@ -351,9 +434,16 @@ async function handleUpdateSettings(request, env) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
   if (!env.SETTINGS) return jsonResponse({ error: 'KV namespace SETTINGS not bound' }, 500);
 
+  const ip = getClientIP(request);
+  const rl = await checkRateLimit(env, ip);
+  if (rl.blocked) return jsonResponse({ error: 'Too many failed attempts. Try again later.' }, 429);
+
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
-  if (body.password !== env.ADMIN_PASSWORD) return jsonResponse({ error: 'Unauthorized' }, 401);
+  if (body.password !== env.ADMIN_PASSWORD) {
+    await recordFailedAttempt(env, ip);
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
 
   const current = await getSettings(env);
   const updated = {
@@ -409,9 +499,16 @@ async function handleUpdateContent(request, env) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
   if (!env.SETTINGS) return jsonResponse({ error: 'KV namespace SETTINGS not bound' }, 500);
 
+  const ip = getClientIP(request);
+  const rl = await checkRateLimit(env, ip);
+  if (rl.blocked) return jsonResponse({ error: 'Too many failed attempts. Try again later.' }, 429);
+
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
-  if (body.password !== env.ADMIN_PASSWORD) return jsonResponse({ error: 'Unauthorized' }, 401);
+  if (body.password !== env.ADMIN_PASSWORD) {
+    await recordFailedAttempt(env, ip);
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
 
   const current = await getContent(env);
   const gallery = Array.isArray(body.gallery)

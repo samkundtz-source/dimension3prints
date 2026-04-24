@@ -444,7 +444,11 @@
           document.getElementById('dashboard').style.display = 'block';
           loadOrders();
         } else {
-          document.getElementById('login-error').textContent = 'Invalid password';
+          document.getElementById('login-error').textContent = data.error || 'Invalid password';
+          if (resp.status === 429) {
+            document.getElementById('admin-pw').disabled = true;
+            document.getElementById('login-btn').disabled = true;
+          }
         }
       } catch (err) {
         document.getElementById('login-error').textContent = 'Connection error';
