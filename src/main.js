@@ -651,4 +651,84 @@ document.addEventListener('DOMContentLoaded', () => {
   } else {
     setStatus('Ready', 0);
   }
+
+  // ── Mobile tab navigation ────────────────────────────────────────────────────
+  // Runs inside DOMContentLoaded so all elements exist.
+  // Lives in this module script (not an inline <script>) so it isn't blocked
+  // by the page's Content-Security-Policy (script-src 'self').
+
+  if (window.innerWidth <= 768) {
+    initMobile();
+  }
+
+  document.querySelectorAll('.mob-tab').forEach(btn => {
+    btn.addEventListener('click', () => mobTab(btn, btn.dataset.panel));
+  });
+
+  window.addEventListener('resize', () => {
+    if (window.innerWidth > 768) {
+      // Restore desktop — undo all mobile overrides
+      document.querySelector('.sidebar')?.classList.remove('mob-hidden');
+      document.querySelector('.preview-area')?.classList.remove('mob-active');
+      document.querySelectorAll('.mob-loc-panel, .sidebar-map, .sidebar-settings, .sidebar-actions')
+        .forEach(e => e.style.display = '');
+    } else {
+      initMobile();
+    }
+  });
 });
+
+// ── Mobile helpers (called from DOMContentLoaded above) ──────────────────────
+
+function mobTab(btn, panel) {
+  if (window.innerWidth > 768) return;
+  document.querySelectorAll('.mob-tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  applyMobLayout(panel);
+}
+
+function applyMobLayout(panel) {
+  const sidebar    = document.querySelector('.sidebar');
+  const preview    = document.querySelector('.preview-area');
+  const locPanels  = document.querySelectorAll('.mob-loc-panel, .sidebar-map');
+  const setPanel   = document.querySelector('.sidebar-settings');
+  const adminPanel = document.getElementById('admin-radius-section');
+  const actions    = document.querySelector('.sidebar-actions');
+
+  if (panel === 'location') {
+    sidebar.classList.remove('mob-hidden');
+    preview.classList.remove('mob-active');
+    locPanels.forEach(e => e.style.display = '');
+    if (setPanel) setPanel.style.display = 'none';
+    if (actions)  actions.style.display  = '';
+    // Nudge Leaflet to repaint tiles after map container is revealed
+    setTimeout(() => window.dispatchEvent(new Event('resize')), 80);
+  } else if (panel === 'settings') {
+    sidebar.classList.remove('mob-hidden');
+    preview.classList.remove('mob-active');
+    locPanels.forEach(e => e.style.display = 'none');
+    if (setPanel)   setPanel.style.display = '';
+    if (adminPanel) adminPanel.style.display = adminPanel.dataset.adminVisible === '1' ? '' : 'none';
+    if (actions)    actions.style.display   = '';
+  } else {
+    sidebar.classList.add('mob-hidden');
+    preview.classList.add('mob-active');
+  }
+}
+
+function initMobile() {
+  // Hide settings section so we start on the Location sub-view
+  const setPanel = document.querySelector('.sidebar-settings');
+  if (setPanel) setPanel.style.display = 'none';
+
+  // Tapping Generate auto-switches to Preview so user sees progress
+  const genBtn = el('generate-btn');
+  if (genBtn && !genBtn._mobListener) {
+    genBtn._mobListener = true;
+    genBtn.addEventListener('click', () => {
+      if (window.innerWidth > 768) return;
+      const tab = el('mob-preview-tab');
+      if (tab) mobTab(tab, 'preview');
+    });
+  }
+}
