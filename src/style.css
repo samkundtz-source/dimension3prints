@@ -415,20 +415,35 @@ html, body {
 #mobile-nav { display: none; }
 
 @media (max-width: 768px) {
-  :root { --mob-nav: 58px; }
+  /* --mob-nav-h covers the tab bar + iPhone home indicator safe area */
+  :root {
+    --mob-nav: 58px;
+    --mob-nav-h: calc(var(--mob-nav) + env(safe-area-inset-bottom, 0px));
+  }
 
   .header-badge { display: none; }
-  #status-bar   { height: 22px; }
+  #status-bar   { height: 20px; }
 
-  /* Workspace: column so sidebar and preview stack */
+  /* ── App shell ────────────────────────────────────────────────
+     Use dvh (dynamic viewport height) so iOS Safari's browser
+     chrome doesn't push the bottom nav off-screen.
+     padding-bottom reserves room for the fixed nav.
+  ─────────────────────────────────────────────────────────────── */
+  #app {
+    height: 100vh;          /* fallback */
+    height: 100dvh;         /* iOS 15.4+ — excludes browser chrome */
+    padding-bottom: var(--mob-nav-h);
+  }
+
+  /* Workspace fills the space above status-bar */
   .workspace {
     flex-direction: column;
     overflow: hidden;
   }
 
   /* ── Sidebar ──────────────────────────────────────────────────
-     Visible by default — no JS needed for initial render.
-     Hides only when user taps Preview tab (.mob-hidden added by JS).
+     Visible by default (no JS needed for first paint).
+     Hidden only when Preview tab is active.
   ─────────────────────────────────────────────────────────────── */
   .sidebar {
     flex: 1;
@@ -441,17 +456,17 @@ html, body {
   }
   .sidebar.mob-hidden { display: none; }
 
-  /* Map: fixed height so it doesn't eat the full screen */
+  /* Map: fixed height — doesn't eat the full screen */
   .sidebar-map {
     flex: none;
     height: 36vh;
     min-height: 140px;
   }
 
-  /* Settings section: natural height, parent sidebar scrolls */
+  /* Settings: natural height, sidebar scrolls */
   .sidebar-settings { flex-shrink: 0; overflow-y: visible; }
 
-  /* Generate button: sticky at scroll bottom */
+  /* Generate: sticky at the bottom of the scrollable sidebar */
   .sidebar-actions {
     position: sticky;
     bottom: 0;
@@ -463,7 +478,7 @@ html, body {
   .btn-generate { font-size: 15px; padding: 14px 20px; }
 
   /* ── Preview ──────────────────────────────────────────────────
-     Hidden by default. Shown when user taps Preview tab.
+     Hidden until user taps Preview tab.
   ─────────────────────────────────────────────────────────────── */
   .preview-area {
     display: none;
@@ -473,26 +488,49 @@ html, body {
   }
   .preview-area.mob-active { display: flex; }
 
-  /* Compact toolbar on narrow screens */
-  .preview-header {
-    padding: 6px 10px;
-    min-height: 38px;
-    flex-wrap: wrap;
-    gap: 4px;
-  }
-  .preview-toolbar-right { flex-wrap: wrap; gap: 4px; }
-  .btn-toolbar { font-size: 10px; padding: 5px 8px; gap: 3px; }
-  #order-price-label { font-size: 11px; }
+  /* On mobile: hide secondary toolbar buttons; show Order full-width */
+  #toggle-wireframe,
+  #reset-camera,
   .export-divider { display: none; }
 
-  /* ── Bottom nav bar ───────────────────────────────────────── */
+  .preview-header {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 8px 12px;
+    gap: 6px;
+    min-height: unset;
+  }
+  .preview-toolbar-left {
+    display: flex;
+    align-items: center;
+  }
+  .preview-toolbar-right {
+    display: flex;
+  }
+  /* Order button: full-width, easy to tap */
+  #order-print {
+    flex: 1;
+    justify-content: center;
+    font-size: 14px !important;
+    padding: 13px 20px !important;
+    border-radius: var(--radius) !important;
+  }
+
+  /* ── Bottom nav — FIXED so iOS browser chrome can't hide it ──
+     Always overlays the viewport bottom; #app padding-bottom
+     prevents workspace content sliding under it.
+  ─────────────────────────────────────────────────────────────── */
   #mobile-nav {
     display: flex;
-    height: var(--mob-nav);
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: var(--mob-nav-h);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
     background: var(--bg-panel);
     border-top: 1px solid var(--border);
-    flex-shrink: 0;
-    z-index: 200;
+    z-index: 1000;
   }
 
   .mob-tab {
@@ -512,6 +550,7 @@ html, body {
     transition: color 0.15s;
     padding: 8px 4px;
     -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation; /* no 300ms tap delay */
   }
   .mob-tab svg { width: 22px; height: 22px; stroke-width: 1.8; }
   .mob-tab.active { color: #fff; }
