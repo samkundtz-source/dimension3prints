@@ -268,12 +268,15 @@
 
     <div class="page-content active" id="page-orders">
     <div class="orders-wrap">
-      <div class="status-tabs" id="status-tabs">
-        <button class="status-tab active" data-filter="all">All <span class="tab-count" id="tab-all">0</span></button>
-        <button class="status-tab" data-filter="pending">Pending <span class="tab-count" id="tab-pending">0</span></button>
-        <button class="status-tab" data-filter="printing">Printing <span class="tab-count" id="tab-printing">0</span></button>
-        <button class="status-tab" data-filter="shipped">Shipped <span class="tab-count" id="tab-shipped">0</span></button>
-        <button class="status-tab" data-filter="delivered">Delivered <span class="tab-count" id="tab-delivered">0</span></button>
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:20px">
+        <div class="status-tabs" id="status-tabs" style="margin-bottom:0">
+          <button class="status-tab active" data-filter="all">All <span class="tab-count" id="tab-all">0</span></button>
+          <button class="status-tab" data-filter="pending">Pending <span class="tab-count" id="tab-pending">0</span></button>
+          <button class="status-tab" data-filter="printing">Printing <span class="tab-count" id="tab-printing">0</span></button>
+          <button class="status-tab" data-filter="shipped">Shipped <span class="tab-count" id="tab-shipped">0</span></button>
+          <button class="status-tab" data-filter="delivered">Delivered <span class="tab-count" id="tab-delivered">0</span></button>
+        </div>
+        <button id="sort-btn" onclick="sortOldestFirst=!sortOldestFirst;renderOrders()" style="background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;color:var(--text-sec);font-family:var(--font);font-size:13px;padding:8px 14px;cursor:pointer">↑ Oldest first</button>
       </div>
       <div id="orders-list">
         <div class="loading">Loading orders...</div>
@@ -506,9 +509,18 @@
       document.getElementById('tab-delivered').textContent = counts.delivered;
     }
 
+    let sortOldestFirst = true; // default: oldest pending at top
+
     function renderOrders() {
       const list = document.getElementById('orders-list');
-      const filtered = activeFilter === 'all' ? orders : orders.filter(o => o.status === activeFilter);
+      let filtered = activeFilter === 'all' ? [...orders] : orders.filter(o => o.status === activeFilter);
+
+      // Sort: oldest first (ascending) or newest first (descending)
+      filtered.sort((a, b) => sortOldestFirst ? a.created - b.created : b.created - a.created);
+
+      // Update sort button label
+      const sortBtn = document.getElementById('sort-btn');
+      if (sortBtn) sortBtn.textContent = sortOldestFirst ? '↑ Oldest first' : '↓ Newest first';
 
       if (orders.length === 0) {
         list.innerHTML = '<div class="empty-state"><h2>No orders yet</h2><p>Orders will appear here once customers complete checkout.</p></div>';
@@ -519,8 +531,7 @@
         return;
       }
 
-      list.innerHTML = filtered.map((o) => {
-        const i = orders.indexOf(o);
+      list.innerHTML = filtered.map((o, i) => {
         const date = new Date(o.created * 1000);
         const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
         const amount = '$' + (o.amount / 100).toFixed(2);
@@ -562,8 +573,11 @@
                   <div class="detail-row"><span class="detail-label">Location: </span><span class="detail-val">${m.lat.toFixed(4)}, ${m.lng.toFixed(4)}</span></div>
                   <div class="detail-row"><span class="detail-label">Radius: </span><span class="detail-val">${m.radius} km</span></div>
                   <div class="detail-row"><span class="detail-label">Scale: </span><span class="detail-val">${m.verticalScale}x</span></div>
+                  <div class="detail-row"><span class="detail-label">Rotation: </span><span class="detail-val">${m.rotation ?? 0}°</span></div>
                   <div class="detail-row"><span class="detail-label">Elevation: </span><span class="detail-val">${m.elevation ? 'Yes' : 'No'}</span></div>
                   <div class="detail-row"><span class="detail-label">Terrain relief: </span><span class="detail-val">${m.terrainRelief ? 'Yes' : 'No'}</span></div>
+                  <div class="detail-row"><span class="detail-label">Detailed buildings: </span><span class="detail-val">${m.detailedBuildings ? 'Yes' : 'No'}</span></div>
+                  <div class="detail-row"><span class="detail-label">Road elevation: </span><span class="detail-val">${m.roadElevation ? 'Yes' : 'No'}</span></div>
                 </div>
               </div>
               <div class="order-actions">

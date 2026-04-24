@@ -76,7 +76,8 @@ async function handleCreateCheckout(request, env) {
     return jsonResponse({ error: 'Invalid JSON body' }, 400);
   }
 
-  const { lat, lng, radius, verticalScale, elevation, terrainRelief, region } = body;
+  const { lat, lng, radius, verticalScale, elevation, terrainRelief,
+          detailedBuildings, roadElevation, rotation, region } = body;
   if (lat == null || lng == null || radius == null) {
     return jsonResponse({ error: 'Missing location data' }, 400);
   }
@@ -138,14 +139,17 @@ async function handleCreateCheckout(request, env) {
     shipping_options: shippingOptions,
     metadata: {
       orderId,
-      lat:           String(lat),
-      lng:           String(lng),
-      radius:        String(radius),
-      verticalScale: String(verticalScale),
-      elevation:     String(elevation),
-      terrainRelief: String(terrainRelief || false),
-      region:        region || 'US',
-      preOrder:      String(isPreOrder),
+      lat:               String(lat),
+      lng:               String(lng),
+      radius:            String(radius),
+      verticalScale:     String(verticalScale),
+      elevation:         String(elevation         || false),
+      terrainRelief:     String(terrainRelief     || false),
+      detailedBuildings: String(detailedBuildings || false),
+      roadElevation:     String(roadElevation     || false),
+      rotation:          String(rotation          || 0),
+      region:            region || 'US',
+      preOrder:          String(isPreOrder),
     },
     success_url: `${origin}/success.html?session_id={CHECKOUT_SESSION_ID}`,
     cancel_url:  `${origin}/app.html`,
@@ -335,12 +339,15 @@ async function handleAdminOrders(request, env) {
       shippingRate: s.shipping_cost?.amount_total || 0,
       preOrder: s.metadata?.preOrder === 'true',
       model: {
-        lat:           parseFloat(s.metadata?.lat) || 0,
-        lng:           parseFloat(s.metadata?.lng) || 0,
-        radius:        parseFloat(s.metadata?.radius) || 1,
-        verticalScale: parseFloat(s.metadata?.verticalScale) || 3,
-        elevation:     s.metadata?.elevation === 'true',
-        terrainRelief: s.metadata?.terrainRelief === 'true',
+        lat:               parseFloat(s.metadata?.lat)           || 0,
+        lng:               parseFloat(s.metadata?.lng)           || 0,
+        radius:            parseFloat(s.metadata?.radius)        || 1,
+        verticalScale:     parseFloat(s.metadata?.verticalScale) || 3,
+        elevation:         s.metadata?.elevation         === 'true',
+        terrainRelief:     s.metadata?.terrainRelief     === 'true',
+        detailedBuildings: s.metadata?.detailedBuildings === 'true',
+        roadElevation:     s.metadata?.roadElevation     === 'true',
+        rotation:          parseFloat(s.metadata?.rotation)      || 0,
       },
     }));
 
