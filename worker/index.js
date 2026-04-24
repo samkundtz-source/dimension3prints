@@ -119,7 +119,7 @@ async function handleCreateCheckout(request, env) {
   const origin = request.headers.get('origin') || new URL(request.url).origin;
 
   const payload = {
-    payment_method_types: ['card'],
+    payment_method_types: ['card', 'paypal'],
     mode: 'payment',
     line_items: [
       {
