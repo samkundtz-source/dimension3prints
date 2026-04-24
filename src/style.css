@@ -418,44 +418,40 @@ html, body {
   :root { --mob-nav: 58px; }
 
   .header-badge { display: none; }
-  /* Keep status bar — it shows generation progress */
-  #status-bar { height: 22px; }
+  #status-bar   { height: 22px; }
 
-  /* Workspace fills space between header and nav */
+  /* Workspace: column so sidebar and preview stack */
   .workspace {
-    position: relative;
+    flex-direction: column;
     overflow: hidden;
-    flex: 1;
-    min-height: 0;
   }
 
-  /* ── Sidebar panel ─────────────────────────────────────────── */
+  /* ── Sidebar ──────────────────────────────────────────────────
+     Visible by default — no JS needed for initial render.
+     Hides only when user taps Preview tab (.mob-hidden added by JS).
+  ─────────────────────────────────────────────────────────────── */
   .sidebar {
-    position: absolute;
-    inset: 0;
+    flex: 1;
     width: 100%;
+    min-height: 0;
     border-right: none;
-    z-index: 5;
-    display: none;
-    flex-direction: column;
-    /* Override base overflow:hidden so content can scroll */
     overflow-y: auto;
     overflow-x: hidden;
     -webkit-overflow-scrolling: touch;
   }
-  .sidebar.mob-active { display: flex; }
+  .sidebar.mob-hidden { display: none; }
 
-  /* Map: fixed height so it doesn't monopolise the screen */
+  /* Map: fixed height so it doesn't eat the full screen */
   .sidebar-map {
     flex: none;
     height: 36vh;
     min-height: 140px;
   }
 
-  /* Settings section: let it be as tall as its content */
+  /* Settings section: natural height, parent sidebar scrolls */
   .sidebar-settings { flex-shrink: 0; overflow-y: visible; }
 
-  /* Generate button always pinned to bottom of scroll area */
+  /* Generate button: sticky at scroll bottom */
   .sidebar-actions {
     position: sticky;
     bottom: 0;
@@ -466,18 +462,18 @@ html, body {
   }
   .btn-generate { font-size: 15px; padding: 14px 20px; }
 
-  /* ── Preview panel ─────────────────────────────────────────── */
+  /* ── Preview ──────────────────────────────────────────────────
+     Hidden by default. Shown when user taps Preview tab.
+  ─────────────────────────────────────────────────────────────── */
   .preview-area {
-    position: absolute;
-    inset: 0;
-    width: 100%;
-    z-index: 5;
     display: none;
-    flex-direction: column;
+    flex: 1;
+    width: 100%;
+    min-height: 0;
   }
   .preview-area.mob-active { display: flex; }
 
-  /* Toolbar: hide text labels, icon-only to save space */
+  /* Compact toolbar on narrow screens */
   .preview-header {
     padding: 6px 10px;
     min-height: 38px;
@@ -486,11 +482,10 @@ html, body {
   }
   .preview-toolbar-right { flex-wrap: wrap; gap: 4px; }
   .btn-toolbar { font-size: 10px; padding: 5px 8px; gap: 3px; }
-  /* Keep Order button label short */
   #order-price-label { font-size: 11px; }
   .export-divider { display: none; }
 
-  /* ── Bottom tab bar ────────────────────────────────────────── */
+  /* ── Bottom nav bar ───────────────────────────────────────── */
   #mobile-nav {
     display: flex;
     height: var(--mob-nav);

@@ -266,39 +266,47 @@
     }
 
     function _applyMobLayout(panel) {
-      var sidebar     = document.querySelector('.sidebar');
-      var preview     = document.querySelector('.preview-area');
-      var locPanels   = document.querySelectorAll('.mob-loc-panel, .sidebar-map');
-      var setPanel    = document.querySelector('.sidebar-settings');
-      var adminPanel  = document.getElementById('admin-radius-section');
-      var actions     = document.querySelector('.sidebar-actions');
+      var sidebar    = document.querySelector('.sidebar');
+      var preview    = document.querySelector('.preview-area');
+      var locPanels  = document.querySelectorAll('.mob-loc-panel, .sidebar-map');
+      var setPanel   = document.querySelector('.sidebar-settings');
+      var adminPanel = document.getElementById('admin-radius-section');
+      var actions    = document.querySelector('.sidebar-actions');
 
       if (panel === 'location') {
-        sidebar.classList.add('mob-active');
+        /* Show sidebar (it's visible by default; remove hidden if coming from preview) */
+        sidebar.classList.remove('mob-hidden');
         preview.classList.remove('mob-active');
         locPanels.forEach(function(el){ el.style.display = ''; });
-        setPanel.style.display = 'none';
-        actions.style.display  = '';
-        /* Tell Leaflet the map container is now visible so tiles render */
-        setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 60);
+        if (setPanel)  setPanel.style.display = 'none';
+        if (actions)   actions.style.display  = '';
+        /* Nudge Leaflet to redraw tiles after container becomes visible */
+        setTimeout(function() { window.dispatchEvent(new Event('resize')); }, 80);
       } else if (panel === 'settings') {
-        sidebar.classList.add('mob-active');
+        sidebar.classList.remove('mob-hidden');
         preview.classList.remove('mob-active');
         locPanels.forEach(function(el){ el.style.display = 'none'; });
-        setPanel.style.display = '';
+        if (setPanel)  setPanel.style.display = '';
         if (adminPanel) adminPanel.style.display = adminPanel.dataset.adminVisible === '1' ? '' : 'none';
-        actions.style.display  = '';
+        if (actions)   actions.style.display  = '';
       } else {
-        sidebar.classList.remove('mob-active');
+        /* Preview tab: hide sidebar, reveal the 3-D canvas */
+        sidebar.classList.add('mob-hidden');
         preview.classList.add('mob-active');
       }
     }
 
     function initMobile() {
       if (window.innerWidth > 768) return;
-      _applyMobLayout('location');
 
-      /* Auto-switch to Preview when Generate is clicked */
+      /* Sidebar is already visible via CSS; just hide the settings panel
+         so we start on the Location sub-view */
+      var setPanel  = document.querySelector('.sidebar-settings');
+      var locPanels = document.querySelectorAll('.mob-loc-panel, .sidebar-map');
+      if (setPanel) setPanel.style.display = 'none';
+      locPanels.forEach(function(el){ el.style.display = ''; });
+
+      /* Tapping Generate auto-switches to Preview so the user sees progress */
       var genBtn = document.getElementById('generate-btn');
       if (genBtn && !genBtn._mobListener) {
         genBtn._mobListener = true;
@@ -314,10 +322,10 @@
 
     window.addEventListener('resize', function() {
       if (window.innerWidth > 768) {
-        /* Restore desktop layout */
-        var sidebar   = document.querySelector('.sidebar');
-        var preview   = document.querySelector('.preview-area');
-        sidebar.classList.remove('mob-active');
+        /* Restore desktop layout — undo any mobile class/style overrides */
+        var sidebar = document.querySelector('.sidebar');
+        var preview = document.querySelector('.preview-area');
+        sidebar.classList.remove('mob-hidden');
         preview.classList.remove('mob-active');
         document.querySelectorAll('.mob-loc-panel, .sidebar-map, .sidebar-settings, .sidebar-actions')
           .forEach(function(el){ el.style.display = ''; });
