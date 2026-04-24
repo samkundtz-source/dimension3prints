@@ -194,8 +194,9 @@ async function generate() {
     const lng          = selectedCenter.lng;
     const radiusMeters = getRadiusMeters();
     const vertExag     = getVertExag();
-    const useElevation  = el('use-elevation')?.checked || false;
+    const useElevation  = el('use-elevation')?.checked  || false;
     const terrainRelief = el('terrain-relief')?.checked || false;
+    const roadElevation = el('road-elevation')?.checked || false;
 
     // 1. Projection + shape
     // Rotation is baked into the projection — all projected coordinates
@@ -224,7 +225,7 @@ async function generate() {
 
     // 4. Elevation (optional — forced on when terrain relief is enabled)
     let elevGrid = null;
-    if (useElevation || terrainRelief) {
+    if (useElevation || terrainRelief || roadElevation) {
       setStatus('Fetching elevation data...', 37);
       try {
         elevGrid = await fetchElevation(
@@ -243,7 +244,7 @@ async function generate() {
     // 5. Build 3D model
     setStatus('Building 3D model...', 60);
     const detailedBuildings = el('detailed-buildings')?.checked || false;
-    const result = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, false, terrainRelief, activeOrderId);
+    const result = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, false, terrainRelief, activeOrderId, roadElevation);
     const group = result.group;
     const modelStats = result.stats;
 
@@ -606,6 +607,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (params.has('terrainRelief')) {
           const tr = el('terrain-relief');
           if (tr) tr.checked = params.get('terrainRelief') === 'true';
+        }
+        // Set road elevation
+        if (params.has('roadElevation')) {
+          const re = el('road-elevation');
+          if (re) re.checked = params.get('roadElevation') === 'true';
         }
         // Select location and enable generate button
         selectLocation(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`);

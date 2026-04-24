@@ -139,7 +139,7 @@ function sampleTerrainElev(x, y, elevGrid, N, vScale) {
   return clamp(e * vScale, 0, 40);
 }
 
-export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '') {
+export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '', roadElevation = false) {
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -189,9 +189,12 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     'tertiary', 'tertiary_link', 'unclassified', 'residential', 'living_street',
   ]);
 
-  // ── Terrain-aware base Y helper ──────────────────────────────────────────
-  // Returns the Y position for any feature, sitting on the terrain when relief is on.
-  const canRelief = terrainRelief && elevGrid && N > 0;
+  // ── Terrain-aware base Y helpers ─────────────────────────────────────────
+  // Buildings/terrain: controlled by terrainRelief toggle.
+  // Roads: controlled by roadElevation toggle (or terrainRelief when both on).
+  const canRelief     = terrainRelief                       && elevGrid && N > 0;
+  const canRoadRelief = (roadElevation || terrainRelief)    && elevGrid && N > 0;
+
   function terrainBaseY(cx, cy) {
     if (!canRelief) return BASE;
     return BASE + sampleTerrainElev(cx, cy, elevGrid, N, vScale);
@@ -202,6 +205,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     for (const p of poly) { cx += p.x; cy += p.y; }
     cx /= poly.length;
     cy /= poly.length;
+    return BASE + sampleTerrainElev(cx, cy, elevGrid, N, vScale);
+  }
+  function roadTerrainBaseY(cx, cy) {
+    if (!canRoadRelief) return BASE;
     return BASE + sampleTerrainElev(cx, cy, elevGrid, N, vScale);
   }
 
@@ -550,7 +557,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     // Roads always sit on the base plate surface (or terrain when relief is on).
     // Height is always ROAD_SLAB (0.4 mm) — hard cap so roads are never taller
     // than one slab regardless of water pits or terrain variation below them.
-    const roadBaseY  = roadMid ? terrainBaseY(roadMid.x, roadMid.y) : BASE;
+    const roadBaseY  = roadMid ? roadTerrainBaseY(roadMid.x, roadMid.y) : BASE;
     const roadHeight = ROAD_SLAB; // 0.4 mm — never more
 
     const roadPlaced = addRoadWithAvoidance(blackAcc, feat.points, halfW, hexInner, roadBaseY, roadHeight, findOverlappingBuildings);
