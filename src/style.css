@@ -418,10 +418,10 @@ html, body {
   :root { --mob-nav: 58px; }
 
   .header-badge { display: none; }
-  #status-bar { display: none; }
+  /* Keep status bar — it shows generation progress */
+  #status-bar { height: 22px; }
 
-  /* Stack workspace vertically so nav sits below */
-  #app { flex-direction: column; }
+  /* Workspace fills space between header and nav */
   .workspace {
     position: relative;
     overflow: hidden;
@@ -429,7 +429,7 @@ html, body {
     min-height: 0;
   }
 
-  /* Sidebar becomes an overlay panel */
+  /* ── Sidebar panel ─────────────────────────────────────────── */
   .sidebar {
     position: absolute;
     inset: 0;
@@ -438,17 +438,35 @@ html, body {
     z-index: 5;
     display: none;
     flex-direction: column;
+    /* Override base overflow:hidden so content can scroll */
+    overflow-y: auto;
+    overflow-x: hidden;
+    -webkit-overflow-scrolling: touch;
   }
   .sidebar.mob-active { display: flex; }
 
-  /* Map tile takes ~42% of viewport height on mobile */
+  /* Map: fixed height so it doesn't monopolise the screen */
   .sidebar-map {
     flex: none;
-    height: 42vh;
-    min-height: 180px;
+    height: 36vh;
+    min-height: 140px;
   }
 
-  /* Preview overlay */
+  /* Settings section: let it be as tall as its content */
+  .sidebar-settings { flex-shrink: 0; overflow-y: visible; }
+
+  /* Generate button always pinned to bottom of scroll area */
+  .sidebar-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--bg-panel);
+    border-top: 1px solid var(--border);
+    z-index: 2;
+    padding: 12px 16px;
+  }
+  .btn-generate { font-size: 15px; padding: 14px 20px; }
+
+  /* ── Preview panel ─────────────────────────────────────────── */
   .preview-area {
     position: absolute;
     inset: 0;
@@ -459,10 +477,20 @@ html, body {
   }
   .preview-area.mob-active { display: flex; }
 
-  /* Slightly larger generate button for touch */
-  .btn-generate { padding: 14px 20px; font-size: 15px; }
+  /* Toolbar: hide text labels, icon-only to save space */
+  .preview-header {
+    padding: 6px 10px;
+    min-height: 38px;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .preview-toolbar-right { flex-wrap: wrap; gap: 4px; }
+  .btn-toolbar { font-size: 10px; padding: 5px 8px; gap: 3px; }
+  /* Keep Order button label short */
+  #order-price-label { font-size: 11px; }
+  .export-divider { display: none; }
 
-  /* Bottom tab bar */
+  /* ── Bottom tab bar ────────────────────────────────────────── */
   #mobile-nav {
     display: flex;
     height: var(--mob-nav);
@@ -488,6 +516,7 @@ html, body {
     cursor: pointer;
     transition: color 0.15s;
     padding: 8px 4px;
+    -webkit-tap-highlight-color: transparent;
   }
   .mob-tab svg { width: 22px; height: 22px; stroke-width: 1.8; }
   .mob-tab.active { color: #fff; }
