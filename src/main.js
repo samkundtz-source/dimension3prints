@@ -413,7 +413,10 @@ async function doOrderPrint() {
         radius: parseFloat(el('radius-slider').value),
         verticalScale: getVertExag(),
         elevation: el('use-elevation').checked,
-        terrainRelief: el('terrain-relief')?.checked || false,
+        terrainRelief: el('terrain-relief')?.checked    || false,
+        detailedBuildings: el('detailed-buildings')?.checked || false,
+        roadElevation: el('road-elevation')?.checked    || false,
+        rotation: parseFloat(el('rotation-slider')?.value || '0'),
         region,
       }),
     });
@@ -599,6 +602,14 @@ document.addEventListener('DOMContentLoaded', () => {
           el('vscale-slider').value = s;
           el('vscale-value').textContent = s + 'x';
         }
+        // Set rotation
+        if (params.has('rotation')) {
+          const deg = parseFloat(params.get('rotation'));
+          if (!isNaN(deg)) {
+            const rs = el('rotation-slider');
+            if (rs) { rs.value = deg; el('rotation-value').textContent = `${deg}°`; }
+          }
+        }
         // Set elevation
         if (params.has('elevation')) {
           el('use-elevation').checked = params.get('elevation') === 'true';
@@ -607,6 +618,11 @@ document.addEventListener('DOMContentLoaded', () => {
         if (params.has('terrainRelief')) {
           const tr = el('terrain-relief');
           if (tr) tr.checked = params.get('terrainRelief') === 'true';
+        }
+        // Set detailed buildings
+        if (params.has('detailedBuildings')) {
+          const db = el('detailed-buildings');
+          if (db) db.checked = params.get('detailedBuildings') === 'true';
         }
         // Set road elevation
         if (params.has('roadElevation')) {

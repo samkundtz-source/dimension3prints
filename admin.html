@@ -593,7 +593,11 @@
       const params = new URLSearchParams({
         lat: m.lat, lng: m.lng, radius: m.radius,
         scale: m.verticalScale, elevation: m.elevation,
-        terrainRelief: m.terrainRelief, admin: '1',
+        terrainRelief:     m.terrainRelief     ?? false,
+        detailedBuildings: m.detailedBuildings ?? false,
+        roadElevation:     m.roadElevation     ?? false,
+        rotation:          m.rotation          ?? 0,
+        admin: '1',
         orderId: orderId,
       });
       window.open('/app.html?' + params.toString(), '_blank');
