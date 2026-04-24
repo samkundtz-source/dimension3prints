@@ -154,11 +154,16 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
   // ── 0. Pre-collect water polygons ─────────────────────────────────────────
   const WATER_DEPTH = 1.0; // mm — shallow recess into the base (< half of BASE_THICKNESS_MM)
+  const hexArea     = Math.abs(signedArea2D(hexFull)); // total hex area in mm²
   const waterPolys  = [];
   for (const feat of (features.water || [])) {
-    const poly = clipToHex(feat.polygon, hexInner);
+    let poly;
+    try { poly = clipToHex(feat.polygon, hexInner); } catch { continue; }
     if (!poly || poly.length < 3) continue;
-    if (Math.abs(signedArea2D(poly)) < 1.0) continue; // skip puddles < 1 mm²
+    const area = Math.abs(signedArea2D(poly));
+    if (area < 1.0) continue;              // skip puddles < 1 mm²
+    if (area > hexArea * 0.90) continue;   // skip seas/oceans that nearly fill the hex
+    if (poly.length > 300) continue;       // skip overly complex polygons (earcut instability)
     waterPolys.push(poly);
   }
   const hasWater    = waterPolys.length > 0;
@@ -174,7 +179,15 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // ── 1. Base plate ─────────────────────────────────────────────────────────
   onProgress?.('Building base plate…', 65);
   if (hasWater) {
-    collectHexBaseWithHoles(baseAcc, hexFull, waterPolys, BASE, waterFloorY);
+    try {
+      collectHexBaseWithHoles(baseAcc, hexFull, waterPolys, BASE, waterFloorY);
+    } catch (e) {
+      // Earcut failed for this water layout — fall back to a plain flat base.
+      // The water features will simply be white (same as base) rather than
+      // causing the whole generation to fail.
+      console.warn('[buildMap] collectHexBaseWithHoles failed, using plain base:', e?.message);
+      collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
+    }
   } else {
     collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
   }
@@ -579,13 +592,15 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     // material (waterFloorY → BASE) so the road slab sits on solid ground
     // rather than floating above the open pit.
     if (roadPlaced && hasWater && roadCrossesWater(feat.points, waterPolys, halfW)) {
-      const infillPoly = bufferLinestring(feat.points, halfW);
-      if (infillPoly) {
-        const infillClipped = clipToHex(infillPoly, hexInner);
-        if (infillClipped && infillClipped.length >= 3) {
-          collectExtrudedPolygon(baseAcc, infillClipped, [], waterFloorY, BASE - waterFloorY);
+      try {
+        const infillPoly = bufferLinestring(feat.points, halfW);
+        if (infillPoly) {
+          const infillClipped = clipToHex(infillPoly, hexInner);
+          if (infillClipped && infillClipped.length >= 3) {
+            collectExtrudedPolygon(baseAcc, infillClipped, [], waterFloorY, BASE - waterFloorY);
+          }
         }
-      }
+      } catch { /* skip causeway fill for this road segment */ }
     }
 
     roadCount++;
@@ -597,35 +612,37 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // then white border planks around the perimeter — they run from the pit
   // floor (waterFloorY) UP to the base surface (BASE) so they are flush with
   // the top of the model and visible as a white riverbank ring from above.
+  // Each polygon is wrapped in its own try/catch so one bad polygon can't
+  // kill the rest. Failing polys are silently skipped (stay white/base level).
   if (hasWater) {
     onProgress?.('Building water areas…', 88);
     const BORDER_W = 0.8; // mm — width of white border plank inside the pit
     for (const poly of waterPolys) {
-      // Black floor slab at pit bottom
-      collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.3);
+      try {
+        // Black floor slab at pit bottom
+        collectExtrudedPolygon(blackAcc, poly, [], waterFloorY, 0.3);
 
-      // White border planks — one thin prism per edge, going from waterFloorY
-      // to BASE.  Each plank is BORDER_W mm wide, sitting just inside the pit
-      // wall so the top face is visible from above as a white border ring.
-      const ring = ensureCCW(deduplicateRing(poly));
-      const M = ring.length;
-      for (let i = 0; i < M; i++) {
-        const A  = ring[i];
-        const B  = ring[(i + 1) % M];
-        const dx = B.x - A.x;
-        const dy = B.y - A.y;
-        const len = Math.sqrt(dx * dx + dy * dy);
-        // Skip only truly degenerate edges (< 0.05 mm). Previously this was
-        // gated at len < BORDER_W (0.8 mm) which skipped many valid short edges
-        // of clipped water polygons, leaving visible gaps in the border ring.
-        if (len < 0.05) continue;
-        // Inward normal (left of A→B for CCW polygon)
-        const nx = -dy / len;
-        const ny =  dx / len;
-        const Ai = { x: A.x + nx * BORDER_W, y: A.y + ny * BORDER_W };
-        const Bi = { x: B.x + nx * BORDER_W, y: B.y + ny * BORDER_W };
-        // Quad [A, B, Bi, Ai] — collectExtrudedPolygon handles winding
-        collectExtrudedPolygon(baseAcc, [A, B, Bi, Ai], [], waterFloorY, WATER_DEPTH);
+        // White border planks — one thin prism per edge, going from waterFloorY
+        // to BASE.  Each plank is BORDER_W mm wide, sitting just inside the pit
+        // wall so the top face is visible from above as a white border ring.
+        const ring = ensureCCW(deduplicateRing(poly));
+        const M = ring.length;
+        for (let i = 0; i < M; i++) {
+          const A  = ring[i];
+          const B  = ring[(i + 1) % M];
+          const dx = B.x - A.x;
+          const dy = B.y - A.y;
+          const len = Math.sqrt(dx * dx + dy * dy);
+          if (len < 0.05) continue;
+          const nx = -dy / len;
+          const ny =  dx / len;
+          const Ai = { x: A.x + nx * BORDER_W, y: A.y + ny * BORDER_W };
+          const Bi = { x: B.x + nx * BORDER_W, y: B.y + ny * BORDER_W };
+          collectExtrudedPolygon(baseAcc, [A, B, Bi, Ai], [], waterFloorY, WATER_DEPTH);
+        }
+      } catch (e) {
+        console.warn('[buildMap] Skipping water polygon (geometry error):', e?.message);
+        // Polygon is simply left as white base — generation continues.
       }
     }
   }
