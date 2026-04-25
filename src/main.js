@@ -522,7 +522,7 @@ function initControls() {
   }
 
   const priceLabel = el('order-price-label');
-  if (priceLabel) priceLabel.textContent = 'Order Print — $35';
+  if (priceLabel) priceLabel.textContent = 'Order Print — $29.99';
 
   // Generate
   el('generate-btn').addEventListener('click', generate);

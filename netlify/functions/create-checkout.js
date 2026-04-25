@@ -84,8 +84,8 @@ exports.handler = async (event) => {
       return { statusCode: 400, body: JSON.stringify({ error: 'Missing location data' }) };
     }
 
-    // Pricing: standard $35, inverted (black buildings / white roads) $40
-    const unitAmount = invertColors ? 4000 : 3500;
+    // Pricing: standard $29.99, inverted (black buildings / white roads) $34.99
+    const unitAmount = invertColors ? 3499 : 2999;
 
     const modelDesc = `3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x | ${invertColors ? 'Inverted' : 'Standard'} colors`;
 
