@@ -99,7 +99,7 @@ async function handleCreateCheckout(request, env) {
   }
 
   const orderId    = generateOrderId();
-  const unitAmount = 3500; // flat $35
+  const unitAmount = 2999; // $29.99
   const preOrderTag = isPreOrder ? ' [PRE-ORDER]' : '';
   const modelDesc  = `${orderId}${preOrderTag} — 3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x${terrainRelief ? ' | Terrain relief' : ''}`;
   const shipping   = getShippingForRegion(region || 'US');
