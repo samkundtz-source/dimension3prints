@@ -243,8 +243,9 @@ async function generate() {
 
     // 5. Build 3D model
     setStatus('Building 3D model...', 60);
-    const detailedBuildings = el('detailed-buildings')?.checked || false;
-    const result = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, false, terrainRelief, activeOrderId, roadElevation);
+    const detailedBuildings  = el('detailed-buildings')?.checked  || false;
+    const proceduralInfill   = el('procedural-infill')?.checked   || false;
+    const result = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, false, terrainRelief, activeOrderId, roadElevation, proceduralInfill);
     const group = result.group;
     const modelStats = result.stats;
 

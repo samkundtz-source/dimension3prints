@@ -139,7 +139,7 @@ function sampleTerrainElev(x, y, elevGrid, N, vScale) {
   return clamp(e * vScale, 0, 40);
 }
 
-export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '', roadElevation = false) {
+export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '', roadElevation = false, proceduralInfill = false) {
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -483,6 +483,100 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
 
   if (detailedBuildings) {
     console.log(`[Buildings] Tier 1 landmarks: ${landmarkCount}, Tier 2 tall-towers: ${tallTowerCount}, Tier 3 standard: ${standardCount}`);
+  }
+
+  // ── 4b. Procedural infill — fill sparse OSM areas using landuse zones ─────
+  if (proceduralInfill && features.landuse && features.landuse.length > 0) {
+    onProgress?.('Generating procedural infill…', 77);
+
+    // Scale grid step and building size with the horizontal scale so they stay
+    // city-block-sized regardless of capture radius.
+    const BLOCK_M = 80;   // real-world city block spacing (m)
+    const BLDG_W_M = 14;  // typical building width (m)
+    const BLDG_D_M = 11;  // typical building depth (m)
+
+    const gridStep = Math.max(4, BLOCK_M * hScale);
+    const bldgW    = Math.max(1.5, BLDG_W_M * hScale);
+    const bldgD    = Math.max(1.5, BLDG_D_M * hScale);
+
+    let proceduralCount = 0;
+
+    for (const feat of features.landuse) {
+      const poly = feat.polygon;
+      if (!poly || poly.length < 3) continue;
+
+      const lu = feat.tags?.landuse || 'residential';
+
+      // Bounding box of the landuse polygon
+      let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
+      for (const p of poly) {
+        if (p.x < pMinX) pMinX = p.x;
+        if (p.x > pMaxX) pMaxX = p.x;
+        if (p.y < pMinY) pMinY = p.y;
+        if (p.y > pMaxY) pMaxY = p.y;
+      }
+
+      for (let gx = pMinX; gx < pMaxX; gx += gridStep) {
+        for (let gy = pMinY; gy < pMaxY; gy += gridStep) {
+          const h  = proceduralHash(gx, gy);
+          const h2 = proceduralHash(gx + 1337, gy + 7919);
+
+          const offsetX = ((h  & 0xff) / 255 - 0.5) * gridStep * 0.5;
+          const offsetY = (((h >> 8) & 0xff) / 255 - 0.5) * gridStep * 0.5;
+          const wScale  = 0.55 + ((h >> 16) & 0xff) / 255 * 0.9;
+          const dScale  = 0.55 + ((h >> 24) & 0xff) / 255 * 0.9;
+          const rotDeg  = (h2 & 0x3) * 45; // 0°, 45°, 90°, 135°
+          const hFrac   = ((h2 >> 8) & 0xff) / 255;
+
+          const cx = gx + gridStep / 2 + offsetX;
+          const cy = gy + gridStep / 2 + offsetY;
+
+          // Must be inside this landuse polygon
+          if (!pointInSimplePolygon({ x: cx, y: cy }, poly)) continue;
+
+          // Skip if an existing real building already occupies this cell
+          const [gcx, gcy] = gridCell(cx, cy);
+          if (gcx >= 0 && gcy >= 0 && gcx < GRID_SIZE && gcy < GRID_SIZE) {
+            const bucket = buildingGrid[gridKey(gcx, gcy)];
+            if (bucket) {
+              let occupied = false;
+              for (const bi of bucket) {
+                const bf = buildingFootprints[bi];
+                if (cx >= bf.bbox.minX && cx <= bf.bbox.maxX &&
+                    cy >= bf.bbox.minY && cy <= bf.bbox.maxY) {
+                  occupied = true; break;
+                }
+              }
+              if (occupied) continue;
+            }
+          }
+
+          // Height range by landuse type
+          let minHM = 4, maxHM = 10;
+          if (lu === 'commercial' || lu === 'retail' || lu === 'civic') { minHM = 5; maxHM = 20; }
+          if (lu === 'industrial') { minHM = 4; maxHM = 7; }
+
+          const heightM  = minHM + hFrac * (maxHM - minHM);
+          const heightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
+
+          const bldgPoly = makeProceduralRect(cx, cy, bldgW * wScale, bldgD * dScale, rotDeg);
+          let clipped;
+          try { clipped = clipToHex(bldgPoly, hexInner); } catch { continue; }
+          if (!clipped || clipped.length < 3) continue;
+          if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
+
+          const terrainBase = polyTerrainBaseY(clipped);
+          collectExtrudedPolygon(buildingAcc, clipped, [], terrainBase, heightMM);
+          buildingCount++;
+          proceduralCount++;
+
+          if (proceduralCount >= 3000) break;
+        }
+        if (proceduralCount >= 3000) break;
+      }
+    }
+
+    console.log(`[Infill] ${proceduralCount} procedural buildings from ${features.landuse.length} landuse zones`);
   }
 
   // ── 5. Roads — layered with centerline ridge on major roads ──────────────
@@ -1816,6 +1910,28 @@ function parseBuildingHeight(tags, polygon) {
 
   const frac = polygon ? deterministicFrac(polygon) : 0.5;
   return minH + frac * (maxH - minH);
+}
+
+function proceduralHash(gx, gy) {
+  const ix = Math.round(gx * 100) & 0xffff;
+  const iy = Math.round(gy * 100) & 0xffff;
+  let h = (ix * 2654435761 ^ iy * 2246822519) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  h = Math.imul(h, 0x45d9f3b) >>> 0;
+  h = (h ^ (h >>> 16)) >>> 0;
+  return h;
+}
+
+function makeProceduralRect(cx, cy, w, d, angleDeg) {
+  const r = angleDeg * Math.PI / 180;
+  const cos = Math.cos(r), sin = Math.sin(r);
+  const hw = w / 2, hd = d / 2;
+  return [
+    [-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd],
+  ].map(([lx, ly]) => ({
+    x: cx + lx * cos - ly * sin,
+    y: cy + lx * sin + ly * cos,
+  }));
 }
 
 function deterministicFrac(polygon) {

@@ -46,7 +46,7 @@ function buildQuery(bbox) {
   const { south, west, north, east } = bbox;
   const bb = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
 
-  // Buildings + roads + water polygons. Water is needed for the recess effect.
+  // Buildings + roads + water + landuse zones for procedural infill.
   return `[out:json][timeout:90];
 (
   way["building"](${bb});
@@ -60,6 +60,8 @@ function buildQuery(bbox) {
   way["landuse"="reservoir"](${bb});
   relation["natural"="water"](${bb});
   relation["water"](${bb});
+  way["landuse"~"^(residential|commercial|industrial|retail|mixed|civic)$"](${bb});
+  relation["landuse"~"^(residential|commercial|industrial|retail|mixed|civic)$"](${bb});
 );
 out body;
 >;
@@ -148,7 +150,7 @@ export function parseOSMData(json, projection, hexVertices) {
   }
 
   // ── 3. Parse ways ─────────────────────────────────────────────────────────
-  const features = { buildings: [], roads: [], paths: [], water: [], waterways: [], parks: [], trees: [] };
+  const features = { buildings: [], roads: [], paths: [], water: [], waterways: [], parks: [], trees: [], landuse: [] };
   let totalWays = 0, skippedNoCoords = 0, skippedUnclassified = 0, skippedClipped = 0;
   const processedWayIds = new Set();
 
@@ -232,6 +234,7 @@ export function parseOSMData(json, projection, hexVertices) {
 
       const bucket = type === 'building' ? features.buildings
                    : type === 'water'    ? features.water
+                   : type === 'landuse'  ? features.landuse
                                          : features.parks;
       bucket.push({ polygon: clipped, holes: innerRings.filter(h => h.length >= 3), tags, osmId: `relation/${el.id}` });
       relationsAdded++;
@@ -283,6 +286,9 @@ const GREEN_LANDUSE = new Set([
   'park','forest','grass','meadow','recreation_ground',
   'village_green','cemetery','allotments',
 ]);
+const INFILL_LANDUSE = new Set([
+  'residential','commercial','industrial','retail','mixed','civic',
+]);
 const GREEN_LEISURE = new Set([
   'park','garden','pitch','playground','nature_reserve','golf_course',
 ]);
@@ -317,6 +323,8 @@ function classifyTags(tags) {
     return 'park';
   }
 
+  if (INFILL_LANDUSE.has(tags.landuse)) return 'landuse';
+
   return null;
 }
 
@@ -324,7 +332,7 @@ function classifyTags(tags) {
 
 /** Returns true if the feature was added, false if it was rejected/clipped. */
 function addFeature(type, coords, tags, hexVertices, features, osmId) {
-  const isArea = type === 'building' || type === 'water' || type === 'park';
+  const isArea = type === 'building' || type === 'water' || type === 'park' || type === 'landuse';
   const isLine = type === 'road' || type === 'path' || type === 'waterway';
 
   if (isArea) {
@@ -338,6 +346,7 @@ function addFeature(type, coords, tags, hexVertices, features, osmId) {
 
     const bucket = type === 'building' ? features.buildings
                  : type === 'water'    ? features.water
+                 : type === 'landuse'  ? features.landuse
                                        : features.parks;
     bucket.push({ polygon: clipped, holes: [], tags, osmId: osmId || '' });
     return true;
