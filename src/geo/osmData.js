@@ -365,6 +365,60 @@ function addFeature(type, coords, tags, hexVertices, features, osmId) {
   return false;
 }
 
+// ─── Microsoft Global Building Footprints parser ─────────────────────────────
+// Converts GeoJSON features from the /api/ms-buildings endpoint into the same
+// format as parseOSMData output, so they can be merged into features.buildings.
+
+export function parseMSBuildings(geojsonFeatures, projection, hexVertices, existingBuildings) {
+  // Build a quick centroid-bbox lookup of existing OSM buildings to skip dupes.
+  const existing = (existingBuildings || []).map(b => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of b.polygon) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    return { minX, maxX, minY, maxY };
+  });
+
+  function overlapsExisting(cx, cy) {
+    for (const b of existing) {
+      if (cx >= b.minX && cx <= b.maxX && cy >= b.minY && cy <= b.maxY) return true;
+    }
+    return false;
+  }
+
+  const buildings = [];
+  for (const feat of (geojsonFeatures || [])) {
+    const geom = feat?.geometry;
+    if (!geom) continue;
+
+    const rings = geom.type === 'Polygon'      ? [geom.coordinates[0]]
+                : geom.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0])
+                : [];
+
+    for (const ring of rings) {
+      if (!ring || ring.length < 3) continue;
+      // GeoJSON coordinates are [lng, lat]
+      const coords = ring.map(([lng, lat]) => projection.project(lat, lng));
+      const deduped = deduplicateRing(coords);
+      if (deduped.length < 3) continue;
+
+      // Skip if centroid falls inside an existing OSM building's bbox
+      let cx = 0, cy = 0;
+      for (const p of deduped) { cx += p.x; cy += p.y; }
+      cx /= deduped.length; cy /= deduped.length;
+      if (overlapsExisting(cx, cy)) continue;
+
+      const ccw = ensureCCW(deduped);
+      const clipped = clipToHex(ccw, hexVertices);
+      if (!clipped || clipped.length < 3) continue;
+
+      buildings.push({ polygon: clipped, holes: [], tags: {}, osmId: '' });
+    }
+  }
+  return buildings;
+}
+
 // ─── Elevation ────────────────────────────────────────────────────────────────
 
 const OPENTOPODATA = 'https://api.opentopodata.org/v1/srtm30m';

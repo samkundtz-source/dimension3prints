@@ -16,5 +16,8 @@
   },
   "kv_namespaces": [
     { "binding": "SETTINGS", "id": "59a9fc521dc9450b934a359acafb9bc1" }
+  ],
+  "r2_buckets": [
+    { "binding": "MS_BUILDINGS", "bucket_name": "ms-buildings" }
   ]
 }

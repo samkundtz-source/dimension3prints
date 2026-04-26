@@ -22,7 +22,7 @@ const PIN_ICON = L.divIcon({
 });
 
 import { createProjection, getHexVerticesGeo, getHexVertices, getShapeVertices, getShapeVerticesGeo } from './geo/geoMath.js';
-import { geocode, fetchOSMData, parseOSMData, fetchElevation } from './geo/osmData.js';
+import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, fetchElevation } from './geo/osmData.js';
 import { buildMapModel } from './geometry/buildMap.js';
 import { SceneManager }  from './preview/scene.js';
 import { exportSTL, export3MF } from './export/exporters.js';
@@ -222,6 +222,32 @@ async function generate() {
       `${features.parks.length} parks`,
     ].join(' · ');
     setStatus(`Parsed: ${counts}`, 35);
+
+    // 3b. MS Global Building Footprints (optional toggle)
+    const useMsBuildings = el('ms-buildings')?.checked || false;
+    if (useMsBuildings) {
+      setStatus('Fetching extended building data…', 38);
+      try {
+        const bbox = projection.getBBox(1.0);
+        const resp = await fetch('/api/ms-buildings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(bbox),
+        });
+        if (resp.ok) {
+          const msData = await resp.json();
+          const msBuildings = parseMSBuildings(msData.features, projection, shapeVerts, features.buildings);
+          if (msBuildings.length > 0) {
+            features.buildings.push(...msBuildings);
+            setStatus(`Extended data: +${msBuildings.length} buildings`, 40);
+          } else {
+            setStatus('Extended data: no additional buildings for this area', 40);
+          }
+        }
+      } catch {
+        setStatus('Extended data unavailable — using OSM only', 40);
+      }
+    }
 
     // 4. Elevation (optional — forced on when terrain relief is enabled)
     let elevGrid = null;

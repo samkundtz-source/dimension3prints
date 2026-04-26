@@ -535,6 +535,67 @@ async function handleUpdateContent(request, env) {
   return jsonResponse({ success: true, content: updated });
 }
 
+// ─── MS Global Building Footprints (R2-backed) ────────────────────────────────
+// Tiles are stored in R2 as `{zoom}/{x}/{y}.json` (GeoJSON FeatureCollection).
+// The data pipeline script (scripts/process-ms-buildings.mjs) populates them.
+
+function latLngToTile(lat, lng, zoom) {
+  const n = 1 << zoom;
+  const x = Math.floor((lng + 180) / 360 * n);
+  const latRad = lat * Math.PI / 180;
+  const sinLat = Math.sin(latRad);
+  const y = Math.floor((0.5 - Math.log((1 + sinLat) / (1 - sinLat)) / (4 * Math.PI)) * n);
+  return {
+    x: Math.max(0, Math.min(n - 1, x)),
+    y: Math.max(0, Math.min(n - 1, y)),
+  };
+}
+
+async function handleMsBuildings(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+
+  const { south, west, north, east } = body;
+  if (south == null || west == null || north == null || east == null) {
+    return jsonResponse({ error: 'Missing bbox' }, 400);
+  }
+
+  // Return empty gracefully when R2 bucket not yet set up
+  if (!env.MS_BUILDINGS) {
+    return jsonResponse({ features: [], note: 'MS_BUILDINGS R2 bucket not configured' });
+  }
+
+  const ZOOM = 12; // ~10km tiles — good for our max 10km capture radius
+  const tl = latLngToTile(north, west, ZOOM);
+  const br = latLngToTile(south, east, ZOOM);
+
+  const tileKeys = [];
+  for (let x = tl.x; x <= br.x; x++) {
+    for (let y = tl.y; y <= br.y; y++) {
+      tileKeys.push(`${ZOOM}/${x}/${y}.json`);
+    }
+  }
+
+  // Safety cap — shouldn't exceed 9 tiles for any normal capture radius
+  if (tileKeys.length > 16) {
+    return jsonResponse({ features: [], note: 'bbox too large' });
+  }
+
+  const allFeatures = [];
+  await Promise.all(tileKeys.map(async key => {
+    try {
+      const obj = await env.MS_BUILDINGS.get(key);
+      if (!obj) return;
+      const data = await obj.json();
+      if (Array.isArray(data?.features)) allFeatures.push(...data.features);
+    } catch { /* tile missing or corrupt — skip silently */ }
+  }));
+
+  return jsonResponse({ features: allFeatures });
+}
+
 // Public endpoint — storefront checks order availability
 async function handleOrderAvailability(request, env) {
   if (request.method !== 'GET' && request.method !== 'POST') {
@@ -580,6 +641,7 @@ export default {
       case '/api/order-availability':    return handleOrderAvailability(request, env);
       case '/api/content':               return handleGetContent(request, env);
       case '/api/admin-update-content':  return handleUpdateContent(request, env);
+      case '/api/ms-buildings':          return handleMsBuildings(request, env);
     }
 
     // Everything else → static assets
