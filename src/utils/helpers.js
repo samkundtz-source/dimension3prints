@@ -85,6 +85,29 @@ export const ROAD_MIN_VISUAL_HALF_MM = {
   steps:         0.22,
 };
 
+/**
+ * Road extrusion heights above the base plate (mm).
+ * Hierarchical so importance reads instantly in the model.
+ * Every value is < MIN_BUILDING_HEIGHT_MM (2.0 mm) so roads can never appear
+ * taller than even the shortest building.
+ */
+export const ROAD_HEIGHTS_MM = {
+  motorway:       1.4,
+  motorway_link:  1.0,
+  trunk:          1.3,
+  trunk_link:     0.9,
+  primary:        1.2,
+  primary_link:   0.8,
+  secondary:      1.0,
+  secondary_link: 0.7,
+  tertiary:       0.8,
+  tertiary_link:  0.6,
+  unclassified:   0.6,
+  residential:    0.6,
+  living_street:  0.5,
+  road:           0.6,
+};
+
 // ─── Maths helpers ────────────────────────────────────────────────────────────
 
 export function clamp(v, lo, hi) { return Math.min(hi, Math.max(lo, v)); }
