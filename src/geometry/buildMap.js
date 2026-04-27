@@ -581,6 +581,12 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const MEDIUM_ROADS = new Set(['secondary','secondary_link','tertiary','tertiary_link']);
   const BRIDGE_RISE  = 1.2; // extra mm a bridge deck floats above ground road surface
 
+  // ── Road area cap — max mm² a single road polygon may cover after hex clip ──
+  // A motorway running across the full 150 mm hex covers ≈ 660 mm².
+  // Anything larger is almost certainly a closed-ring road (roundabout, loop)
+  // whose interior got filled by bufferLinestring.  Keep a comfortable margin.
+  const MAX_ROAD_AREA = 900; // mm²
+
   let roadCount = 0;
   onProgress?.('Building roads…', 80);
 
@@ -592,6 +598,17 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const realW = hScale * (ROAD_WIDTHS_M[hw]            ?? ROAD_WIDTHS_M.residential);
     const minW  = ROAD_MIN_VISUAL_HALF_MM[hw]            ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW = Math.max(realW, minW);
+
+    // ── Skip closed-ring roads (roundabouts, junction loops) ───────────────
+    // When the first and last point of a way nearly coincide, bufferLinestring
+    // treats the ring as a linestring and fills the entire interior, producing
+    // a massive black disc.  Skip these — individual approach roads already
+    // represent the junction geometry.
+    if (feat.points.length >= 2) {
+      const fp = feat.points[0];
+      const lp = feat.points[feat.points.length - 1];
+      if (Math.hypot(fp.x - lp.x, fp.y - lp.y) < halfW * 2) continue;
+    }
 
     // ── Height — looked up from table, never hardcoded ─────────────────
     const roadH = ROAD_HEIGHTS_MM[hw] ?? 0.6;
@@ -606,7 +623,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       const supportPoly = bufferLinestring(feat.points, halfW * 0.55);
       if (supportPoly) {
         const sc = clipToHex(supportPoly, hexInner);
-        if (sc && sc.length >= 3 && minBBoxDimension(sc) >= NOZZLE_MM) {
+        if (sc && sc.length >= 3 && minBBoxDimension(sc) >= NOZZLE_MM &&
+            Math.abs(signedArea2D(sc)) <= MAX_ROAD_AREA) {
           collectExtrudedPolygon(blackAcc, sc, [], BASE, supportH);
         }
       }
@@ -615,7 +633,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       const deckPoly = bufferLinestring(feat.points, halfW);
       if (deckPoly) {
         const dc = clipToHex(deckPoly, hexInner);
-        if (dc && dc.length >= 3 && minBBoxDimension(dc) >= NOZZLE_MM) {
+        if (dc && dc.length >= 3 && minBBoxDimension(dc) >= NOZZLE_MM &&
+            Math.abs(signedArea2D(dc)) <= MAX_ROAD_AREA) {
           collectExtrudedPolygon(blackAcc, dc, [], deckBaseY, roadH);
           if (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw)) {
             placeRoadRidge(blackAcc, feat.points, halfW, roadH, hexInner, deckBaseY + roadH);
@@ -631,7 +650,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     // Roads sit flat at BASE — no terrain offset. Building avoidance narrows
     // the road progressively until it fits, rather than skipping it.
     const placed = addRoadWithAvoidance(
-      blackAcc, feat.points, halfW, hexInner, BASE, roadH, findOverlappingBuildings
+      blackAcc, feat.points, halfW, hexInner, BASE, roadH, findOverlappingBuildings,
+      MAX_ROAD_AREA
     );
 
     // Centerline ridge on major/medium roads (only when road was placed)
@@ -699,9 +719,9 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
  *
  * Returns true if geometry was placed, false if the segment was skipped.
  */
-function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings) {
+function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings, maxArea = 900) {
   // Width scales to try. Keep reductions gradual so roads stay as wide as possible.
-  const scales    = [1.0, 0.8, 0.6, 0.4];
+  const scales     = [1.0, 0.8, 0.6, 0.4];
   const MIN_HALF_W = NOZZLE_MM * 0.5; // 0.2 mm — narrower than this can't print
   const MIN_DIM    = NOZZLE_MM;       // minimum bbox dimension after hex clip
 
@@ -715,6 +735,11 @@ function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findO
     const clipped = clipToHex(poly, hexInner);
     if (!clipped || clipped.length < 3) continue;
     if (minBBoxDimension(clipped) < MIN_DIM) continue;
+
+    // Reject oversized polygons — a road that fills more than maxArea mm² is
+    // almost certainly a closed ring (roundabout, loop) whose interior has been
+    // incorrectly filled by bufferLinestring.
+    if (Math.abs(signedArea2D(clipped)) > maxArea) continue;
 
     // Check for building overlaps
     const bldgHoles = findOverlappingBuildings(clipped);
@@ -769,7 +794,10 @@ function tryCollectExtruded(acc, polygon, holes, baseY, heightMM) {
 
     const topTris = earcut(flat, holeIndices, 2);
     if (topTris.length === 0) return false;
-    if (Math.abs(earcut.deviation(flat, holeIndices, 2, topTris)) > 0.5) return false;
+    // Stricter threshold (0.15 vs 0.5) — only accept clean tessellations.
+    // Marginally-bad earcut results (deviation 0.15–0.5) were producing large
+    // degenerate triangles that rendered as massive black shapes.
+    if (Math.abs(earcut.deviation(flat, holeIndices, 2, topTris)) > 0.15) return false;
 
     // Check total area — reject if too small (degenerate)
     let totalArea = 0;
@@ -1163,7 +1191,7 @@ function collectExtrudedPolygon(acc, polygon, holes, baseY, heightMM) {
 
     const topTris = earcut(flat, holeIndices, 2);
     if (topTris.length === 0) return;
-    if (Math.abs(earcut.deviation(flat, holeIndices, 2, topTris)) > 0.5) return;
+    if (Math.abs(earcut.deviation(flat, holeIndices, 2, topTris)) > 0.15) return;
 
     const allPos = [];
     const allIdx = [];
