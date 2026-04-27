@@ -339,12 +339,35 @@ async function handleOrderInfo(request, env) {
   return jsonResponse({ orderId: session.metadata?.orderId || null });
 }
 
+const AVAIL_CACHE_TTL = 30;
+
+async function getOrderAvailabilityCached(env) {
+  if (!env.SETTINGS) return null;
+  try {
+    const cached = await env.SETTINGS.get('avail_cache', 'json');
+    if (cached && Math.floor(Date.now() / 1000) - cached.ts < AVAIL_CACHE_TTL) {
+      return cached.data;
+    }
+  } catch {}
+  return null;
+}
+
+async function setOrderAvailabilityCache(env, data) {
+  if (!env.SETTINGS) return;
+  try {
+    await env.SETTINGS.put('avail_cache', JSON.stringify({ ts: Math.floor(Date.now() / 1000), data }), { expirationTtl: AVAIL_CACHE_TTL * 2 });
+  } catch {}
+}
+
 async function handleOrderAvailability(request, env) {
   if (request.method !== 'GET' && request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
 
   const ip = getClientIP(request);
   const rl = await checkPublicRateLimit(env, ip, 'order-avail', 30, 60);
   if (rl.blocked) return jsonResponse({ error: 'Too many requests.' }, 429, { 'Retry-After': String(rl.retryAfter) });
+
+  const hit = await getOrderAvailabilityCached(env);
+  if (hit) return jsonResponse(hit);
 
   const settings = await getSettings(env);
   let paidCount = 0;
@@ -359,13 +382,16 @@ async function handleOrderAvailability(request, env) {
   }
 
   const limitReached = paidCount >= settings.orderLimit;
-  return jsonResponse({
+  const result = {
     orderCount:      paidCount,
     orderLimit:      settings.orderLimit,
     limitReached,
     preOrderEnabled: settings.preOrderEnabled,
     preOrderMessage: limitReached ? settings.preOrderMessage : null,
-  });
+  };
+
+  await setOrderAvailabilityCache(env, result);
+  return jsonResponse(result);
 }
 
 async function handleMsBuildings(request, env) {
