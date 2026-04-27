@@ -18,7 +18,6 @@ import earcut from 'earcut';
 import {
   MODEL_RADIUS_MM,
   BASE_THICKNESS_MM,
-  LAYER,
   ROAD_WIDTHS_M,
   ROAD_MIN_VISUAL_HALF_MM,
   MIN_BUILDING_HEIGHT_MM,
@@ -257,150 +256,6 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     }
   }
 
-  /**
-   * True if the polygon should be suppressed because it sits inside a building
-   * or a ring of buildings. Uses four independent detection strategies so it
-   * catches single-ring buildings, multipolygon courtyards, AND multi-segment
-   * ring structures (e.g. the Colosseum made of many building:part ways).
-   */
-  function enclosedByAnyBuilding(poly) {
-    // ── Precompute park/water bbox and centroid ──────────────────────────
-    let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
-    let cx = 0, cy = 0;
-    for (const p of poly) {
-      if (p.x < pMinX) pMinX = p.x;
-      if (p.x > pMaxX) pMaxX = p.x;
-      if (p.y < pMinY) pMinY = p.y;
-      if (p.y > pMaxY) pMaxY = p.y;
-      cx += p.x; cy += p.y;
-    }
-    cx /= poly.length;
-    cy /= poly.length;
-
-    // ── Test 1: Park bbox fully inside a single building bbox ───────────
-    for (const bf of buildingFootprints) {
-      if (bf.bbox.minX <= pMinX && bf.bbox.maxX >= pMaxX &&
-          bf.bbox.minY <= pMinY && bf.bbox.maxY >= pMaxY) {
-        return true;
-      }
-    }
-
-    // ── Test 2: Centroid inside a building's hole polygon ───────────────
-    // For multipolygon buildings, OSM stores the courtyard as an inner ring.
-    // If the park centroid is inside that hole, it's in the courtyard.
-    for (const bf of buildingFootprints) {
-      if (!bf.holes || bf.holes.length === 0) continue;
-      for (const hole of bf.holes) {
-        if (!hole || hole.length < 3) continue;
-        if (pointInSimplePolygon({ x: cx, y: cy }, hole)) return true;
-      }
-    }
-
-    // ── Test 3: Multiple buildings surround the park ────────────────────
-    // For ring structures made of many building segments (building:part),
-    // no single bbox contains the park. Instead, check if the park's
-    // perimeter vertices are covered by building bboxes from all sides.
-    // Divide vertices into 4 quadrants around the centroid. If 3+ quadrants
-    // have at least one vertex inside a building bbox, the park is enclosed.
-    const quadCovered = [false, false, false, false]; // NE, NW, SW, SE
-    for (const p of poly) {
-      const qi = (p.y < cy ? 2 : 0) + (p.x < cx ? 1 : 0); // quadrant index
-      if (quadCovered[qi]) continue; // already found coverage here
-
-      // Use spatial grid for efficient lookup
-      const [pgx, pgy] = gridCell(p.x, p.y);
-      if (pgx < 0 || pgy < 0 || pgx >= GRID_SIZE || pgy >= GRID_SIZE) continue;
-      const bucket = buildingGrid[gridKey(pgx, pgy)];
-      if (!bucket) continue;
-      for (const bi of bucket) {
-        const bf = buildingFootprints[bi];
-        if (p.x >= bf.bbox.minX && p.x <= bf.bbox.maxX &&
-            p.y >= bf.bbox.minY && p.y <= bf.bbox.maxY) {
-          quadCovered[qi] = true;
-          break;
-        }
-      }
-    }
-    const coveredQuads = quadCovered[0] + quadCovered[1] + quadCovered[2] + quadCovered[3];
-    if (coveredQuads >= 3) return true;
-
-    // ── Test 4: Centroid inside any building polygon (solid buildings) ──
-    const [gcx, gcy] = gridCell(cx, cy);
-    if (gcx >= 0 && gcy >= 0 && gcx < GRID_SIZE && gcy < GRID_SIZE) {
-      const bucket = buildingGrid[gridKey(gcx, gcy)];
-      if (bucket) {
-        for (const bi of bucket) {
-          const bf = buildingFootprints[bi];
-          if (cx < bf.bbox.minX || cx > bf.bbox.maxX ||
-              cy < bf.bbox.minY || cy > bf.bbox.maxY) continue;
-          if (pointInSimplePolygon({ x: cx, y: cy }, bf.polygon)) return true;
-        }
-      }
-    }
-
-    return false;
-  }
-
-  /**
-   * Find building footprints overlapping a polygon. Returns hole rings
-   * for earcut subtraction (offset outward by CLEARANCE).
-   */
-  function findOverlappingBuildings(poly) {
-    let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
-    for (const p of poly) {
-      if (p.x < pMinX) pMinX = p.x;
-      if (p.x > pMaxX) pMaxX = p.x;
-      if (p.y < pMinY) pMinY = p.y;
-      if (p.y > pMaxY) pMaxY = p.y;
-    }
-
-    // Collect candidate building indices via spatial grid (deduped)
-    const [c0x, c0y] = gridCell(pMinX, pMinY);
-    const [c1x, c1y] = gridCell(pMaxX, pMaxY);
-    const seen = new Set();
-    const candidates = [];
-    for (let cy = c0y; cy <= c1y; cy++) {
-      for (let cx = c0x; cx <= c1x; cx++) {
-        if (cx < 0 || cy < 0 || cx >= GRID_SIZE || cy >= GRID_SIZE) continue;
-        const bucket = buildingGrid[gridKey(cx, cy)];
-        if (!bucket) continue;
-        for (const bi of bucket) {
-          if (seen.has(bi)) continue;
-          seen.add(bi);
-          candidates.push(bi);
-        }
-      }
-    }
-
-    const holes = [];
-    for (const bi of candidates) {
-      const bf = buildingFootprints[bi];
-      if (bf.bbox.maxX < pMinX || bf.bbox.minX > pMaxX ||
-          bf.bbox.maxY < pMinY || bf.bbox.minY > pMaxY) continue;
-
-      let hasOverlap = false;
-      // Check vertex containment both ways
-      for (const bp of bf.polygon) {
-        if (pointInSimplePolygon(bp, poly)) { hasOverlap = true; break; }
-      }
-      if (!hasOverlap) {
-        for (const pp of poly) {
-          if (pointInSimplePolygon(pp, bf.polygon)) { hasOverlap = true; break; }
-        }
-      }
-      // Check edge-edge intersections (catches cases where no vertex is inside)
-      if (!hasOverlap) {
-        hasOverlap = polygonEdgesIntersect(bf.polygon, poly);
-      }
-
-      if (hasOverlap) {
-        const buffered = offsetPolygon(bf.polygon, CLEARANCE);
-        if (buffered && buffered.length >= 3) holes.push(buffered);
-      }
-    }
-    return holes;
-  }
-
   // ── 4. Buildings (white) — generated FIRST ────────────────────────────────
   // All buildings are SOLID (no holes/courtyards) for clean 3D printing.
   // Tall buildings get a slight taper for a more realistic look.
@@ -576,110 +431,82 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // All heights are capped below MIN_BUILDING_HEIGHT_MM so roads never appear
   // taller than any building. Building avoidance is applied before placing.
 
-  // ── Road height, area cap, class tiers ───────────────────────────────────
-  const ROAD_SLAB   = NOZZLE_MM; // 0.4 mm — thin flat slabs, never taller than buildings
-  const BRIDGE_RISE = 1.2;       // mm a bridge deck floats above normal road surface
-  // Max mm² a single road polygon may cover after hex clip.
-  // A motorway across the full 150 mm hex is ≈ 660 mm²; anything larger is
-  // almost certainly a closed-ring loop whose interior got filled.
-  const MAX_ROAD_AREA = 900;
-  const MAJOR_ROADS  = new Set(['motorway','motorway_link','trunk','trunk_link','primary','primary_link']);
-  const MEDIUM_ROADS = new Set(['secondary','secondary_link','tertiary','tertiary_link']);
+  // ── 5. Roads ─────────────────────────────────────────────────────────────
+  //
+  // Architecture: roads and buildings are separate Three.js meshes. Depth
+  // testing naturally occludes roads behind buildings — no earcut-with-holes
+  // or building-avoidance geometry is required.
+  //
+  // Each road way is buffered into a flat polygon, clipped to the model
+  // boundary, sanity-checked (area, minimum dimension, closed-ring guard)
+  // and extruded as a solid 0.4 mm slab.
+  //
+  // Guards:
+  //   • closed-ring ways (roundabouts, loops) — bufferLinestring fills their
+  //     interior creating a massive disc; we skip them.
+  //   • 6 % hex-area cap — rejects any remaining runaway polygon.
+  //   • minimum 0.4 mm bbox dimension — rejects sub-nozzle slivers.
+  //   • minimum 0.3 mm² area — rejects point-like degenerate polygons.
+
+  const ROAD_SLAB   = NOZZLE_MM;       // 0.4 mm — roads are thin flat slabs
+  const BRIDGE_RISE = NOZZLE_MM * 3;   // 1.2 mm — bridge deck clearance
+  const MAX_ROAD_AREA = hexArea * 0.06; // ≈ 878 mm² — allows widest legit road
 
   let roadCount = 0;
   onProgress?.('Building roads…', 80);
 
   for (const feat of features.roads) {
-    const hw = feat.tags.highway || 'residential';
+    if (!feat.points || feat.points.length < 2) continue;
+    const hw = feat.tags?.highway || 'residential';
     if (!ROAD_TYPES.has(hw)) continue;
 
-    // ── Width ─────────────────────────────────────────────────────────────
-    const realW = hScale * (ROAD_WIDTHS_M[hw]           ?? ROAD_WIDTHS_M.residential);
-    const minW  = ROAD_MIN_VISUAL_HALF_MM[hw]           ?? ROAD_MIN_VISUAL_HALF_MM.residential;
-    const halfW = Math.max(realW, minW);
+    // Width: use real-world scale, but enforce a minimum so roads are visible
+    const realHalf = hScale * (ROAD_WIDTHS_M[hw]          ?? ROAD_WIDTHS_M.residential);
+    const minHalf  = ROAD_MIN_VISUAL_HALF_MM[hw]           ?? ROAD_MIN_VISUAL_HALF_MM.residential;
+    const halfW    = Math.max(realHalf, minHalf);
 
-    // ── Skip closed-ring roads (roundabouts, junction loops) ─────────────
-    // bufferLinestring of a closed ring fills the entire interior rather than
-    // drawing a narrow strip, creating a massive black disc.
-    if (feat.points.length >= 2) {
-      const fp = feat.points[0];
-      const lp = feat.points[feat.points.length - 1];
-      if (Math.hypot(fp.x - lp.x, fp.y - lp.y) < halfW * 2) continue;
+    // Closed-ring guard: first ≈ last point → road loops back on itself.
+    // bufferLinestring of a closed linestring fills the interior instead of
+    // drawing a narrow strip.  Threshold: endpoints within one road-width.
+    const fp = feat.points[0];
+    const lp = feat.points[feat.points.length - 1];
+    if (Math.hypot(fp.x - lp.x, fp.y - lp.y) < halfW * 2.0) continue;
+
+    // Buffer the centreline → polygon
+    const raw = bufferLinestring(feat.points, halfW);
+    if (!raw || raw.length < 3) continue;
+
+    // Clip to model boundary
+    const clipped = clipToHex(raw, hexInner);
+    if (!clipped || clipped.length < 3) continue;
+
+    // Sanity checks — reject anything that looks wrong
+    const area = Math.abs(signedArea2D(clipped));
+    if (area < 0.3)            continue; // degenerate point-like polygon
+    if (area > MAX_ROAD_AREA)  continue; // oversized (closed-ring interior fill)
+    if (minBBoxDimension(clipped) < NOZZLE_MM) continue; // sub-nozzle sliver
+
+    if (feat.tags?.bridge && feat.tags.bridge !== 'no') {
+      // Bridge: deck is raised BRIDGE_RISE above the normal road surface.
+      // A thin support slab fills the gap so the deck doesn't float.
+      const deckY = BASE + BRIDGE_RISE;
+      extrudeSlab(blackAcc, clipped, BASE, BRIDGE_RISE);   // support pillar
+      extrudeSlab(blackAcc, clipped, deckY, ROAD_SLAB);    // deck
+    } else {
+      extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
     }
-
-    // ── Bridge: raised deck + solid support column ─────────────────────
-    const isBridge = feat.tags.bridge && feat.tags.bridge !== 'no';
-    if (isBridge) {
-      const deckBottom = BASE + ROAD_SLAB + BRIDGE_RISE;
-      const supportH   = deckBottom - BASE;
-
-      const supportPoly = bufferLinestring(feat.points, halfW * 0.55);
-      if (supportPoly) {
-        const sc = clipToHex(supportPoly, hexInner);
-        if (sc && sc.length >= 3 && minBBoxDimension(sc) >= NOZZLE_MM &&
-            Math.abs(signedArea2D(sc)) <= MAX_ROAD_AREA) {
-          collectExtrudedPolygon(blackAcc, sc, [], BASE, supportH);
-        }
-      }
-
-      const deckPoly = bufferLinestring(feat.points, halfW);
-      if (deckPoly) {
-        const dc = clipToHex(deckPoly, hexInner);
-        if (dc && dc.length >= 3 && minBBoxDimension(dc) >= NOZZLE_MM &&
-            Math.abs(signedArea2D(dc)) <= MAX_ROAD_AREA) {
-          collectExtrudedPolygon(blackAcc, dc, [], deckBottom, ROAD_SLAB);
-          if (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw)) {
-            const ridgeW = MAJOR_ROADS.has(hw) ? halfW * 0.18 : halfW * 0.14;
-            const ridgeH = MAJOR_ROADS.has(hw) ? ROAD_SLAB * 0.6 : ROAD_SLAB * 0.4;
-            const ridgePoly = bufferLinestring(feat.points, ridgeW);
-            if (ridgePoly) {
-              const ridgeClipped = clipToHex(ridgePoly, hexInner);
-              if (ridgeClipped && ridgeClipped.length >= 3) {
-                collectExtrudedPolygon(blackAcc, ridgeClipped, [], deckBottom + ROAD_SLAB, ridgeH);
-              }
-            }
-          }
-        }
-      }
-
-      roadCount++;
-      continue;
-    }
-
-    // ── Normal road — flat at BASE, avoids buildings by progressive narrowing
-    const placed = addRoadWithAvoidance(
-      blackAcc, feat.points, halfW, hexInner, BASE, ROAD_SLAB,
-      findOverlappingBuildings, MAX_ROAD_AREA
-    );
-
-    if (placed && (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw))) {
-      const ridgeW = MAJOR_ROADS.has(hw) ? halfW * 0.18 : halfW * 0.14;
-      const ridgeH = MAJOR_ROADS.has(hw) ? ROAD_SLAB * 0.6 : ROAD_SLAB * 0.4;
-      const ridgePoly = bufferLinestring(feat.points, ridgeW);
-      if (ridgePoly) {
-        const ridgeClipped = clipToHex(ridgePoly, hexInner);
-        if (ridgeClipped && ridgeClipped.length >= 3) {
-          collectExtrudedPolygon(blackAcc, ridgeClipped, [], BASE + ROAD_SLAB, ridgeH);
-        }
-      }
-    }
-
     roadCount++;
   }
 
-  // ── 6. Water areas ────────────────────────────────────────────────────────
-  // Water is a flat black slab at BASE. Height matches the smallest road
-  // (0.5 mm) so rivers/lakes read clearly but stay below all road types.
-  const WATER_H = 0.5;
-  if (waterPolys.length > 0) {
-    onProgress?.('Building water areas…', 88);
-    for (const poly of waterPolys) {
-      try {
-        collectExtrudedPolygon(blackAcc, poly, [], BASE, WATER_H);
-      } catch (e) {
-        console.warn('[buildMap] Skipping water polygon:', e?.message);
-      }
-    }
+  // ── 6. Water ─────────────────────────────────────────────────────────────
+  //
+  // Flat black slabs at BASE level, same thickness as roads.  Using the same
+  // height avoids z-fighting at road/water boundaries.  waterPolys were
+  // pre-collected and filtered at the top of buildMapModel.
+
+  onProgress?.('Building water areas…', 88);
+  for (const poly of waterPolys) {
+    extrudeSlab(blackAcc, poly, BASE, ROAD_SLAB);
   }
 
   // ── 7. Order ID engraving on base bottom ─────────────────────────────────
@@ -710,122 +537,73 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   };
 }
 
-// ─── Road placement helpers ──────────────────────────────────────────────────
+// ─── extrudeSlab ─────────────────────────────────────────────────────────────
+//
+// Extrude a flat polygon (no holes) into a solid prism from baseY to
+// baseY + height.  Used for roads and water — deliberately hole-free and
+// simpler than collectExtrudedPolygon so there are fewer failure modes.
+//
+// Vertex layout (n = outer ring vertex count):
+//   [0 … n-1]     top cap  (y = topY)
+//   [n … 2n-1]   bottom cap  (y = baseY)
+//   [2n … 3n-1]  top side ring  (separate copy — sharp edge normals)
+//   [3n … 4n-1]  bottom side ring
+//
+// Returns true if geometry was placed, false on any failure (no exception).
 
-/**
- * Place a road segment with building avoidance.
- *
- * Strategy:
- *   1. Try at full width — if clear of buildings, place immediately.
- *   2. If buildings overlap, subtract their footprints as holes and try earcut.
- *   3. If earcut fails (complex geometry), progressively narrow the road
- *      (80 % → 60 % → 40 % of original width) and repeat.
- *   4. If nothing fits, the segment is silently skipped (road is blocked).
- *
- * Returns true if geometry was placed, false if the segment was skipped.
- */
-function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings, maxArea = 900) {
-  // Try progressively narrower widths until the road fits around buildings.
-  // [1.0, 0.6, 0.4, 0.25] — more aggressive narrowing than before keeps roads
-  // from looking wide and blocky when they intersect dense building clusters.
-  const scales     = [1.0, 0.6, 0.4, 0.25];
-  const MIN_HALF_W = 0.2;          // mm — narrower than this can't print
-  const MIN_DIM    = NOZZLE_MM * 2; // 0.8 mm — reject slivers below two nozzle widths
-
-  for (const scale of scales) {
-    const w = halfW * scale;
-    if (w < MIN_HALF_W) break;
-
-    const poly = bufferLinestring(points, w);
-    if (!poly) continue;
-
-    const clipped = clipToHex(poly, hexInner);
-    if (!clipped || clipped.length < 3) continue;
-
-    // Reject slivers — they look like floating strips and can't print cleanly.
-    if (minBBoxDimension(clipped) < MIN_DIM) continue;
-
-    // Reject oversized polygons (closed rings that filled their interior).
-    if (Math.abs(signedArea2D(clipped)) > maxArea) continue;
-
-    // Check for building overlaps
-    const bldgHoles = findOverlappingBuildings(clipped);
-
-    if (bldgHoles.length === 0) {
-      collectExtrudedPolygon(acc, clipped, [], baseY, height);
-      return true;
-    }
-
-    // Buildings present — try earcut with building holes
-    if (tryCollectExtruded(acc, clipped, bldgHoles, baseY, height)) {
-      return true;
-    }
-
-    // Earcut failed — narrow and retry
-  }
-  return false;
-}
-
-/**
- * Attempts to add extruded polygon with holes. Returns true if geometry was
- * successfully generated (earcut produced valid triangles with sufficient area).
- */
-function tryCollectExtruded(acc, polygon, holes, baseY, heightMM) {
+function extrudeSlab(acc, polygon, baseY, height) {
+  if (!polygon || polygon.length < 3 || height < 1e-4) return false;
   try {
     const ring = deduplicateRing(polygon);
     if (ring.length < 3) return false;
 
-    const topY     = baseY + heightMM;
-    const outerCCW = ensureCCW(ring);
-    const { flat, holeIndices } = flattenWithHoles(outerCCW, holes || []);
-    const nVerts = flat.length / 2;
+    // Signed-area check: reject degenerate (near-zero) polygons
+    const sa = signedArea2D(ring);
+    if (Math.abs(sa) < 0.05) return false;
 
-    const topTris = earcut(flat, holeIndices, 2);
-    if (topTris.length === 0) return false;
-    // Stricter threshold (0.15 vs 0.5) — only accept clean tessellations.
-    // Marginally-bad earcut results (deviation 0.15–0.5) were producing large
-    // degenerate triangles that rendered as massive black shapes.
-    if (Math.abs(earcut.deviation(flat, holeIndices, 2, topTris)) > 0.15) return false;
+    const outer = ensureCCW(ring);  // earcut requires CCW outer ring
+    const n     = outer.length;
 
-    // Check total area — reject if too small (degenerate)
-    let totalArea = 0;
-    for (let t = 0; t < topTris.length; t += 3) {
-      const i0 = topTris[t], i1 = topTris[t+1], i2 = topTris[t+2];
-      const ax = flat[i0*2], ay = flat[i0*2+1];
-      const bx = flat[i1*2], by = flat[i1*2+1];
-      const cx = flat[i2*2], cy = flat[i2*2+1];
-      totalArea += Math.abs((bx-ax)*(cy-ay) - (cx-ax)*(by-ay)) / 2;
-    }
-    if (totalArea < 0.05) return false; // Too small to matter
-
-    // Build full solid extrusion (top + bottom + sides)
-    const allPos = [];
-    const allIdx = [];
-
-    // Top face
-    for (let i = 0; i < nVerts; i++) allPos.push(flat[i*2], topY, -flat[i*2+1]);
-    for (const t of topTris) allIdx.push(t);
-
-    // Bottom face (reversed winding)
-    const botOff = nVerts;
-    for (let i = 0; i < nVerts; i++) allPos.push(flat[i*2], baseY, -flat[i*2+1]);
-    for (let t = 0; t < topTris.length; t += 3) {
-      allIdx.push(botOff + topTris[t+2], botOff + topTris[t+1], botOff + topTris[t]);
-    }
-
-    // Side walls (outer ring only — keeps it solid, no hollow)
-    const n     = outerCCW.length;
-    const sideT = nVerts * 2;
-    const sideB = sideT + n;
-    for (const p of outerCCW) allPos.push(p.x, topY,  -p.y);
-    for (const p of outerCCW) allPos.push(p.x, baseY, -p.y);
+    // Flatten for earcut (no holes)
+    const flat = new Float64Array(n * 2);
     for (let i = 0; i < n; i++) {
-      const tl = sideT + i,       tr = sideT + (i + 1) % n;
-      const bl = sideB + i,       br = sideB + (i + 1) % n;
-      allIdx.push(tl, tr, bl,  bl, tr, br);
+      flat[i * 2]     = outer[i].x;
+      flat[i * 2 + 1] = outer[i].y;
     }
 
-    acc.add(allPos, allIdx);
+    const tris = earcut(flat, null, 2);
+    if (!tris || tris.length < 3) return false;
+
+    // Deviation > 0.3 means earcut triangulated the wrong area —
+    // reject to prevent giant phantom triangles.
+    if (Math.abs(earcut.deviation(flat, null, 2, tris)) > 0.3) return false;
+
+    const topY = baseY + height;
+    const pos  = [];
+    const idx  = [];
+
+    // ── Top cap (0 … n-1) ───────────────────────────────────────────────
+    for (const p of outer) pos.push(p.x, topY, -p.y);
+    for (const t of tris)  idx.push(t);
+
+    // ── Bottom cap (n … 2n-1), reversed winding so face points down ─────
+    for (const p of outer) pos.push(p.x, baseY, -p.y);
+    for (let t = 0; t < tris.length; t += 3) {
+      idx.push(n + tris[t + 2], n + tris[t + 1], n + tris[t]);
+    }
+
+    // ── Side walls — separate vertex copies for sharp corner normals ─────
+    // Top side ring: [2n … 3n-1], Bottom side ring: [3n … 4n-1]
+    for (const p of outer) pos.push(p.x, topY,  -p.y);
+    for (const p of outer) pos.push(p.x, baseY, -p.y);
+    for (let i = 0; i < n; i++) {
+      const tl = 2 * n + i,          tr = 2 * n + (i + 1) % n;
+      const bl = 3 * n + i,          br = 3 * n + (i + 1) % n;
+      // Two triangles per quad, CCW when viewed from outside
+      idx.push(tl, tr, bl,  bl, tr, br);
+    }
+
+    acc.add(pos, idx);
     return true;
   } catch (_) {
     return false;
@@ -1179,7 +957,7 @@ function collectExtrudedPolygon(acc, polygon, holes, baseY, heightMM) {
 
     const topTris = earcut(flat, holeIndices, 2);
     if (topTris.length === 0) return;
-    if (Math.abs(earcut.deviation(flat, holeIndices, 2, topTris)) > 0.15) return;
+    if (Math.abs(earcut.deviation(flat, holeIndices, 2, topTris)) > 0.5) return;
 
     const allPos = [];
     const allIdx = [];
@@ -1975,71 +1753,3 @@ function pointInSimplePolygon(pt, poly) {
   return inside;
 }
 
-/**
- * Test if two line segments (a1→a2) and (b1→b2) intersect.
- */
-function segmentsIntersect(a1, a2, b1, b2) {
-  const d1x = a2.x - a1.x, d1y = a2.y - a1.y;
-  const d2x = b2.x - b1.x, d2y = b2.y - b1.y;
-  const cross = d1x * d2y - d1y * d2x;
-  if (Math.abs(cross) < 1e-10) return false; // parallel
-  const dx = b1.x - a1.x, dy = b1.y - a1.y;
-  const t = (dx * d2y - dy * d2x) / cross;
-  const u = (dx * d1y - dy * d1x) / cross;
-  return t >= 0 && t <= 1 && u >= 0 && u <= 1;
-}
-
-/**
- * Check if any edge of polygon A intersects any edge of polygon B.
- */
-function polygonEdgesIntersect(polyA, polyB) {
-  for (let i = 0; i < polyA.length; i++) {
-    const a1 = polyA[i], a2 = polyA[(i + 1) % polyA.length];
-    for (let j = 0; j < polyB.length; j++) {
-      const b1 = polyB[j], b2 = polyB[(j + 1) % polyB.length];
-      if (segmentsIntersect(a1, a2, b1, b2)) return true;
-    }
-  }
-  return false;
-}
-
-function offsetPolygon(poly, dist) {
-  const n = poly.length;
-  if (n < 3) return null;
-
-  const result = [];
-  for (let i = 0; i < n; i++) {
-    const prev = poly[(i - 1 + n) % n];
-    const curr = poly[i];
-    const next = poly[(i + 1) % n];
-
-    const e1x = curr.x - prev.x, e1y = curr.y - prev.y;
-    const e2x = next.x - curr.x, e2y = next.y - curr.y;
-    const l1 = Math.sqrt(e1x * e1x + e1y * e1y);
-    const l2 = Math.sqrt(e2x * e2x + e2y * e2y);
-
-    if (l1 < 1e-9 || l2 < 1e-9) {
-      result.push({ x: curr.x, y: curr.y });
-      continue;
-    }
-
-    const n1x = -e1y / l1, n1y = e1x / l1;
-    const n2x = -e2y / l2, n2y = e2x / l2;
-
-    let nx = n1x + n2x, ny = n1y + n2y;
-    const nl = Math.sqrt(nx * nx + ny * ny);
-    if (nl < 1e-9) {
-      result.push({ x: curr.x + n1x * dist, y: curr.y + n1y * dist });
-      continue;
-    }
-    nx /= nl; ny /= nl;
-
-    const dot = nx * n1x + ny * n1y;
-    const scale = dot > 0.3 ? dist / dot : dist;
-    const clamped = Math.min(Math.abs(scale), Math.abs(dist) * 3) * Math.sign(scale);
-
-    result.push({ x: curr.x + nx * clamped, y: curr.y + ny * clamped });
-  }
-
-  return result.length >= 3 ? result : null;
-}
