@@ -437,20 +437,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // testing naturally occludes roads behind buildings — no earcut-with-holes
   // or building-avoidance geometry is required.
   //
-  // Each road way is buffered into a flat polygon, clipped to the model
-  // boundary, sanity-checked (area, minimum dimension, closed-ring guard)
-  // and extruded as a solid 0.4 mm slab.
-  //
-  // Guards:
-  //   • closed-ring ways (roundabouts, loops) — bufferLinestring fills their
-  //     interior creating a massive disc; we skip them.
-  //   • 6 % hex-area cap — rejects any remaining runaway polygon.
-  //   • minimum 0.4 mm bbox dimension — rejects sub-nozzle slivers.
-  //   • minimum 0.3 mm² area — rejects point-like degenerate polygons.
-
-  const ROAD_SLAB   = NOZZLE_MM;       // 0.4 mm — roads are thin flat slabs
-  const BRIDGE_RISE = NOZZLE_MM * 3;   // 1.2 mm — bridge deck clearance
-  const MAX_ROAD_AREA = hexArea * 0.06; // ≈ 878 mm² — allows widest legit road
+  const ROAD_SLAB    = NOZZLE_MM;
+  const MAX_ROAD_AREA = hexArea * 0.06;
 
   let roadCount = 0;
   onProgress?.('Building roads…', 80);
@@ -460,49 +448,27 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     const hw = feat.tags?.highway || 'residential';
     if (!ROAD_TYPES.has(hw)) continue;
 
-    // Width: use real-world scale, but enforce a minimum so roads are visible
-    const realHalf = hScale * (ROAD_WIDTHS_M[hw]          ?? ROAD_WIDTHS_M.residential);
-    const minHalf  = ROAD_MIN_VISUAL_HALF_MM[hw]           ?? ROAD_MIN_VISUAL_HALF_MM.residential;
+    const realHalf = hScale * (ROAD_WIDTHS_M[hw] ?? ROAD_WIDTHS_M.residential);
+    const minHalf  = ROAD_MIN_VISUAL_HALF_MM[hw]  ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW    = Math.max(realHalf, minHalf);
 
-    // Closed-ring guard: first ≈ last point → road loops back on itself.
-    // bufferLinestring of a closed linestring fills the interior instead of
-    // drawing a narrow strip.  Threshold: endpoints within one road-width.
     const fp = feat.points[0];
     const lp = feat.points[feat.points.length - 1];
     if (Math.hypot(fp.x - lp.x, fp.y - lp.y) < halfW * 2.0) continue;
 
-    // Buffer the centreline → polygon
     const raw = bufferLinestring(feat.points, halfW);
     if (!raw || raw.length < 3) continue;
 
-    // Clip to model boundary
     const clipped = clipToHex(raw, hexInner);
     if (!clipped || clipped.length < 3) continue;
 
-    // Sanity checks — reject anything that looks wrong
     const area = Math.abs(signedArea2D(clipped));
-    if (area < 0.3)            continue; // degenerate point-like polygon
-    if (area > MAX_ROAD_AREA)  continue; // oversized (closed-ring interior fill)
-    if (minBBoxDimension(clipped) < NOZZLE_MM) continue; // sub-nozzle sliver
+    if (area < 0.3 || area > MAX_ROAD_AREA) continue;
+    if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
 
-    if (feat.tags?.bridge && feat.tags.bridge !== 'no') {
-      // Bridge: deck is raised BRIDGE_RISE above the normal road surface.
-      // A thin support slab fills the gap so the deck doesn't float.
-      const deckY = BASE + BRIDGE_RISE;
-      extrudeSlab(blackAcc, clipped, BASE, BRIDGE_RISE);   // support pillar
-      extrudeSlab(blackAcc, clipped, deckY, ROAD_SLAB);    // deck
-    } else {
-      extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
-    }
+    extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
     roadCount++;
   }
-
-  // ── 6. Water ─────────────────────────────────────────────────────────────
-  //
-  // Flat black slabs at BASE level, same thickness as roads.  Using the same
-  // height avoids z-fighting at road/water boundaries.  waterPolys were
-  // pre-collected and filtered at the top of buildMapModel.
 
   onProgress?.('Building water areas…', 88);
   for (const poly of waterPolys) {
@@ -537,34 +503,16 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   };
 }
 
-// ─── extrudeSlab ─────────────────────────────────────────────────────────────
-//
-// Extrude a flat polygon (no holes) into a solid prism from baseY to
-// baseY + height.  Used for roads and water — deliberately hole-free and
-// simpler than collectExtrudedPolygon so there are fewer failure modes.
-//
-// Vertex layout (n = outer ring vertex count):
-//   [0 … n-1]     top cap  (y = topY)
-//   [n … 2n-1]   bottom cap  (y = baseY)
-//   [2n … 3n-1]  top side ring  (separate copy — sharp edge normals)
-//   [3n … 4n-1]  bottom side ring
-//
-// Returns true if geometry was placed, false on any failure (no exception).
-
 function extrudeSlab(acc, polygon, baseY, height) {
   if (!polygon || polygon.length < 3 || height < 1e-4) return false;
   try {
     const ring = deduplicateRing(polygon);
     if (ring.length < 3) return false;
+    if (Math.abs(signedArea2D(ring)) < 0.05) return false;
 
-    // Signed-area check: reject degenerate (near-zero) polygons
-    const sa = signedArea2D(ring);
-    if (Math.abs(sa) < 0.05) return false;
-
-    const outer = ensureCCW(ring);  // earcut requires CCW outer ring
+    const outer = ensureCCW(ring);
     const n     = outer.length;
 
-    // Flatten for earcut (no holes)
     const flat = new Float64Array(n * 2);
     for (let i = 0; i < n; i++) {
       flat[i * 2]     = outer[i].x;
@@ -573,33 +521,25 @@ function extrudeSlab(acc, polygon, baseY, height) {
 
     const tris = earcut(flat, null, 2);
     if (!tris || tris.length < 3) return false;
-
-    // Deviation > 0.3 means earcut triangulated the wrong area —
-    // reject to prevent giant phantom triangles.
     if (Math.abs(earcut.deviation(flat, null, 2, tris)) > 0.3) return false;
 
     const topY = baseY + height;
     const pos  = [];
     const idx  = [];
 
-    // ── Top cap (0 … n-1) ───────────────────────────────────────────────
     for (const p of outer) pos.push(p.x, topY, -p.y);
     for (const t of tris)  idx.push(t);
 
-    // ── Bottom cap (n … 2n-1), reversed winding so face points down ─────
     for (const p of outer) pos.push(p.x, baseY, -p.y);
     for (let t = 0; t < tris.length; t += 3) {
       idx.push(n + tris[t + 2], n + tris[t + 1], n + tris[t]);
     }
 
-    // ── Side walls — separate vertex copies for sharp corner normals ─────
-    // Top side ring: [2n … 3n-1], Bottom side ring: [3n … 4n-1]
     for (const p of outer) pos.push(p.x, topY,  -p.y);
     for (const p of outer) pos.push(p.x, baseY, -p.y);
     for (let i = 0; i < n; i++) {
-      const tl = 2 * n + i,          tr = 2 * n + (i + 1) % n;
-      const bl = 3 * n + i,          br = 3 * n + (i + 1) % n;
-      // Two triangles per quad, CCW when viewed from outside
+      const tl = 2 * n + i, tr = 2 * n + (i + 1) % n;
+      const bl = 3 * n + i, br = 3 * n + (i + 1) % n;
       idx.push(tl, tr, bl,  bl, tr, br);
     }
 
