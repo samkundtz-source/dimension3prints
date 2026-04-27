@@ -196,7 +196,6 @@ async function generate() {
     const vertExag     = getVertExag();
     const useElevation  = el('use-elevation')?.checked  || false;
     const terrainRelief = el('terrain-relief')?.checked || false;
-    const roadElevation = el('road-elevation')?.checked || false;
 
     // 1. Projection + shape
     // Rotation is baked into the projection — all projected coordinates
@@ -271,7 +270,7 @@ async function generate() {
     setStatus('Building 3D model...', 60);
     const detailedBuildings  = el('detailed-buildings')?.checked  || false;
     const proceduralInfill   = el('procedural-infill')?.checked   || false;
-    const result = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, false, terrainRelief, activeOrderId, roadElevation, proceduralInfill);
+    const result = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, false, terrainRelief, activeOrderId, false, proceduralInfill);
     const group = result.group;
     const modelStats = result.stats;
 
