@@ -21,7 +21,6 @@ import {
   LAYER,
   ROAD_WIDTHS_M,
   ROAD_MIN_VISUAL_HALF_MM,
-  ROAD_HEIGHTS_MM,
   MIN_BUILDING_HEIGHT_MM,
   NOZZLE_MM,
   signedArea2D,
@@ -577,49 +576,43 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // All heights are capped below MIN_BUILDING_HEIGHT_MM so roads never appear
   // taller than any building. Building avoidance is applied before placing.
 
+  // ── Road height, area cap, class tiers ───────────────────────────────────
+  const ROAD_SLAB   = NOZZLE_MM; // 0.4 mm — thin flat slabs, never taller than buildings
+  const BRIDGE_RISE = 1.2;       // mm a bridge deck floats above normal road surface
+  // Max mm² a single road polygon may cover after hex clip.
+  // A motorway across the full 150 mm hex is ≈ 660 mm²; anything larger is
+  // almost certainly a closed-ring loop whose interior got filled.
+  const MAX_ROAD_AREA = 900;
   const MAJOR_ROADS  = new Set(['motorway','motorway_link','trunk','trunk_link','primary','primary_link']);
   const MEDIUM_ROADS = new Set(['secondary','secondary_link','tertiary','tertiary_link']);
-  const BRIDGE_RISE  = 1.2; // extra mm a bridge deck floats above ground road surface
-
-  // ── Road area cap — max mm² a single road polygon may cover after hex clip ──
-  // A motorway running across the full 150 mm hex covers ≈ 660 mm².
-  // Anything larger is almost certainly a closed-ring road (roundabout, loop)
-  // whose interior got filled by bufferLinestring.  Keep a comfortable margin.
-  const MAX_ROAD_AREA = 900; // mm²
 
   let roadCount = 0;
   onProgress?.('Building roads…', 80);
 
   for (const feat of features.roads) {
-    const hw    = feat.tags.highway || 'residential';
+    const hw = feat.tags.highway || 'residential';
     if (!ROAD_TYPES.has(hw)) continue;
 
     // ── Width ─────────────────────────────────────────────────────────────
-    const realW = hScale * (ROAD_WIDTHS_M[hw]            ?? ROAD_WIDTHS_M.residential);
-    const minW  = ROAD_MIN_VISUAL_HALF_MM[hw]            ?? ROAD_MIN_VISUAL_HALF_MM.residential;
+    const realW = hScale * (ROAD_WIDTHS_M[hw]           ?? ROAD_WIDTHS_M.residential);
+    const minW  = ROAD_MIN_VISUAL_HALF_MM[hw]           ?? ROAD_MIN_VISUAL_HALF_MM.residential;
     const halfW = Math.max(realW, minW);
 
-    // ── Skip closed-ring roads (roundabouts, junction loops) ───────────────
-    // When the first and last point of a way nearly coincide, bufferLinestring
-    // treats the ring as a linestring and fills the entire interior, producing
-    // a massive black disc.  Skip these — individual approach roads already
-    // represent the junction geometry.
+    // ── Skip closed-ring roads (roundabouts, junction loops) ─────────────
+    // bufferLinestring of a closed ring fills the entire interior rather than
+    // drawing a narrow strip, creating a massive black disc.
     if (feat.points.length >= 2) {
       const fp = feat.points[0];
       const lp = feat.points[feat.points.length - 1];
       if (Math.hypot(fp.x - lp.x, fp.y - lp.y) < halfW * 2) continue;
     }
 
-    // ── Height — looked up from table, never hardcoded ─────────────────
-    const roadH = ROAD_HEIGHTS_MM[hw] ?? 0.6;
-
-    // ── Bridge ─────────────────────────────────────────────────────────────
+    // ── Bridge: raised deck + solid support column ─────────────────────
     const isBridge = feat.tags.bridge && feat.tags.bridge !== 'no';
     if (isBridge) {
-      const deckBaseY  = BASE + roadH + BRIDGE_RISE; // underside of bridge deck
-      const supportH   = deckBaseY - BASE;           // column fills gap from base plate
+      const deckBottom = BASE + ROAD_SLAB + BRIDGE_RISE;
+      const supportH   = deckBottom - BASE;
 
-      // Solid support column (55% road width) keeps the deck from floating
       const supportPoly = bufferLinestring(feat.points, halfW * 0.55);
       if (supportPoly) {
         const sc = clipToHex(supportPoly, hexInner);
@@ -629,15 +622,22 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
         }
       }
 
-      // Bridge deck — full road width, extruded up by roadH on top of the support
       const deckPoly = bufferLinestring(feat.points, halfW);
       if (deckPoly) {
         const dc = clipToHex(deckPoly, hexInner);
         if (dc && dc.length >= 3 && minBBoxDimension(dc) >= NOZZLE_MM &&
             Math.abs(signedArea2D(dc)) <= MAX_ROAD_AREA) {
-          collectExtrudedPolygon(blackAcc, dc, [], deckBaseY, roadH);
+          collectExtrudedPolygon(blackAcc, dc, [], deckBottom, ROAD_SLAB);
           if (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw)) {
-            placeRoadRidge(blackAcc, feat.points, halfW, roadH, hexInner, deckBaseY + roadH);
+            const ridgeW = MAJOR_ROADS.has(hw) ? halfW * 0.18 : halfW * 0.14;
+            const ridgeH = MAJOR_ROADS.has(hw) ? ROAD_SLAB * 0.6 : ROAD_SLAB * 0.4;
+            const ridgePoly = bufferLinestring(feat.points, ridgeW);
+            if (ridgePoly) {
+              const ridgeClipped = clipToHex(ridgePoly, hexInner);
+              if (ridgeClipped && ridgeClipped.length >= 3) {
+                collectExtrudedPolygon(blackAcc, ridgeClipped, [], deckBottom + ROAD_SLAB, ridgeH);
+              }
+            }
           }
         }
       }
@@ -646,17 +646,22 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
       continue;
     }
 
-    // ── Normal road ──────────────────────────────────────────────────────
-    // Roads sit flat at BASE — no terrain offset. Building avoidance narrows
-    // the road progressively until it fits, rather than skipping it.
+    // ── Normal road — flat at BASE, avoids buildings by progressive narrowing
     const placed = addRoadWithAvoidance(
-      blackAcc, feat.points, halfW, hexInner, BASE, roadH, findOverlappingBuildings,
-      MAX_ROAD_AREA
+      blackAcc, feat.points, halfW, hexInner, BASE, ROAD_SLAB,
+      findOverlappingBuildings, MAX_ROAD_AREA
     );
 
-    // Centerline ridge on major/medium roads (only when road was placed)
     if (placed && (MAJOR_ROADS.has(hw) || MEDIUM_ROADS.has(hw))) {
-      placeRoadRidge(blackAcc, feat.points, halfW, roadH, hexInner, BASE + roadH);
+      const ridgeW = MAJOR_ROADS.has(hw) ? halfW * 0.18 : halfW * 0.14;
+      const ridgeH = MAJOR_ROADS.has(hw) ? ROAD_SLAB * 0.6 : ROAD_SLAB * 0.4;
+      const ridgePoly = bufferLinestring(feat.points, ridgeW);
+      if (ridgePoly) {
+        const ridgeClipped = clipToHex(ridgePoly, hexInner);
+        if (ridgeClipped && ridgeClipped.length >= 3) {
+          collectExtrudedPolygon(blackAcc, ridgeClipped, [], BASE + ROAD_SLAB, ridgeH);
+        }
+      }
     }
 
     roadCount++;
@@ -720,10 +725,12 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
  * Returns true if geometry was placed, false if the segment was skipped.
  */
 function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findOverlappingBuildings, maxArea = 900) {
-  // Width scales to try. Keep reductions gradual so roads stay as wide as possible.
-  const scales     = [1.0, 0.8, 0.6, 0.4];
-  const MIN_HALF_W = NOZZLE_MM * 0.5; // 0.2 mm — narrower than this can't print
-  const MIN_DIM    = NOZZLE_MM;       // minimum bbox dimension after hex clip
+  // Try progressively narrower widths until the road fits around buildings.
+  // [1.0, 0.6, 0.4, 0.25] — more aggressive narrowing than before keeps roads
+  // from looking wide and blocky when they intersect dense building clusters.
+  const scales     = [1.0, 0.6, 0.4, 0.25];
+  const MIN_HALF_W = 0.2;          // mm — narrower than this can't print
+  const MIN_DIM    = NOZZLE_MM * 2; // 0.8 mm — reject slivers below two nozzle widths
 
   for (const scale of scales) {
     const w = halfW * scale;
@@ -734,48 +741,29 @@ function addRoadWithAvoidance(acc, points, halfW, hexInner, baseY, height, findO
 
     const clipped = clipToHex(poly, hexInner);
     if (!clipped || clipped.length < 3) continue;
+
+    // Reject slivers — they look like floating strips and can't print cleanly.
     if (minBBoxDimension(clipped) < MIN_DIM) continue;
 
-    // Reject oversized polygons — a road that fills more than maxArea mm² is
-    // almost certainly a closed ring (roundabout, loop) whose interior has been
-    // incorrectly filled by bufferLinestring.
+    // Reject oversized polygons (closed rings that filled their interior).
     if (Math.abs(signedArea2D(clipped)) > maxArea) continue;
 
     // Check for building overlaps
     const bldgHoles = findOverlappingBuildings(clipped);
 
     if (bldgHoles.length === 0) {
-      // No buildings in the way — extrude the full road polygon
       collectExtrudedPolygon(acc, clipped, [], baseY, height);
       return true;
     }
 
-    // Buildings present — try to extrude the road around them using earcut holes
+    // Buildings present — try earcut with building holes
     if (tryCollectExtruded(acc, clipped, bldgHoles, baseY, height)) {
       return true;
     }
 
-    // Earcut failed with this width — narrow and retry
+    // Earcut failed — narrow and retry
   }
   return false;
-}
-
-/**
- * Add a narrow centerline ridge on top of a placed road slab.
- * Width = 16 % of road half-width, height = 20 % of road height.
- * Gives major/medium roads a subtle crown that reads as a road surface.
- */
-function placeRoadRidge(acc, points, halfW, roadH, hexInner, baseY) {
-  const ridgeW = halfW * 0.16;
-  const ridgeH = roadH * 0.20;
-  // Skip if the ridge would be too thin to print
-  if (ridgeW < NOZZLE_MM * 0.35 || ridgeH < NOZZLE_MM * 0.15) return;
-
-  const ridgePoly = bufferLinestring(points, ridgeW);
-  if (!ridgePoly) return;
-  const clipped = clipToHex(ridgePoly, hexInner);
-  if (!clipped || clipped.length < 3) return;
-  collectExtrudedPolygon(acc, clipped, [], baseY, ridgeH);
 }
 
 /**

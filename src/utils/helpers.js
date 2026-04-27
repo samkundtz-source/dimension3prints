@@ -87,11 +87,10 @@ export const ROAD_MIN_VISUAL_HALF_MM = {
 
 /**
  * Uniform road extrusion height above the base plate (mm).
- * All road types use this same value so no road appears taller than another.
- * Value is below MIN_BUILDING_HEIGHT_MM (2.0 mm) so roads are always shorter
- * than buildings.
+ * Kept at nozzle diameter (0.4 mm) — thin flat slabs that never appear
+ * as tall as buildings (minimum 2.0 mm).
  */
-export const ROAD_HEIGHT_MM = 0.8;
+export const ROAD_HEIGHT_MM = 0.4;
 
 // Kept for import compatibility — every road type maps to the same height.
 export const ROAD_HEIGHTS_MM = Object.fromEntries(
