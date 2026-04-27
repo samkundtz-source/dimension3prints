@@ -86,27 +86,19 @@ export const ROAD_MIN_VISUAL_HALF_MM = {
 };
 
 /**
- * Road extrusion heights above the base plate (mm).
- * Hierarchical so importance reads instantly in the model.
- * Every value is < MIN_BUILDING_HEIGHT_MM (2.0 mm) so roads can never appear
- * taller than even the shortest building.
+ * Uniform road extrusion height above the base plate (mm).
+ * All road types use this same value so no road appears taller than another.
+ * Value is below MIN_BUILDING_HEIGHT_MM (2.0 mm) so roads are always shorter
+ * than buildings.
  */
-export const ROAD_HEIGHTS_MM = {
-  motorway:       1.4,
-  motorway_link:  1.0,
-  trunk:          1.3,
-  trunk_link:     0.9,
-  primary:        1.2,
-  primary_link:   0.8,
-  secondary:      1.0,
-  secondary_link: 0.7,
-  tertiary:       0.8,
-  tertiary_link:  0.6,
-  unclassified:   0.6,
-  residential:    0.6,
-  living_street:  0.5,
-  road:           0.6,
-};
+export const ROAD_HEIGHT_MM = 0.8;
+
+// Kept for import compatibility — every road type maps to the same height.
+export const ROAD_HEIGHTS_MM = Object.fromEntries(
+  ['motorway','motorway_link','trunk','trunk_link','primary','primary_link',
+   'secondary','secondary_link','tertiary','tertiary_link','unclassified',
+   'residential','living_street','road'].map(k => [k, ROAD_HEIGHT_MM])
+);
 
 // ─── Maths helpers ────────────────────────────────────────────────────────────
 
