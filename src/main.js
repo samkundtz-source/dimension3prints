@@ -659,19 +659,17 @@ document.addEventListener('DOMContentLoaded', () => {
         selectLocation(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`);
         el('generate-btn').disabled = false;
 
-        // Read order ID if passed from admin
+        // Read order ID if passed from admin dashboard (engraved on model base).
+        // Validated: strip to alphanumerics + hyphens, 20 char max.
         if (params.has('orderId')) {
-          activeOrderId = params.get('orderId');
+          const raw = String(params.get('orderId')).slice(0, 20);
+          activeOrderId = /^[A-Za-z0-9\-]+$/.test(raw) ? raw : '';
         }
 
-        // If admin mode, auto-show export buttons and radius control
-        if (params.get('admin') === '1') {
-          adminMode = true;
-          el('export-stl').style.display = '';
-          el('export-3mf').style.display = '';
-          el('admin-radius-section').style.display = '';
-          setStatus(`Admin mode — Order ${activeOrderId || '?'} — generate then export`, 0);
-        }
+        // NOTE: ?admin=1 URL param activation was removed — it allowed anyone to
+        // bypass the Ctrl+Shift+E password prompt and unlock admin UI (10 km radius,
+        // export buttons) without authentication.  Admin mode now ALWAYS requires the
+        // server-verified password (Ctrl+Shift+E).
       }, 500);
     }
   } else {
