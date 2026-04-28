@@ -806,6 +806,9 @@ function collectTerrainMesh(acc, elevGrid, N, hexVerts, terrainVScale, baseY = B
 
   for (let j = 0; j < N - 1; j++) {
     for (let i = 0; i < N - 1; i++) {
+      const cu = ((i + 0.5) / (N - 1)) * 2 - 1;
+      const cv = ((j + 0.5) / (N - 1)) * 2 - 1;
+      if (!pointInHex({ x: cu * MODEL_RADIUS_MM, y: cv * MODEL_RADIUS_MM }, hexVerts)) continue;
       const a = j * N + i, b = a + 1, c = a + N, d = c + 1;
       idx.push(a, b, c,  b, d, c);
     }
@@ -815,50 +818,59 @@ function collectTerrainMesh(acc, elevGrid, N, hexVerts, terrainVScale, baseY = B
 }
 
 function collectTerrainWalls(acc, elevGrid, N, hexVerts, terrainVScale) {
-  const BASE   = BASE_THICKNESS_MM;
-  const BOT_Y  = 0;
-  const SEGS   = 10;
+  const BASE  = BASE_THICKNESS_MM;
+  const SEGS  = 14;
+  const nHex  = hexVerts.length;
+  const INSET = 3.5;
 
-  function sampleTopY(x, y) {
-    const fi = ((x / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
-    const fj = ((y / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
+  let hcx = 0, hcy = 0;
+  for (const v of hexVerts) { hcx += v.x; hcy += v.y; }
+  hcx /= nHex; hcy /= nHex;
+
+  function sampleInsideY(bx, by) {
+    const dx = hcx - bx, dy = hcy - by;
+    const len = Math.hypot(dx, dy) || 1;
+    const sx  = bx + (dx / len) * INSET;
+    const sy  = by + (dy / len) * INSET;
+    const fi  = ((sx / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
+    const fj  = ((sy / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
     if (fi < 0 || fi > N - 1 || fj < 0 || fj > N - 1) return BASE;
-    const i = Math.max(0, Math.min(N - 2, Math.floor(fi)));
-    const j = Math.max(0, Math.min(N - 2, Math.floor(fj)));
-    const u = fi - i, v = fj - j;
-    const e = elevGrid[j * N + i]         * (1 - u) * (1 - v)
-            + elevGrid[j * N + (i + 1)]   * u       * (1 - v)
-            + elevGrid[(j + 1) * N + i]   * (1 - u) * v
-            + elevGrid[(j + 1) * N + (i + 1)] * u   * v;
+    const ii = Math.max(0, Math.min(N - 2, Math.floor(fi)));
+    const jj = Math.max(0, Math.min(N - 2, Math.floor(fj)));
+    const fu = fi - ii, fv = fj - jj;
+    const e  = elevGrid[jj * N + ii]           * (1 - fu) * (1 - fv)
+             + elevGrid[jj * N + (ii + 1)]     *  fu      * (1 - fv)
+             + elevGrid[(jj + 1) * N + ii]     * (1 - fu) *  fv
+             + elevGrid[(jj + 1) * N + (ii + 1)] * fu     *  fv;
     return BASE + clamp(e * terrainVScale, 0, 45);
   }
 
   const pos = [];
   const idx = [];
-  const nHex = hexVerts.length;
 
   for (let h = 0; h < nHex; h++) {
     const A = hexVerts[h];
     const B = hexVerts[(h + 1) % nHex];
 
     for (let s = 0; s < SEGS; s++) {
-      const t0 = s / SEGS;
-      const t1 = (s + 1) / SEGS;
+      const t0 = s / SEGS, t1 = (s + 1) / SEGS;
       const x0 = A.x + (B.x - A.x) * t0, y0 = A.y + (B.y - A.y) * t0;
       const x1 = A.x + (B.x - A.x) * t1, y1 = A.y + (B.y - A.y) * t1;
-      const tY0 = sampleTopY(x0, y0);
-      const tY1 = sampleTopY(x1, y1);
+      const topY0 = sampleInsideY(x0, y0);
+      const topY1 = sampleInsideY(x1, y1);
+
+      if (topY0 <= BASE + 0.1 && topY1 <= BASE + 0.1) continue;
 
       const vi = pos.length / 3;
-      pos.push(x0, tY0,   -y0);
-      pos.push(x1, tY1,   -y1);
-      pos.push(x0, BOT_Y, -y0);
-      pos.push(x1, BOT_Y, -y1);
+      pos.push(x0, topY0, -y0);
+      pos.push(x1, topY1, -y1);
+      pos.push(x0, BASE,  -y0);
+      pos.push(x1, BASE,  -y1);
       idx.push(vi, vi + 1, vi + 2,  vi + 1, vi + 3, vi + 2);
     }
   }
 
-  acc.add(pos, idx);
+  if (pos.length > 0) acc.add(pos, idx);
 }
 
 // Beveled-top building extrusion — produces a small chamfer at the top edge
