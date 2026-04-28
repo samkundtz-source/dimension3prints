@@ -7,7 +7,7 @@ export const MODEL_RADIUS_MM = 75.06;
 export const BASE_THICKNESS_MM = 1.5;
 
 /** Elevation sample grid dimension (N×N points) */
-export const TERRAIN_GRID_SIZE = 20; // 400 pts → 4 API calls to OpenTopoData
+export const TERRAIN_GRID_SIZE = 25; // 625 pts → 7 API calls to OpenTopoData
 
 /** Default vertical exaggeration factor */
 export const DEFAULT_VERT_EXAG = 8;

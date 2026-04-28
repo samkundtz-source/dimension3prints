@@ -119,9 +119,32 @@ class GeomAccumulator {
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
-// Bilinear sample of the elevation grid at an arbitrary (x, y) in mm.
-// Returns mm of terrain elevation above the base plate. 0 if outside grid.
-function sampleTerrainElev(x, y, elevGrid, N, vScale) {
+const TERRAIN_VERT_BOOST = 5;
+
+function smoothElevGrid(grid, N, passes = 3) {
+  let src = grid;
+  for (let pass = 0; pass < passes; pass++) {
+    const dst = new Float32Array(N * N);
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        let sum = 0, cnt = 0;
+        for (let dj = -1; dj <= 1; dj++) {
+          for (let di = -1; di <= 1; di++) {
+            const ni = i + di, nj = j + dj;
+            if (ni >= 0 && ni < N && nj >= 0 && nj < N) {
+              sum += src[nj * N + ni]; cnt++;
+            }
+          }
+        }
+        dst[j * N + i] = sum / cnt;
+      }
+    }
+    src = dst;
+  }
+  return src;
+}
+
+function sampleTerrainElev(x, y, elevGrid, N, terrainVScale) {
   if (!elevGrid || N < 2) return 0;
   const fi = ((x / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
   const fj = ((y / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
@@ -135,7 +158,7 @@ function sampleTerrainElev(x, y, elevGrid, N, vScale) {
   const e01 = elevGrid[(j + 1) * N + i];
   const e11 = elevGrid[(j + 1) * N + (i + 1)];
   const e = e00 * (1 - u) * (1 - v) + e10 * u * (1 - v) + e01 * (1 - u) * v + e11 * u * v;
-  return clamp(e * vScale, 0, 40);
+  return clamp(e * terrainVScale, 0, 45);
 }
 
 export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '', roadElevation = false, proceduralInfill = false) {
@@ -147,6 +170,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const hScale = projection.horizontalScale;
   const vScale = hScale * vertExag;
   const N      = elevGrid ? Math.round(Math.sqrt(elevGrid.length)) : 0;
+  const terrainVScale = hScale * Math.max(vertExag, 2) * TERRAIN_VERT_BOOST;
+  const smoothedElev  = (elevGrid && N > 0) ? smoothElevGrid(elevGrid, N, 3) : null;
 
   // ── 3 combined accumulators — everything merges into these ────────────────
   const baseAcc     = new GeomAccumulator();  // base plate + terrain → white
@@ -175,9 +200,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
 
   // ── 2. Terrain ────────────────────────────────────────────────────────────
-  if (elevGrid && N > 0) {
+  if (smoothedElev && N > 0) {
     onProgress?.('Building terrain…', 68);
-    collectTerrainMesh(baseAcc, elevGrid, N, hexFull, vScale, BASE);
+    collectTerrainMesh(baseAcc, smoothedElev, N, hexFull, terrainVScale, BASE);
+    collectTerrainWalls(baseAcc, smoothedElev, N, hexFull, terrainVScale);
   }
 
   // Road types to render — skip noise (footway, path, cycleway, steps, service)
@@ -191,7 +217,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   // Buildings follow terrain when terrainRelief is on.
   // Roads are ALWAYS flat at BASE — terrain elevation is never applied to roads
   // because elevated roads can appear taller than lower-elevation buildings.
-  const canRelief = terrainRelief && elevGrid && N > 0;
+  const canRelief = terrainRelief && smoothedElev && N > 0;
 
   function polyTerrainBaseY(poly) {
     if (!canRelief) return BASE;
@@ -199,7 +225,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     for (const p of poly) { cx += p.x; cy += p.y; }
     cx /= poly.length;
     cy /= poly.length;
-    return BASE + sampleTerrainElev(cx, cy, elevGrid, N, vScale);
+    return BASE + sampleTerrainElev(cx, cy, smoothedElev, N, terrainVScale);
   }
 
   // ── 3. Pre-collect building footprints ────────────────────────────────────
@@ -466,13 +492,15 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     if (area < 0.3 || area > MAX_ROAD_AREA) continue;
     if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
 
-    extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
+    const roadBaseY = canRelief ? polyTerrainBaseY(clipped) : BASE;
+    extrudeSlab(blackAcc, clipped, roadBaseY, ROAD_SLAB);
     roadCount++;
   }
 
   onProgress?.('Building water areas…', 88);
   for (const poly of waterPolys) {
-    extrudeSlab(blackAcc, poly, BASE, ROAD_SLAB);
+    const waterBaseY = canRelief ? polyTerrainBaseY(poly) : BASE;
+    extrudeSlab(blackAcc, poly, waterBaseY, ROAD_SLAB);
   }
 
   // ── 7. Order ID engraving on base bottom ─────────────────────────────────
@@ -760,7 +788,7 @@ function collectTreeBump(acc, x, y, baseY, height, radius, segments = 6) {
   acc.add(pos, idx);
 }
 
-function collectTerrainMesh(acc, elevGrid, N, hexVerts, vScale, baseY = BASE_THICKNESS_MM) {
+function collectTerrainMesh(acc, elevGrid, N, hexVerts, terrainVScale, baseY = BASE_THICKNESS_MM) {
   const pos = [];
   const idx = [];
 
@@ -771,7 +799,7 @@ function collectTerrainMesh(acc, elevGrid, N, hexVerts, vScale, baseY = BASE_THI
       const x = u * MODEL_RADIUS_MM;
       const y = v * MODEL_RADIUS_MM;
       const inside = pointInHex({ x, y }, hexVerts);
-      const elev   = inside ? clamp(elevGrid[j * N + i] * vScale, 0, 40) : 0;
+      const elev   = inside ? clamp(elevGrid[j * N + i] * terrainVScale, 0, 45) : 0;
       pos.push(x, baseY + elev, -y);
     }
   }
@@ -780,6 +808,53 @@ function collectTerrainMesh(acc, elevGrid, N, hexVerts, vScale, baseY = BASE_THI
     for (let i = 0; i < N - 1; i++) {
       const a = j * N + i, b = a + 1, c = a + N, d = c + 1;
       idx.push(a, b, c,  b, d, c);
+    }
+  }
+
+  acc.add(pos, idx);
+}
+
+function collectTerrainWalls(acc, elevGrid, N, hexVerts, terrainVScale) {
+  const BASE   = BASE_THICKNESS_MM;
+  const BOT_Y  = 0;
+  const SEGS   = 10;
+
+  function sampleTopY(x, y) {
+    const fi = ((x / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
+    const fj = ((y / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
+    if (fi < 0 || fi > N - 1 || fj < 0 || fj > N - 1) return BASE;
+    const i = Math.max(0, Math.min(N - 2, Math.floor(fi)));
+    const j = Math.max(0, Math.min(N - 2, Math.floor(fj)));
+    const u = fi - i, v = fj - j;
+    const e = elevGrid[j * N + i]         * (1 - u) * (1 - v)
+            + elevGrid[j * N + (i + 1)]   * u       * (1 - v)
+            + elevGrid[(j + 1) * N + i]   * (1 - u) * v
+            + elevGrid[(j + 1) * N + (i + 1)] * u   * v;
+    return BASE + clamp(e * terrainVScale, 0, 45);
+  }
+
+  const pos = [];
+  const idx = [];
+  const nHex = hexVerts.length;
+
+  for (let h = 0; h < nHex; h++) {
+    const A = hexVerts[h];
+    const B = hexVerts[(h + 1) % nHex];
+
+    for (let s = 0; s < SEGS; s++) {
+      const t0 = s / SEGS;
+      const t1 = (s + 1) / SEGS;
+      const x0 = A.x + (B.x - A.x) * t0, y0 = A.y + (B.y - A.y) * t0;
+      const x1 = A.x + (B.x - A.x) * t1, y1 = A.y + (B.y - A.y) * t1;
+      const tY0 = sampleTopY(x0, y0);
+      const tY1 = sampleTopY(x1, y1);
+
+      const vi = pos.length / 3;
+      pos.push(x0, tY0,   -y0);
+      pos.push(x1, tY1,   -y1);
+      pos.push(x0, BOT_Y, -y0);
+      pos.push(x1, BOT_Y, -y1);
+      idx.push(vi, vi + 1, vi + 2,  vi + 1, vi + 3, vi + 2);
     }
   }
 
