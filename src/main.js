@@ -194,7 +194,6 @@ async function generate() {
     const lng          = selectedCenter.lng;
     const radiusMeters = getRadiusMeters();
     const vertExag     = getVertExag();
-    const parkHills = el('terrain-relief')?.checked || false;
 
     // 1. Projection + shape
     // Rotation is baked into the projection — all projected coordinates
@@ -251,7 +250,7 @@ async function generate() {
     setStatus('Building 3D model...', 60);
     const detailedBuildings  = el('detailed-buildings')?.checked  || false;
     const proceduralInfill   = el('procedural-infill')?.checked   || false;
-    const result = buildMapModel(features, null, projection, vertExag, setStatus, currentShape, detailedBuildings, false, parkHills, activeOrderId, false, proceduralInfill);
+    const result = buildMapModel(features, null, projection, vertExag, setStatus, currentShape, detailedBuildings, false, false, activeOrderId, false, proceduralInfill);
     const group = result.group;
     const modelStats = result.stats;
 
@@ -419,7 +418,6 @@ async function doOrderPrint() {
         lng: selectedCenter.lng,
         radius: parseFloat(el('radius-slider').value),
         verticalScale: getVertExag(),
-        parkHills: el('terrain-relief')?.checked        || false,
         detailedBuildings: el('detailed-buildings')?.checked || false,
         rotation: parseFloat(el('rotation-slider')?.value || '0'),
         region,

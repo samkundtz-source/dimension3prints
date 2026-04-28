@@ -118,7 +118,7 @@ class GeomAccumulator {
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
-export function buildMapModel(features, _elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, parkHills = false, orderId = '', _roadElevation = false, proceduralInfill = false) {
+export function buildMapModel(features, _elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, _parkHills = false, orderId = '', _roadElevation = false, proceduralInfill = false) {
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -151,23 +151,6 @@ export function buildMapModel(features, _elevGrid, projection, vertExag, onProgr
   // ── 1. Base plate — always solid, never carved ────────────────────────────
   onProgress?.('Building base plate…', 65);
   collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
-
-  // ── 2. Park hills — procedural domes under green areas ───────────────────
-  if (parkHills) {
-    onProgress?.('Building park hills…', 68);
-    for (const feat of (features.parks || [])) {
-      let poly;
-      try { poly = clipToHex(feat.polygon, hexInner); } catch { continue; }
-      if (!poly || poly.length < 3) continue;
-      if (Math.abs(signedArea2D(poly)) < 4.0) continue;
-      const tag = feat.tags?.leisure || feat.tags?.landuse || feat.tags?.natural || '';
-      let maxH;
-      if (tag === 'forest' || feat.tags?.natural === 'wood') maxH = 7.0;
-      else if (tag === 'park' || tag === 'garden' || tag === 'recreation_ground') maxH = 5.0;
-      else maxH = 3.5;
-      collectParkHill(baseAcc, poly, maxH);
-    }
-  }
 
   // Road types to render — skip noise (footway, path, cycleway, steps, service)
   const ROAD_TYPES = new Set([
@@ -729,81 +712,6 @@ function collectTreeBump(acc, x, y, baseY, height, radius, segments = 6) {
   acc.add(pos, idx);
 }
 
-/**
- * Procedural park hill — generates a smooth parabolic dome over a park/forest
- * polygon. The dome peaks at the polygon centroid and tapers to zero at the
- * edges, so it blends naturally into the flat base plate. No external data
- * required — entirely procedural.
- *
- * @param {GeomAccumulator} acc     - base accumulator (white mesh)
- * @param {Array}           polygon - clipped park polygon in model mm
- * @param {number}          maxH    - peak dome height in mm
- */
-function collectParkHill(acc, polygon, maxH) {
-  if (!polygon || polygon.length < 3 || maxH < 0.5) return;
-
-  // Bounding box
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const p of polygon) {
-    if (p.x < minX) minX = p.x;
-    if (p.x > maxX) maxX = p.x;
-    if (p.y < minY) minY = p.y;
-    if (p.y > maxY) maxY = p.y;
-  }
-
-  // Centroid
-  let cx = 0, cy = 0;
-  for (const p of polygon) { cx += p.x; cy += p.y; }
-  cx /= polygon.length;
-  cy /= polygon.length;
-
-  // Dome radius — slightly larger than bounding-box half-extent so edges taper to near-zero
-  const rx = (maxX - minX) * 0.55 + 0.5;
-  const ry = (maxY - minY) * 0.55 + 0.5;
-
-  // Grid resolution — ~2mm steps clamped to [5, 48] cells per axis
-  const STEP = 2.0;
-  const nx = Math.max(5, Math.min(48, Math.ceil((maxX - minX) / STEP) + 2));
-  const ny = Math.max(5, Math.min(48, Math.ceil((maxY - minY) / STEP) + 2));
-
-  const BASE = BASE_THICKNESS_MM;
-
-  function domeHeight(x, y) {
-    const dx = (x - cx) / rx;
-    const dy = (y - cy) / ry;
-    return maxH * Math.max(0, 1 - dx * dx - dy * dy); // parabolic falloff
-  }
-
-  // Vertex grid
-  const pos = [];
-  for (let j = 0; j < ny; j++) {
-    for (let i = 0; i < nx; i++) {
-      const x = minX + (i / (nx - 1)) * (maxX - minX);
-      const y = minY + (j / (ny - 1)) * (maxY - minY);
-      const inPoly = pointInSimplePolygon({ x, y }, polygon);
-      const h = inPoly ? domeHeight(x, y) : 0;
-      pos.push(x, BASE + h, -y);
-    }
-  }
-
-  // Triangles — only cells whose centre is inside the polygon
-  const idx = [];
-  for (let j = 0; j < ny - 1; j++) {
-    for (let i = 0; i < nx - 1; i++) {
-      const ccx = minX + ((i + 0.5) / (nx - 1)) * (maxX - minX);
-      const ccy = minY + ((j + 0.5) / (ny - 1)) * (maxY - minY);
-      if (!pointInSimplePolygon({ x: ccx, y: ccy }, polygon)) continue;
-      const a = j * nx + i;
-      const b = a + 1;
-      const c = a + nx;
-      const d = c + 1;
-      idx.push(a, b, c,  b, d, c);
-    }
-  }
-
-  if (idx.length === 0) return;
-  acc.add(pos, idx);
-}
 
 // Beveled-top building extrusion — produces a small chamfer at the top edge
 // for a softer, more finished look instead of a hard cube corner. Holes not
