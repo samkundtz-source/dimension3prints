@@ -161,8 +161,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     try { poly = clipToHex(feat.polygon, hexInner); } catch { continue; }
     if (!poly || poly.length < 3) continue;
     const area = Math.abs(signedArea2D(poly));
-    if (area < 1.0)           continue;
-    if (area > hexArea * 0.08) continue;
+    if (area < 1.0)            continue;
+    if (area > hexArea * 0.40) continue;
     waterPolys.push(poly);
   }
 
