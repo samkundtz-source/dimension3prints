@@ -119,7 +119,7 @@ class GeomAccumulator {
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
-const TERRAIN_VERT_BOOST = 5;
+const TERRAIN_VERT_BOOST = 1.8;
 
 function smoothElevGrid(grid, N, passes = 3) {
   let src = grid;
@@ -158,7 +158,7 @@ function sampleTerrainElev(x, y, elevGrid, N, terrainVScale) {
   const e01 = elevGrid[(j + 1) * N + i];
   const e11 = elevGrid[(j + 1) * N + (i + 1)];
   const e = e00 * (1 - u) * (1 - v) + e10 * u * (1 - v) + e01 * (1 - u) * v + e11 * u * v;
-  return clamp(e * terrainVScale, 0, 45);
+  return clamp(e * terrainVScale, 0, 18);
 }
 
 export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '', roadElevation = false, proceduralInfill = false) {
@@ -172,6 +172,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   const N      = elevGrid ? Math.round(Math.sqrt(elevGrid.length)) : 0;
   const terrainVScale = hScale * Math.max(vertExag, 2) * TERRAIN_VERT_BOOST;
   const smoothedElev  = (elevGrid && N > 0) ? smoothElevGrid(elevGrid, N, 3) : null;
+  const canRelief     = terrainRelief && !!smoothedElev && N > 0;
 
   // ── 3 combined accumulators — everything merges into these ────────────────
   const baseAcc     = new GeomAccumulator();  // base plate + terrain → white
@@ -199,8 +200,8 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   onProgress?.('Building base plate…', 65);
   collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
 
-  // ── 2. Terrain ────────────────────────────────────────────────────────────
-  if (smoothedElev && N > 0) {
+  // ── 2. Terrain — only when the toggle is ON ───────────────────────────────
+  if (canRelief) {
     onProgress?.('Building terrain…', 68);
     collectTerrainMesh(baseAcc, smoothedElev, N, hexFull, terrainVScale, BASE);
     collectTerrainWalls(baseAcc, smoothedElev, N, hexFull, terrainVScale);
@@ -214,11 +215,6 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   ]);
 
   // ── Terrain-aware base Y helpers ─────────────────────────────────────────
-  // Buildings follow terrain when terrainRelief is on.
-  // Roads are ALWAYS flat at BASE — terrain elevation is never applied to roads
-  // because elevated roads can appear taller than lower-elevation buildings.
-  const canRelief = terrainRelief && smoothedElev && N > 0;
-
   function polyTerrainBaseY(poly) {
     if (!canRelief) return BASE;
     let cx = 0, cy = 0;
@@ -317,7 +313,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     // Terrain-relief mode: lift the building so it sits on the real ground height.
     // Base plate is always solid — buildings always sit at BASE (or terrain Y).
     const terrainBase = polyTerrainBaseY(bf.polygon);
-    const baseY       = terrainBase;
+    const baseY       = canRelief ? terrainBase + 0.08 : terrainBase;
     const heightMM    = baseHeightMM;
 
     if (detailedBuildings) {
@@ -858,8 +854,6 @@ function collectTerrainWalls(acc, elevGrid, N, hexVerts, terrainVScale) {
       const x1 = A.x + (B.x - A.x) * t1, y1 = A.y + (B.y - A.y) * t1;
       const topY0 = sampleInsideY(x0, y0);
       const topY1 = sampleInsideY(x1, y1);
-
-      if (topY0 <= BASE + 0.1 && topY1 <= BASE + 0.1) continue;
 
       const vi = pos.length / 3;
       pos.push(x0, topY0, -y0);
