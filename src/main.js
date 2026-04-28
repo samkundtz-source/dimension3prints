@@ -22,11 +22,11 @@ const PIN_ICON = L.divIcon({
 });
 
 import { createProjection, getHexVerticesGeo, getHexVertices, getShapeVertices, getShapeVerticesGeo } from './geo/geoMath.js';
-import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, fetchElevation } from './geo/osmData.js';
+import { geocode, fetchOSMData, parseOSMData, parseMSBuildings } from './geo/osmData.js';
 import { buildMapModel } from './geometry/buildMap.js';
 import { SceneManager }  from './preview/scene.js';
 import { exportSTL, export3MF } from './export/exporters.js';
-import { MODEL_RADIUS_MM, TERRAIN_GRID_SIZE } from './utils/helpers.js';
+import { MODEL_RADIUS_MM } from './utils/helpers.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -194,8 +194,7 @@ async function generate() {
     const lng          = selectedCenter.lng;
     const radiusMeters = getRadiusMeters();
     const vertExag     = getVertExag();
-    const useElevation  = el('use-elevation')?.checked  || false;
-    const terrainRelief = el('terrain-relief')?.checked || false;
+    const parkHills = el('terrain-relief')?.checked || false;
 
     // 1. Projection + shape
     // Rotation is baked into the projection — all projected coordinates
@@ -248,29 +247,11 @@ async function generate() {
       }
     }
 
-    // 4. Elevation (optional — forced on when terrain relief is enabled)
-    let elevGrid = null;
-    if (useElevation || terrainRelief || roadElevation) {
-      setStatus('Fetching elevation data...', 37);
-      try {
-        elevGrid = await fetchElevation(
-          lat, lng, radiusMeters, TERRAIN_GRID_SIZE, setStatus,
-        );
-        if (elevGrid) {
-          setStatus('Elevation data loaded.', 57);
-        } else {
-          setStatus('Elevation unavailable — flat terrain.', 57);
-        }
-      } catch {
-        setStatus('Elevation failed — flat terrain.', 57);
-      }
-    }
-
-    // 5. Build 3D model
+    // 4. Build 3D model
     setStatus('Building 3D model...', 60);
     const detailedBuildings  = el('detailed-buildings')?.checked  || false;
     const proceduralInfill   = el('procedural-infill')?.checked   || false;
-    const result = buildMapModel(features, elevGrid, projection, vertExag, setStatus, currentShape, detailedBuildings, false, terrainRelief, activeOrderId, false, proceduralInfill);
+    const result = buildMapModel(features, null, projection, vertExag, setStatus, currentShape, detailedBuildings, false, parkHills, activeOrderId, false, proceduralInfill);
     const group = result.group;
     const modelStats = result.stats;
 
@@ -438,10 +419,8 @@ async function doOrderPrint() {
         lng: selectedCenter.lng,
         radius: parseFloat(el('radius-slider').value),
         verticalScale: getVertExag(),
-        elevation: el('use-elevation').checked,
-        terrainRelief: el('terrain-relief')?.checked    || false,
+        parkHills: el('terrain-relief')?.checked        || false,
         detailedBuildings: el('detailed-buildings')?.checked || false,
-        roadElevation: el('road-elevation')?.checked    || false,
         rotation: parseFloat(el('rotation-slider')?.value || '0'),
         region,
       }),
@@ -636,11 +615,7 @@ document.addEventListener('DOMContentLoaded', () => {
             if (rs) { rs.value = deg; el('rotation-value').textContent = `${deg}°`; }
           }
         }
-        // Set elevation
-        if (params.has('elevation')) {
-          el('use-elevation').checked = params.get('elevation') === 'true';
-        }
-        // Set terrain relief
+        // Set park hills (formerly terrain-relief)
         if (params.has('terrainRelief')) {
           const tr = el('terrain-relief');
           if (tr) tr.checked = params.get('terrainRelief') === 'true';

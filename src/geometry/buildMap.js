@@ -26,7 +26,6 @@ import {
   ensureCCW,
   ensureCW,
   deduplicateRing,
-  bilinearInterp,
   clamp,
 } from '../utils/helpers.js';
 import { getHexVertices, getShapeVertices } from '../geo/geoMath.js';
@@ -119,60 +118,13 @@ class GeomAccumulator {
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
-const TERRAIN_VERT_BOOST = 1.8;
-
-function smoothElevGrid(grid, N, passes = 3) {
-  let src = grid;
-  for (let pass = 0; pass < passes; pass++) {
-    const dst = new Float32Array(N * N);
-    for (let j = 0; j < N; j++) {
-      for (let i = 0; i < N; i++) {
-        let sum = 0, cnt = 0;
-        for (let dj = -1; dj <= 1; dj++) {
-          for (let di = -1; di <= 1; di++) {
-            const ni = i + di, nj = j + dj;
-            if (ni >= 0 && ni < N && nj >= 0 && nj < N) {
-              sum += src[nj * N + ni]; cnt++;
-            }
-          }
-        }
-        dst[j * N + i] = sum / cnt;
-      }
-    }
-    src = dst;
-  }
-  return src;
-}
-
-function sampleTerrainElev(x, y, elevGrid, N, terrainVScale) {
-  if (!elevGrid || N < 2) return 0;
-  const fi = ((x / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
-  const fj = ((y / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
-  if (fi < 0 || fi > N - 1 || fj < 0 || fj > N - 1) return 0;
-  const i = Math.max(0, Math.min(N - 2, Math.floor(fi)));
-  const j = Math.max(0, Math.min(N - 2, Math.floor(fj)));
-  const u = fi - i;
-  const v = fj - j;
-  const e00 = elevGrid[j * N + i];
-  const e10 = elevGrid[j * N + (i + 1)];
-  const e01 = elevGrid[(j + 1) * N + i];
-  const e11 = elevGrid[(j + 1) * N + (i + 1)];
-  const e = e00 * (1 - u) * (1 - v) + e10 * u * (1 - v) + e01 * (1 - u) * v + e11 * u * v;
-  return clamp(e * terrainVScale, 0, 18);
-}
-
-export function buildMapModel(features, elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, terrainRelief = false, orderId = '', roadElevation = false, proceduralInfill = false) {
+export function buildMapModel(features, _elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, parkHills = false, orderId = '', _roadElevation = false, proceduralInfill = false) {
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
   const hexInner = getShapeVertices(MODEL_RADIUS_MM - 5, shape);
 
   const hScale = projection.horizontalScale;
-  const vScale = hScale * vertExag;
-  const N      = elevGrid ? Math.round(Math.sqrt(elevGrid.length)) : 0;
-  const terrainVScale = hScale * Math.max(vertExag, 2) * TERRAIN_VERT_BOOST;
-  const smoothedElev  = (elevGrid && N > 0) ? smoothElevGrid(elevGrid, N, 3) : null;
-  const canRelief     = terrainRelief && !!smoothedElev && N > 0;
 
   // ── 3 combined accumulators — everything merges into these ────────────────
   const baseAcc     = new GeomAccumulator();  // base plate + terrain → white
@@ -200,11 +152,21 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
   onProgress?.('Building base plate…', 65);
   collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
 
-  // ── 2. Terrain — only when the toggle is ON ───────────────────────────────
-  if (canRelief) {
-    onProgress?.('Building terrain…', 68);
-    collectTerrainMesh(baseAcc, smoothedElev, N, hexFull, terrainVScale, BASE);
-    collectTerrainWalls(baseAcc, smoothedElev, N, hexFull, terrainVScale);
+  // ── 2. Park hills — procedural domes under green areas ───────────────────
+  if (parkHills) {
+    onProgress?.('Building park hills…', 68);
+    for (const feat of (features.parks || [])) {
+      let poly;
+      try { poly = clipToHex(feat.polygon, hexInner); } catch { continue; }
+      if (!poly || poly.length < 3) continue;
+      if (Math.abs(signedArea2D(poly)) < 4.0) continue;
+      const tag = feat.tags?.leisure || feat.tags?.landuse || feat.tags?.natural || '';
+      let maxH;
+      if (tag === 'forest' || feat.tags?.natural === 'wood') maxH = 7.0;
+      else if (tag === 'park' || tag === 'garden' || tag === 'recreation_ground') maxH = 5.0;
+      else maxH = 3.5;
+      collectParkHill(baseAcc, poly, maxH);
+    }
   }
 
   // Road types to render — skip noise (footway, path, cycleway, steps, service)
@@ -213,16 +175,6 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     'primary', 'primary_link', 'secondary', 'secondary_link',
     'tertiary', 'tertiary_link', 'unclassified', 'residential', 'living_street',
   ]);
-
-  // ── Terrain-aware base Y helpers ─────────────────────────────────────────
-  function polyTerrainBaseY(poly) {
-    if (!canRelief) return BASE;
-    let cx = 0, cy = 0;
-    for (const p of poly) { cx += p.x; cy += p.y; }
-    cx /= poly.length;
-    cy /= poly.length;
-    return BASE + sampleTerrainElev(cx, cy, smoothedElev, N, terrainVScale);
-  }
 
   // ── 3. Pre-collect building footprints ────────────────────────────────────
   // Buildings are generated FIRST so roads can fit around them.
@@ -307,14 +259,10 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     if (minBBoxDimension(bf.polygon) < MIN_BLDG_DIM) continue;
     if (Math.abs(signedArea2D(bf.polygon)) < 0.3) continue; // < 0.3mm² is sub-nozzle
 
-    const heightM   = parseBuildingHeight(bf.tags, bf.polygon);
+    const heightM      = parseBuildingHeight(bf.tags, bf.polygon);
     const baseHeightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
-
-    // Terrain-relief mode: lift the building so it sits on the real ground height.
-    // Base plate is always solid — buildings always sit at BASE (or terrain Y).
-    const terrainBase = polyTerrainBaseY(bf.polygon);
-    const baseY       = canRelief ? terrainBase + 0.08 : terrainBase;
-    const heightMM    = baseHeightMM;
+    const baseY        = BASE;
+    const heightMM     = baseHeightMM;
 
     if (detailedBuildings) {
       // ── 3-tier building generation system ──────────────────────────────
@@ -433,8 +381,7 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
           if (!clipped || clipped.length < 3) continue;
           if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
 
-          const terrainBase = polyTerrainBaseY(clipped);
-          collectExtrudedPolygon(buildingAcc, clipped, [], terrainBase, heightMM);
+          collectExtrudedPolygon(buildingAcc, clipped, [], BASE, heightMM);
           buildingCount++;
           proceduralCount++;
 
@@ -488,15 +435,13 @@ export function buildMapModel(features, elevGrid, projection, vertExag, onProgre
     if (area < 0.3 || area > MAX_ROAD_AREA) continue;
     if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
 
-    const roadBaseY = canRelief ? polyTerrainBaseY(clipped) : BASE;
-    extrudeSlab(blackAcc, clipped, roadBaseY, ROAD_SLAB);
+    extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
     roadCount++;
   }
 
   onProgress?.('Building water areas…', 88);
   for (const poly of waterPolys) {
-    const waterBaseY = canRelief ? polyTerrainBaseY(poly) : BASE;
-    extrudeSlab(blackAcc, poly, waterBaseY, ROAD_SLAB);
+    extrudeSlab(blackAcc, poly, BASE, ROAD_SLAB);
   }
 
   // ── 7. Order ID engraving on base bottom ─────────────────────────────────
@@ -784,87 +729,80 @@ function collectTreeBump(acc, x, y, baseY, height, radius, segments = 6) {
   acc.add(pos, idx);
 }
 
-function collectTerrainMesh(acc, elevGrid, N, hexVerts, terrainVScale, baseY = BASE_THICKNESS_MM) {
-  const pos = [];
-  const idx = [];
+/**
+ * Procedural park hill — generates a smooth parabolic dome over a park/forest
+ * polygon. The dome peaks at the polygon centroid and tapers to zero at the
+ * edges, so it blends naturally into the flat base plate. No external data
+ * required — entirely procedural.
+ *
+ * @param {GeomAccumulator} acc     - base accumulator (white mesh)
+ * @param {Array}           polygon - clipped park polygon in model mm
+ * @param {number}          maxH    - peak dome height in mm
+ */
+function collectParkHill(acc, polygon, maxH) {
+  if (!polygon || polygon.length < 3 || maxH < 0.5) return;
 
-  for (let j = 0; j < N; j++) {
-    for (let i = 0; i < N; i++) {
-      const u = (i / (N - 1)) * 2 - 1;
-      const v = (j / (N - 1)) * 2 - 1;
-      const x = u * MODEL_RADIUS_MM;
-      const y = v * MODEL_RADIUS_MM;
-      const inside = pointInHex({ x, y }, hexVerts);
-      const elev   = inside ? clamp(elevGrid[j * N + i] * terrainVScale, 0, 45) : 0;
-      pos.push(x, baseY + elev, -y);
+  // Bounding box
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of polygon) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+
+  // Centroid
+  let cx = 0, cy = 0;
+  for (const p of polygon) { cx += p.x; cy += p.y; }
+  cx /= polygon.length;
+  cy /= polygon.length;
+
+  // Dome radius — slightly larger than bounding-box half-extent so edges taper to near-zero
+  const rx = (maxX - minX) * 0.55 + 0.5;
+  const ry = (maxY - minY) * 0.55 + 0.5;
+
+  // Grid resolution — ~2mm steps clamped to [5, 48] cells per axis
+  const STEP = 2.0;
+  const nx = Math.max(5, Math.min(48, Math.ceil((maxX - minX) / STEP) + 2));
+  const ny = Math.max(5, Math.min(48, Math.ceil((maxY - minY) / STEP) + 2));
+
+  const BASE = BASE_THICKNESS_MM;
+
+  function domeHeight(x, y) {
+    const dx = (x - cx) / rx;
+    const dy = (y - cy) / ry;
+    return maxH * Math.max(0, 1 - dx * dx - dy * dy); // parabolic falloff
+  }
+
+  // Vertex grid
+  const pos = [];
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      const x = minX + (i / (nx - 1)) * (maxX - minX);
+      const y = minY + (j / (ny - 1)) * (maxY - minY);
+      const inPoly = pointInSimplePolygon({ x, y }, polygon);
+      const h = inPoly ? domeHeight(x, y) : 0;
+      pos.push(x, BASE + h, -y);
     }
   }
 
-  for (let j = 0; j < N - 1; j++) {
-    for (let i = 0; i < N - 1; i++) {
-      const cu = ((i + 0.5) / (N - 1)) * 2 - 1;
-      const cv = ((j + 0.5) / (N - 1)) * 2 - 1;
-      if (!pointInHex({ x: cu * MODEL_RADIUS_MM, y: cv * MODEL_RADIUS_MM }, hexVerts)) continue;
-      const a = j * N + i, b = a + 1, c = a + N, d = c + 1;
+  // Triangles — only cells whose centre is inside the polygon
+  const idx = [];
+  for (let j = 0; j < ny - 1; j++) {
+    for (let i = 0; i < nx - 1; i++) {
+      const ccx = minX + ((i + 0.5) / (nx - 1)) * (maxX - minX);
+      const ccy = minY + ((j + 0.5) / (ny - 1)) * (maxY - minY);
+      if (!pointInSimplePolygon({ x: ccx, y: ccy }, polygon)) continue;
+      const a = j * nx + i;
+      const b = a + 1;
+      const c = a + nx;
+      const d = c + 1;
       idx.push(a, b, c,  b, d, c);
     }
   }
 
+  if (idx.length === 0) return;
   acc.add(pos, idx);
-}
-
-function collectTerrainWalls(acc, elevGrid, N, hexVerts, terrainVScale) {
-  const BASE  = BASE_THICKNESS_MM;
-  const SEGS  = 14;
-  const nHex  = hexVerts.length;
-  const INSET = 3.5;
-
-  let hcx = 0, hcy = 0;
-  for (const v of hexVerts) { hcx += v.x; hcy += v.y; }
-  hcx /= nHex; hcy /= nHex;
-
-  function sampleInsideY(bx, by) {
-    const dx = hcx - bx, dy = hcy - by;
-    const len = Math.hypot(dx, dy) || 1;
-    const sx  = bx + (dx / len) * INSET;
-    const sy  = by + (dy / len) * INSET;
-    const fi  = ((sx / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
-    const fj  = ((sy / MODEL_RADIUS_MM + 1) / 2) * (N - 1);
-    if (fi < 0 || fi > N - 1 || fj < 0 || fj > N - 1) return BASE;
-    const ii = Math.max(0, Math.min(N - 2, Math.floor(fi)));
-    const jj = Math.max(0, Math.min(N - 2, Math.floor(fj)));
-    const fu = fi - ii, fv = fj - jj;
-    const e  = elevGrid[jj * N + ii]           * (1 - fu) * (1 - fv)
-             + elevGrid[jj * N + (ii + 1)]     *  fu      * (1 - fv)
-             + elevGrid[(jj + 1) * N + ii]     * (1 - fu) *  fv
-             + elevGrid[(jj + 1) * N + (ii + 1)] * fu     *  fv;
-    return BASE + clamp(e * terrainVScale, 0, 45);
-  }
-
-  const pos = [];
-  const idx = [];
-
-  for (let h = 0; h < nHex; h++) {
-    const A = hexVerts[h];
-    const B = hexVerts[(h + 1) % nHex];
-
-    for (let s = 0; s < SEGS; s++) {
-      const t0 = s / SEGS, t1 = (s + 1) / SEGS;
-      const x0 = A.x + (B.x - A.x) * t0, y0 = A.y + (B.y - A.y) * t0;
-      const x1 = A.x + (B.x - A.x) * t1, y1 = A.y + (B.y - A.y) * t1;
-      const topY0 = sampleInsideY(x0, y0);
-      const topY1 = sampleInsideY(x1, y1);
-
-      const vi = pos.length / 3;
-      pos.push(x0, topY0, -y0);
-      pos.push(x1, topY1, -y1);
-      pos.push(x0, BASE,  -y0);
-      pos.push(x1, BASE,  -y1);
-      idx.push(vi, vi + 1, vi + 2,  vi + 1, vi + 3, vi + 2);
-    }
-  }
-
-  if (pos.length > 0) acc.add(pos, idx);
 }
 
 // Beveled-top building extrusion — produces a small chamfer at the top edge
