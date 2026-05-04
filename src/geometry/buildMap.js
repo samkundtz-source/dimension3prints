@@ -164,7 +164,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   if (elevGrid) {
     centerElev = bilinearInterp(elevGrid, ELEV_N, 0, 0, MODEL_RADIUS_MM);
     onProgress?.('Building terrain surface…', 67);
-    collectTerrainSurface(baseAcc, elevGrid, ELEV_N, hexInner, BASE, centerElev, hScale, terrainExag);
+    collectTerrainSurface(baseAcc, elevGrid, ELEV_N, hexInner, BASE, centerElev, hScale, terrainExag, waterPolys);
     collectTerrainBorderWall(baseAcc, hexInner, elevGrid, ELEV_N, BASE, centerElev, hScale, terrainExag);
   }
 
@@ -650,14 +650,19 @@ function engraveTextOnBottom(acc, text) {
 // ── Terrain surface mesh (test mode) ──────────────────────────────────────────
 // Generates a grid of quads displaced by real elevation. Any vertex outside
 // shapeVerts (hexInner) is clamped to BASE so no geometry pokes into the gap ring.
-function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag) {
+function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag, waterPolys = []) {
   const GRID = 56;
   const R = MODEL_RADIUS_MM;
   const mmPerM = hScale * terrainExag;
 
+  function inWater(mx, my) {
+    const pt = { x: mx, y: my };
+    return waterPolys.some(poly => pointInSimplePolygon(pt, poly));
+  }
+
   function terrainY(mx, my) {
-    // Clamp outside-boundary vertices to BASE so they don't poke into the gap
     if (!pointInConvexPolygon({ x: mx, y: my }, shapeVerts)) return BASE;
+    if (inWater(mx, my)) return BASE;
     const elev = bilinearInterp(elevGrid, N, mx, my, R);
     const rel  = (elev - centerElev) * mmPerM;
     return BASE + Math.max(-(BASE - 0.2), rel);
@@ -673,8 +678,12 @@ function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, h
       const y0 = (j       / (GRID - 1) * 2 - 1) * R;
       const y1 = ((j + 1) / (GRID - 1) * 2 - 1) * R;
 
-      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-      if (!pointInConvexPolygon({ x: cx, y: cy }, shapeVerts)) continue;
+      // All-corners check: skip any cell with a vertex outside hexInner so no
+      // terrain geometry reaches into the 5 mm gap ring.
+      if (!pointInConvexPolygon({ x: x0, y: y0 }, shapeVerts) ||
+          !pointInConvexPolygon({ x: x1, y: y0 }, shapeVerts) ||
+          !pointInConvexPolygon({ x: x0, y: y1 }, shapeVerts) ||
+          !pointInConvexPolygon({ x: x1, y: y1 }, shapeVerts)) continue;
 
       const h00 = terrainY(x0, y0), h10 = terrainY(x1, y0);
       const h01 = terrainY(x0, y1), h11 = terrainY(x1, y1);
