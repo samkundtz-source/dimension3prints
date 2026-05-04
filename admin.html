@@ -413,7 +413,7 @@
   </style>
 
   <script>
-    let adminPassword = '';
+    let adminToken = '';
     let orders = [];
     let activeFilter = 'all';
     let shopSettings = { orderLimit: 50, preOrderEnabled: true, preOrderMessage: '' };
@@ -424,7 +424,7 @@
       if (e.key === 'Enter') doLogin();
     });
     document.getElementById('logout-btn').addEventListener('click', () => {
-      adminPassword = '';
+      adminToken = '';
       document.getElementById('dashboard').style.display = 'none';
       document.getElementById('login-screen').style.display = 'flex';
       document.getElementById('admin-pw').value = '';
@@ -443,7 +443,7 @@
         });
         const data = await resp.json();
         if (data.success) {
-          adminPassword = pw;
+          adminToken = data.token;
           document.getElementById('login-screen').style.display = 'none';
           document.getElementById('dashboard').style.display = 'block';
           loadOrders();
@@ -465,11 +465,13 @@
         const resp = await fetch('/api/admin-orders', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: adminPassword, limit: 50 }),
+          body: JSON.stringify({ token: adminToken, limit: 50 }),
         });
         const data = await resp.json();
         if (data.error) {
-          document.getElementById('orders-list').innerHTML = `<div class="empty-state"><h2>Error</h2><p>${data.error}</p></div>`;
+          const el = document.getElementById('orders-list');
+          el.innerHTML = '<div class="empty-state"><h2>Error</h2><p></p></div>';
+          el.querySelector('p').textContent = data.error;
           return;
         }
         orders = data.orders || [];
@@ -539,34 +541,41 @@
         const orderId = o.orderId || ('C3D-' + o.id.slice(-4).toUpperCase());
         const shortId = o.id.slice(-8).toUpperCase();
         const addr = o.shipping;
-        const addrStr = addr ? `${addr.line1}${addr.line2 ? ', ' + addr.line2 : ''}, ${addr.city}, ${addr.state} ${addr.postal}, ${addr.country}` : 'No address';
+        const addrStr = addr
+          ? `${escHtml(addr.line1)}${addr.line2 ? ', ' + escHtml(addr.line2) : ''}, ${escHtml(addr.city)}, ${escHtml(addr.state)} ${escHtml(addr.postal)}, ${escHtml(addr.country)}`
+          : 'No address';
         const m = o.model;
+        const safeId       = escHtml(orderId);
+        const safeName     = escHtml(o.name);
+        const safeEmail    = escHtml(o.email);
+        const safeStatus   = escHtml(o.status);
+        const safeShipName = escHtml(addr ? addr.name : '');
 
         return `
           <div class="order-card">
             <div class="order-header" onclick="toggleOrder(${i})">
               <div class="order-left">
-                <span class="order-id">${orderId}</span>
+                <span class="order-id">${safeId}</span>
                 <span class="order-num">#${shortId}</span>
                 <span class="order-date">${dateStr}</span>
-                <span style="font-size:12px;color:var(--text-muted)">${o.name || o.email}</span>
+                <span style="font-size:12px;color:var(--text-muted)">${safeName || safeEmail}</span>
               </div>
               <div class="order-right">
                 <span class="order-amount">${amount}</span>
                 ${o.preOrder ? '<span class="preorder-badge">Pre-order</span>' : ''}
-                <span class="status-badge status-${o.status}">${o.status}</span>
+                <span class="status-badge status-${safeStatus}">${safeStatus}</span>
               </div>
             </div>
             <div class="order-details" id="order-${i}">
               <div class="detail-grid">
                 <div class="detail-section">
                   <h3>Customer</h3>
-                  <div class="detail-row"><span class="detail-label">Name: </span><span class="detail-val">${o.name || '—'}</span></div>
-                  <div class="detail-row"><span class="detail-label">Email: </span><span class="detail-val">${o.email || '—'}</span></div>
+                  <div class="detail-row"><span class="detail-label">Name: </span><span class="detail-val">${safeName || '—'}</span></div>
+                  <div class="detail-row"><span class="detail-label">Email: </span><span class="detail-val">${safeEmail || '—'}</span></div>
                 </div>
                 <div class="detail-section">
                   <h3>Shipping</h3>
-                  <div class="detail-row"><span class="detail-val">${addr ? addr.name : '—'}</span></div>
+                  <div class="detail-row"><span class="detail-val">${addr ? safeShipName : '—'}</span></div>
                   <div class="detail-row"><span class="detail-val">${addrStr}</span></div>
                 </div>
                 <div class="detail-section">
@@ -637,7 +646,7 @@
         const resp = await fetch('/api/admin-settings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: adminPassword }),
+          body: JSON.stringify({ token: adminToken }),
         });
         const data = await resp.json();
         if (data.settings) {
@@ -673,7 +682,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            password: adminPassword,
+            token: adminToken,
             orderLimit: parseInt(document.getElementById('setting-order-limit').value, 10),
             preOrderEnabled: document.getElementById('setting-preorder-enabled').checked,
             preOrderMessage: document.getElementById('setting-preorder-message').value,
@@ -779,7 +788,7 @@
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            password: adminPassword,
+            token: adminToken,
             heroHeadline: heroHeadlineRaw || null,
             heroSub:      heroSubRaw      || null,
             gallery,
@@ -807,7 +816,7 @@
         const resp = await fetch('/api/admin-update-order', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: adminPassword, sessionId, status }),
+          body: JSON.stringify({ token: adminToken, sessionId, status }),
         });
         const data = await resp.json();
         if (data.success) {

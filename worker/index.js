@@ -443,6 +443,32 @@ async function handleGetContent(request, env) {
   });
 }
 
+function timingSafeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+async function generateAdminToken(env) {
+  const win = Math.floor(Date.now() / (15 * 60 * 1000));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.ADMIN_PASSWORD), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode('admin-session|' + win));
+  return Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function validateAdminToken(token, env) {
+  if (typeof token !== 'string' || token.length !== 64) return false;
+  const win = Math.floor(Date.now() / (15 * 60 * 1000));
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(env.ADMIN_PASSWORD), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  for (const w of [win, win - 1]) {
+    const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode('admin-session|' + w));
+    const expected = Array.from(new Uint8Array(sig)).map(b => b.toString(16).padStart(2, '0')).join('');
+    if (timingSafeEqual(token, expected)) return true;
+  }
+  return false;
+}
+
 async function handleAdminVerify(request, env) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
   if (!env.ADMIN_PASSWORD)       return jsonResponse({ error: 'Admin password not configured' }, 500);
@@ -458,9 +484,10 @@ async function handleAdminVerify(request, env) {
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
   if (typeof body.password !== 'string') return jsonResponse({ error: 'Bad request' }, 400);
 
-  if (body.password === env.ADMIN_PASSWORD) {
+  if (timingSafeEqual(body.password, env.ADMIN_PASSWORD)) {
     await clearRateLimit(env, ip);
-    return jsonResponse({ success: true });
+    const token = await generateAdminToken(env);
+    return jsonResponse({ success: true, token });
   }
 
   await recordFailedAttempt(env, ip);
@@ -479,7 +506,7 @@ async function handleAdminOrders(request, env) {
 
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
-  if (typeof body.password !== 'string' || body.password !== env.ADMIN_PASSWORD) {
+  if (!await validateAdminToken(body.token, env)) {
     await recordFailedAttempt(env, ip);
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
@@ -552,7 +579,7 @@ async function handleAdminUpdateOrder(request, env) {
 
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
-  if (typeof body.password !== 'string' || body.password !== env.ADMIN_PASSWORD) {
+  if (!await validateAdminToken(body.token, env)) {
     await recordFailedAttempt(env, ip);
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
@@ -585,7 +612,7 @@ async function handleGetSettings(request, env) {
 
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
-  if (typeof body.password !== 'string' || body.password !== env.ADMIN_PASSWORD) {
+  if (!await validateAdminToken(body.token, env)) {
     await recordFailedAttempt(env, ip);
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
@@ -603,7 +630,7 @@ async function handleUpdateSettings(request, env) {
 
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
-  if (typeof body.password !== 'string' || body.password !== env.ADMIN_PASSWORD) {
+  if (!await validateAdminToken(body.token, env)) {
     await recordFailedAttempt(env, ip);
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }
@@ -629,7 +656,7 @@ async function handleUpdateContent(request, env) {
 
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
-  if (typeof body.password !== 'string' || body.password !== env.ADMIN_PASSWORD) {
+  if (!await validateAdminToken(body.token, env)) {
     await recordFailedAttempt(env, ip);
     return jsonResponse({ error: 'Unauthorized' }, 401);
   }

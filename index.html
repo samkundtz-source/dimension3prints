@@ -1083,8 +1083,21 @@
         if (!data.content) return;
         const c = data.content;
 
+        // Sanitize headline HTML — only <br>, <em>, <strong>, <b>, <i> allowed
+        function sanitizeHeadline(html) {
+          const div = document.createElement('div');
+          div.textContent = html;
+          return div.innerHTML
+            .replace(/&lt;(\/?(br|em|strong|b|i))\s*\/?&gt;/gi, (_, tag) => '<' + tag + '>');
+        }
+        function escHtml(s) {
+          const d = document.createElement('div');
+          d.textContent = s || '';
+          return d.innerHTML;
+        }
+
         // Hero text overrides
-        if (c.heroHeadline)  document.getElementById('hero-headline').innerHTML = c.heroHeadline;
+        if (c.heroHeadline)  document.getElementById('hero-headline').innerHTML = sanitizeHeadline(c.heroHeadline);
         if (c.heroSub)       document.getElementById('hero-sub').textContent    = c.heroSub;
 
         // Gallery
@@ -1095,8 +1108,8 @@
             const delay = ['', ' reveal-d1', ' reveal-d2', ' reveal-d3', ' reveal-d2', ' reveal-d3'][idx] || '';
             if (item.url) {
               return `<div class="gallery-item reveal${delay}">
-                <img src="${item.url}" alt="${item.caption || 'Gallery ' + (idx+1)}" />
-                ${item.caption ? `<div class="gallery-caption">${item.caption}</div>` : ''}
+                <img src="${item.url}" alt="${escHtml(item.caption || 'Gallery ' + (idx+1))}" />
+                ${item.caption ? `<div class="gallery-caption">${escHtml(item.caption)}</div>` : ''}
               </div>`;
             }
             return `<div class="gallery-item reveal${delay}"><div class="gallery-placeholder"><svg width="28" height="28" viewBox="0 0 32 32" fill="none" opacity="0.15"><path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2"/></svg><span>Photo ${idx+1}</span></div></div>`;
