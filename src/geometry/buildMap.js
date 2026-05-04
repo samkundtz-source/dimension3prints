@@ -460,16 +460,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
 
   onProgress?.('Building water areas…', 88);
   for (const poly of waterPolys) {
-    let waterBaseY = BASE;
-    if (elevGrid) {
-      let wx = 0, wy = 0;
-      for (const p of poly) { wx += p.x; wy += p.y; }
-      wx /= poly.length; wy /= poly.length;
-      const elev = bilinearInterp(elevGrid, ELEV_N, wx, wy, MODEL_RADIUS_MM);
-      const relMM = (elev - centerElev) * hScale * terrainExag;
-      waterBaseY = BASE + Math.max(-(BASE - 0.2), relMM);
-    }
-    extrudeSlab(blackAcc, poly, waterBaseY, ROAD_SLAB);
+    extrudeSlab(blackAcc, poly, BASE, ROAD_SLAB);
   }
 
   // ── 7. Order ID engraving on base bottom ─────────────────────────────────
@@ -682,11 +673,8 @@ function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, h
       const y0 = (j       / (GRID - 1) * 2 - 1) * R;
       const y1 = ((j + 1) / (GRID - 1) * 2 - 1) * R;
 
-      // Include quad if ANY corner is inside shape — handles edge cells cleanly
-      if (!pointInConvexPolygon({ x: x0, y: y0 }, shapeVerts) &&
-          !pointInConvexPolygon({ x: x1, y: y0 }, shapeVerts) &&
-          !pointInConvexPolygon({ x: x0, y: y1 }, shapeVerts) &&
-          !pointInConvexPolygon({ x: x1, y: y1 }, shapeVerts)) continue;
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      if (!pointInConvexPolygon({ x: cx, y: cy }, shapeVerts)) continue;
 
       const h00 = terrainY(x0, y0), h10 = terrainY(x1, y0);
       const h01 = terrainY(x0, y1), h11 = terrainY(x1, y1);
