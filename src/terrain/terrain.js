@@ -107,7 +107,7 @@ export async function fetchElevationForModel(centerLat, centerLng, radiusMeters,
 
   // Resample to gridSize×gridSize, aligned to model space
   onProgress?.('Resampling elevation grid…');
-  const grid = new Float32Array(gridSize * gridSize);
+  let grid = new Float32Array(gridSize * gridSize);
 
   for (let j = 0; j < gridSize; j++) {
     for (let i = 0; i < gridSize; i++) {
@@ -134,6 +134,29 @@ export async function fetchElevationForModel(centerLat, centerLng, radiusMeters,
         stitched[y1 * fullW + x0] * (1 - fx) *      fy  +
         stitched[y1 * fullW + x1] *      fx  *      fy;
     }
+  }
+
+  // Smooth the grid with 3 passes of a weighted kernel (Gaussian-like) to
+  // remove tile-boundary stair-steps and produce rounder, more natural hills.
+  for (let pass = 0; pass < 3; pass++) {
+    const tmp = new Float32Array(gridSize * gridSize);
+    for (let j = 0; j < gridSize; j++) {
+      for (let i = 0; i < gridSize; i++) {
+        let sum = 0, wt = 0;
+        for (let dj = -1; dj <= 1; dj++) {
+          for (let di = -1; di <= 1; di++) {
+            const ni = i + di, nj = j + dj;
+            if (ni < 0 || ni >= gridSize || nj < 0 || nj >= gridSize) continue;
+            // Centre=4, edges=2, corners=1 (matches a 3×3 Gaussian kernel)
+            const w = (di === 0 && dj === 0) ? 4 : (di !== 0 && dj !== 0) ? 1 : 2;
+            sum += grid[nj * gridSize + ni] * w;
+            wt  += w;
+          }
+        }
+        tmp[j * gridSize + i] = sum / wt;
+      }
+    }
+    grid = tmp;
   }
 
   return grid;

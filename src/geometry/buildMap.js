@@ -164,7 +164,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   if (elevGrid) {
     centerElev = bilinearInterp(elevGrid, ELEV_N, 0, 0, MODEL_RADIUS_MM);
     onProgress?.('Building terrain surface…', 67);
-    collectTerrainSurface(baseAcc, elevGrid, ELEV_N, hexInner, BASE, centerElev, hScale, terrainExag, waterPolys);
+    collectTerrainSurface(baseAcc, elevGrid, ELEV_N, hexInner, BASE, centerElev, hScale, terrainExag);
     collectTerrainBorderWall(baseAcc, hexInner, elevGrid, ELEV_N, BASE, centerElev, hScale, terrainExag);
   }
 
@@ -443,24 +443,34 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     if (area < 0.3 || area > MAX_ROAD_AREA) continue;
     if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
 
-    let roadBaseY = BASE;
     if (elevGrid) {
-      // Sample terrain at road centerline midpoint so road slab sits on terrain
-      let rx = 0, ry = 0;
-      for (const p of feat.points) { rx += p.x; ry += p.y; }
-      rx /= feat.points.length; ry /= feat.points.length;
-      const elev = bilinearInterp(elevGrid, ELEV_N, rx, ry, MODEL_RADIUS_MM);
-      const relMM = (elev - centerElev) * hScale * terrainExag;
-      roadBaseY = BASE + Math.max(-(BASE - 0.2), relMM);
+      // Per-vertex terrain height: each point of the road follows the slope
+      const mmPerM = hScale * terrainExag;
+      extrudeTerrainSlab(blackAcc, clipped, (mx, my) => {
+        const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
+        const rel  = (elev - centerElev) * mmPerM;
+        return BASE + Math.max(-(BASE - 0.2), rel) + ROAD_SLAB;
+      });
+    } else {
+      extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
     }
-
-    extrudeSlab(blackAcc, clipped, roadBaseY, ROAD_SLAB);
     roadCount++;
   }
 
   onProgress?.('Building water areas…', 88);
   for (const poly of waterPolys) {
-    extrudeSlab(blackAcc, poly, BASE, ROAD_SLAB);
+    if (elevGrid) {
+      const mmPerM = hScale * terrainExag;
+      // Position water slab so its top sits just above the terrain surface,
+      // making it visible as a black area without creating cliff artifacts.
+      extrudeTerrainSlab(blackAcc, poly, (mx, my) => {
+        const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
+        const rel  = (elev - centerElev) * mmPerM;
+        return BASE + Math.max(-(BASE - 0.2), rel) + ROAD_SLAB;
+      });
+    } else {
+      extrudeSlab(blackAcc, poly, BASE, ROAD_SLAB);
+    }
   }
 
   // ── 7. Order ID engraving on base bottom ─────────────────────────────────
@@ -529,6 +539,57 @@ function extrudeSlab(acc, polygon, baseY, height) {
       const tl = 2 * n + i, tr = 2 * n + (i + 1) % n;
       const bl = 3 * n + i, br = 3 * n + (i + 1) % n;
       idx.push(tl, tr, bl,  bl, tr, br);
+    }
+
+    acc.add(pos, idx);
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+// Like extrudeSlab but the top face follows terrain: each vertex gets its own
+// Y from getTopY(x, y). Bottom is fixed at BASE_THICKNESS_MM so the slab is
+// always anchored to the base plate regardless of slope.
+function extrudeTerrainSlab(acc, polygon, getTopY) {
+  if (!polygon || polygon.length < 3) return false;
+  try {
+    const ring = deduplicateRing(polygon);
+    if (ring.length < 3) return false;
+    if (Math.abs(signedArea2D(ring)) < 0.05) return false;
+
+    const outer  = ensureCCW(ring);
+    const n      = outer.length;
+    const baseY  = BASE_THICKNESS_MM;
+
+    const flat = new Float64Array(n * 2);
+    for (let i = 0; i < n; i++) {
+      flat[i * 2]     = outer[i].x;
+      flat[i * 2 + 1] = outer[i].y;
+    }
+
+    const tris = earcut(flat, null, 2);
+    if (!tris || tris.length < 3) return false;
+    if (Math.abs(earcut.deviation(flat, null, 2, tris)) > 0.3) return false;
+
+    const tops = outer.map(p => getTopY(p.x, p.y));
+    const pos  = [], idx = [];
+
+    // Top face — per-vertex terrain heights
+    for (let i = 0; i < n; i++) pos.push(outer[i].x, tops[i], -outer[i].y);
+    for (const t of tris) idx.push(t);
+
+    // Bottom face — flat at BASE, reversed winding
+    for (const p of outer) pos.push(p.x, baseY, -p.y);
+    for (let t = 0; t < tris.length; t += 3) {
+      idx.push(n + tris[t + 2], n + tris[t + 1], n + tris[t]);
+    }
+
+    // Side walls — top varies per vertex, bottom is fixed
+    for (let i = 0; i < n; i++) {
+      const j  = (i + 1) % n;
+      // top[i]=i, top[j]=j, bot[i]=n+i, bot[j]=n+j
+      idx.push(i, j, n + i,  n + i, j, n + j);
     }
 
     acc.add(pos, idx);
@@ -650,19 +711,13 @@ function engraveTextOnBottom(acc, text) {
 // ── Terrain surface mesh (test mode) ──────────────────────────────────────────
 // Generates a grid of quads displaced by real elevation. Any vertex outside
 // shapeVerts (hexInner) is clamped to BASE so no geometry pokes into the gap ring.
-function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag, waterPolys = []) {
+function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag) {
   const GRID = 56;
   const R = MODEL_RADIUS_MM;
   const mmPerM = hScale * terrainExag;
 
-  function inWater(mx, my) {
-    const pt = { x: mx, y: my };
-    return waterPolys.some(poly => pointInSimplePolygon(pt, poly));
-  }
-
   function terrainY(mx, my) {
     if (!pointInConvexPolygon({ x: mx, y: my }, shapeVerts)) return BASE;
-    if (inWater(mx, my)) return BASE;
     const elev = bilinearInterp(elevGrid, N, mx, my, R);
     const rel  = (elev - centerElev) * mmPerM;
     return BASE + Math.max(-(BASE - 0.2), rel);
