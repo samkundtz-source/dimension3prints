@@ -443,13 +443,33 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     if (area < 0.3 || area > MAX_ROAD_AREA) continue;
     if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
 
-    extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
+    let roadBaseY = BASE;
+    if (elevGrid) {
+      // Sample terrain at road centerline midpoint so road slab sits on terrain
+      let rx = 0, ry = 0;
+      for (const p of feat.points) { rx += p.x; ry += p.y; }
+      rx /= feat.points.length; ry /= feat.points.length;
+      const elev = bilinearInterp(elevGrid, ELEV_N, rx, ry, MODEL_RADIUS_MM);
+      const relMM = (elev - centerElev) * hScale * terrainExag;
+      roadBaseY = BASE + Math.max(-(BASE - 0.2), relMM);
+    }
+
+    extrudeSlab(blackAcc, clipped, roadBaseY, ROAD_SLAB);
     roadCount++;
   }
 
   onProgress?.('Building water areas…', 88);
   for (const poly of waterPolys) {
-    extrudeSlab(blackAcc, poly, BASE, ROAD_SLAB);
+    let waterBaseY = BASE;
+    if (elevGrid) {
+      let wx = 0, wy = 0;
+      for (const p of poly) { wx += p.x; wy += p.y; }
+      wx /= poly.length; wy /= poly.length;
+      const elev = bilinearInterp(elevGrid, ELEV_N, wx, wy, MODEL_RADIUS_MM);
+      const relMM = (elev - centerElev) * hScale * terrainExag;
+      waterBaseY = BASE + Math.max(-(BASE - 0.2), relMM);
+    }
+    extrudeSlab(blackAcc, poly, waterBaseY, ROAD_SLAB);
   }
 
   // ── 7. Order ID engraving on base bottom ─────────────────────────────────
@@ -709,9 +729,10 @@ function collectTerrainBorderWall(acc, shapeVerts, elevGrid, N, BASE, centerElev
       const topB = edgeTerrainY(x1, y1);
       if (topA <= BASE + 0.01 && topB <= BASE + 0.01) continue; // flat — no wall needed
 
-      // Outward-facing winding: (botA, botB, topA), (botB, topB, topA)
+      // Both face directions: material is FrontSide-only so wall must be double-sided
       pos.push(x0, BASE, -y0,  x1, BASE, -y1,  x0, topA, -y0,  x1, topB, -y1);
-      idx.push(vc, vc + 1, vc + 2,  vc + 1, vc + 3, vc + 2);
+      idx.push(vc, vc + 1, vc + 2,  vc + 1, vc + 3, vc + 2);   // outward
+      idx.push(vc + 2, vc + 1, vc,  vc + 2, vc + 3, vc + 1);   // inward
       vc += 4;
     }
   }
