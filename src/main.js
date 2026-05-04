@@ -443,6 +443,7 @@ async function doOrderPrint() {
         terrainRelief:     el('terrain-relief')?.checked     || false,
         elevation:         el('test-terrain-enabled')?.checked || false,
         roadElevation:     el('road-elevation')?.checked     || false,
+        shape:             currentShape,
         rotation: parseFloat(el('rotation-slider')?.value || '0'),
         region,
       }),
@@ -662,6 +663,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (params.has('roadElevation')) {
           const re = el('road-elevation');
           if (re) re.checked = params.get('roadElevation') === 'true';
+        }
+        // Set shape
+        if (params.has('shape')) {
+          const s = params.get('shape');
+          const validShapes = ['hexagon', 'square', 'circle'];
+          if (validShapes.includes(s)) {
+            currentShape = s;
+            const sel = el('shape-selector');
+            if (sel) {
+              sel.querySelectorAll('.shape-btn').forEach(b => b.classList.toggle('active', b.dataset.shape === s));
+            }
+          }
         }
         // Select location and enable generate button
         selectLocation(lat, lng, `${lat.toFixed(4)}, ${lng.toFixed(4)}`);

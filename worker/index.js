@@ -71,9 +71,11 @@ function isFiniteNum(v) {
   return typeof v === 'number' && Number.isFinite(v);
 }
 
+const VALID_SHAPES = new Set(['hexagon', 'square', 'circle']);
+
 function validateCheckoutBody(body) {
   const { lat, lng, radius, verticalScale, rotation, region,
-          elevation, terrainRelief, detailedBuildings, roadElevation } = body;
+          elevation, terrainRelief, detailedBuildings, roadElevation, shape } = body;
 
   if (!isFiniteNum(lat) || lat < -90  || lat > 90)   return 'lat must be a number in [-90, 90]';
   if (!isFiniteNum(lng) || lng < -180 || lng > 180)  return 'lng must be a number in [-180, 180]';
@@ -88,6 +90,7 @@ function validateCheckoutBody(body) {
     if (val !== undefined && typeof val !== 'boolean') return `${name} must be a boolean`;
   }
 
+  if (shape !== undefined && !VALID_SHAPES.has(shape)) return 'shape must be hexagon, square, or circle';
   if (region !== undefined && !VALID_REGIONS.has(region)) return 'region must be US, CA, or INTL';
 
   return null;
@@ -277,6 +280,7 @@ async function handleCreateCheckout(request, env) {
     terrainRelief   = false,
     detailedBuildings = false,
     roadElevation   = false,
+    shape           = 'hexagon',
   } = body;
 
   const settings = await getSettings(env);
@@ -335,6 +339,7 @@ async function handleCreateCheckout(request, env) {
       terrainRelief:     String(terrainRelief),
       detailedBuildings: String(detailedBuildings),
       roadElevation:     String(roadElevation),
+      shape,
       rotation:          String(rotation),
       region,
       preOrder:          String(isPreOrder),
@@ -391,6 +396,7 @@ async function handleOrderInfo(request, env) {
     terrainRelief:     m.terrainRelief     === 'true',
     detailedBuildings: m.detailedBuildings === 'true',
     roadElevation:     m.roadElevation     === 'true',
+    shape:             VALID_SHAPES.has(m.shape) ? m.shape : 'hexagon',
   });
 }
 
@@ -723,6 +729,7 @@ async function handleAdminOrders(request, env) {
         terrainRelief:     s.metadata?.terrainRelief     === 'true',
         detailedBuildings: s.metadata?.detailedBuildings === 'true',
         roadElevation:     s.metadata?.roadElevation     === 'true',
+        shape:             VALID_SHAPES.has(s.metadata?.shape) ? s.metadata.shape : 'hexagon',
         rotation:          parseFloat(s.metadata?.rotation)      || 0,
       },
     }));
