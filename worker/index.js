@@ -300,7 +300,17 @@ async function handleCreateCheckout(request, env) {
 
   const orderId     = generateOrderId();
   const preOrderTag = isPreOrder ? ' [PRE-ORDER]' : '';
-  const modelDesc   = `${orderId}${preOrderTag} — 3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | Radius: ${radius}km | Scale: ${verticalScale}x${terrainRelief ? ' | Terrain relief' : ''}`;
+  const flags = [
+    `Radius: ${radius}km`,
+    `Scale: ${verticalScale}x`,
+    `Shape: ${shape}`,
+    `Rotation: ${rotation}°`,
+    detailedBuildings ? 'Detailed buildings' : null,
+    terrainRelief     ? 'Terrain relief'     : null,
+    elevation         ? 'Real elevation'      : null,
+    roadElevation     ? 'Road elevation'      : null,
+  ].filter(Boolean).join(' | ');
+  const modelDesc   = `${orderId}${preOrderTag} — 3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | ${flags}`;
   const shipping    = getShippingForRegion(region);
 
   const shippingOptions = shipping.rates.map(r => ({
