@@ -379,7 +379,19 @@ async function handleOrderInfo(request, env) {
   });
   if (!resp.ok) return jsonResponse({ error: 'Session not found' }, 404);
   const session = await resp.json();
-  return jsonResponse({ orderId: session.metadata?.orderId || null });
+  const m = session.metadata || {};
+  return jsonResponse({
+    orderId:           m.orderId || null,
+    lat:               parseFloat(m.lat)           || null,
+    lng:               parseFloat(m.lng)           || null,
+    radius:            parseFloat(m.radius)        || null,
+    verticalScale:     parseFloat(m.verticalScale) || null,
+    rotation:          parseFloat(m.rotation)      || 0,
+    elevation:         m.elevation         === 'true',
+    terrainRelief:     m.terrainRelief     === 'true',
+    detailedBuildings: m.detailedBuildings === 'true',
+    roadElevation:     m.roadElevation     === 'true',
+  });
 }
 
 const AVAIL_CACHE_TTL = 30;
@@ -518,16 +530,20 @@ out skel qt;`;
 async function handleOSMData(request, env) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
 
-  const ip = getClientIP(request);
-  if (await checkIPBlocked(env, ip)) return jsonResponse({ error: 'Access temporarily blocked due to excessive requests.' }, 429);
-
-  const rl = await checkPublicRateLimit(env, ip, 'osm-data', 5, 3600);
-  if (rl.blocked) return jsonResponse({ error: 'Too many map requests. Please wait before generating another map.' }, 429, { 'Retry-After': String(rl.retryAfter) });
-
-  if (await checkAndRecordAbuse(env, ip)) return jsonResponse({ error: 'Access temporarily blocked due to excessive requests.' }, 429);
-
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Invalid JSON body' }, 400); }
+
+  const ip = getClientIP(request);
+
+  // Verified admin token bypasses public rate limits entirely
+  const isAdmin = body.adminToken ? await validateAdminToken(body.adminToken, env) : false;
+
+  if (!isAdmin) {
+    if (await checkIPBlocked(env, ip)) return jsonResponse({ error: 'Access temporarily blocked due to excessive requests.' }, 429);
+    const rl = await checkPublicRateLimit(env, ip, 'osm-data', 5, 3600);
+    if (rl.blocked) return jsonResponse({ error: 'Too many map requests. Please wait before generating another map.' }, 429, { 'Retry-After': String(rl.retryAfter) });
+    if (await checkAndRecordAbuse(env, ip)) return jsonResponse({ error: 'Access temporarily blocked due to excessive requests.' }, 429);
+  }
 
   const bboxError = validateBbox(body);
   if (bboxError) return jsonResponse({ error: bboxError }, 400);

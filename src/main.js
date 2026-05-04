@@ -44,6 +44,7 @@ let generateId      = 0;      // increments each run — stale runs bail out
 let lastGenerateTime = 0;
 let searchDebounceTimer = null;
 let adminMode       = false;  // unlocked via Ctrl+Shift+E
+let adminToken      = '';     // HMAC token returned by /api/admin-verify
 let testTerrainMode = false;  // shown only when adminMode is true
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
@@ -207,7 +208,7 @@ async function generate() {
 
     // 2. Fetch OSM data
     setStatus('Fetching OpenStreetMap data...', 10);
-    const osmJson = await fetchOSMData(bbox, setStatus);
+    const osmJson = await fetchOSMData(bbox, setStatus, adminToken);
 
     // 3. Parse features
     setStatus('Parsing features...', 30);
@@ -439,6 +440,9 @@ async function doOrderPrint() {
         radius: parseFloat(el('radius-slider').value),
         verticalScale: getVertExag(),
         detailedBuildings: el('detailed-buildings')?.checked || false,
+        terrainRelief:     el('terrain-relief')?.checked     || false,
+        elevation:         el('test-terrain-enabled')?.checked || false,
+        roadElevation:     el('road-elevation')?.checked     || false,
         rotation: parseFloat(el('rotation-slider')?.value || '0'),
         region,
       }),
@@ -571,7 +575,8 @@ function initControls() {
         .then(r => r.json())
         .then(data => {
           if (data.success) {
-            adminMode = true;
+            adminMode  = true;
+            adminToken = data.token || '';
             el('export-stl').style.display = '';
             el('export-3mf').style.display = '';
             el('admin-radius-section').style.display = '';

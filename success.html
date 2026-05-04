@@ -114,6 +114,12 @@
         <span class="info-value">Sent to your email</span>
       </div>
     </div>
+    <a href="/" class="btn-home" id="view-generator-btn" style="display:none;margin-bottom:10px">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+      </svg>
+      View Your Order in Generator
+    </a>
     <a href="/" class="btn-home">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
         <path d="M19 12H5M12 19l-7-7 7-7"/>
@@ -136,6 +142,22 @@
         if (data.orderId) {
           document.getElementById('order-id-val').textContent = data.orderId;
           document.getElementById('order-id-row').style.display = '';
+        }
+        if (data.lat && data.lng) {
+          const p = new URLSearchParams({
+            lat:               data.lat,
+            lng:               data.lng,
+            radius:            data.radius            ?? 1,
+            scale:             data.verticalScale      ?? 3,
+            rotation:          data.rotation           ?? 0,
+            terrainRelief:     data.terrainRelief      ?? false,
+            detailedBuildings: data.detailedBuildings  ?? false,
+            roadElevation:     data.roadElevation      ?? false,
+          });
+          if (data.orderId) p.set('orderId', data.orderId);
+          const btn = document.getElementById('view-generator-btn');
+          btn.href = '/app.html?' + p.toString();
+          btn.style.display = '';
         }
       } catch {}
     })();

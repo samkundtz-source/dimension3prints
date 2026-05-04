@@ -31,12 +31,13 @@ export async function geocode(query) {
 
 // ─── Overpass API (proxied through worker) ────────────────────────────────────
 
-export async function fetchOSMData(bbox, onProgress) {
+export async function fetchOSMData(bbox, onProgress, adminToken = '') {
   onProgress?.('Querying map data…', 12);
+  const body = adminToken ? { ...bbox, adminToken } : bbox;
   const resp = await fetch('/api/osm-data', {
     method:  'POST',
     headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(bbox),
+    body:    JSON.stringify(body),
   });
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}));
