@@ -486,8 +486,6 @@ async function handleAdminOrders(request, env) {
 
   const limit  = Math.min(typeof body.limit === 'number' ? Math.max(1, body.limit) : 50, 100);
   const params = new URLSearchParams({ limit: String(limit) });
-  params.append('expand[]', 'data.shipping_details');
-  params.append('expand[]', 'data.customer_details');
 
   if (body.starting_after) {
     if (typeof body.starting_after !== 'string' || body.starting_after.length > 200 || !/^cs_[a-zA-Z0-9_]+$/.test(body.starting_after)) {
