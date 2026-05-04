@@ -116,6 +116,32 @@
             <span class="toggle-label">Extended building data <span style="color:var(--text-dim);font-weight:400">(real worldwide footprints)</span></span>
           </label>
 
+          <!-- Test Mode — admin only -->
+          <div id="test-mode-section" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid #2a2a2a">
+            <div style="font-size:11px;font-weight:600;letter-spacing:0.06em;color:#a78bfa;margin-bottom:10px;text-transform:uppercase">🧪 Test Mode</div>
+            <label class="toggle-row">
+              <input type="checkbox" id="test-terrain-enabled" />
+              <span class="toggle-switch"></span>
+              <span class="toggle-label">Real terrain elevation <span style="color:var(--text-dim);font-weight:400">(Terrarium tiles)</span></span>
+            </label>
+            <div id="test-terrain-options" style="margin-top:10px;display:none">
+              <div class="setting-row" style="margin-top:8px">
+                <span class="setting-name" style="font-size:12px">Terrain exaggeration</span>
+                <span class="setting-val" id="test-terrain-exag-val">1.5×</span>
+              </div>
+              <input type="range" id="test-terrain-exag" class="slider" min="0.5" max="4" step="0.25" value="1.5" />
+              <div style="display:flex;justify-content:space-between;margin-top:2px">
+                <span style="font-size:10px;color:var(--text-dim)">0.5×</span>
+                <span style="font-size:10px;color:var(--text-dim)">4×</span>
+              </div>
+              <div class="setting-row" style="margin-top:10px">
+                <span class="setting-name" style="font-size:12px">Print width (mm)</span>
+                <input type="number" id="test-print-width" value="100" min="50" max="300" step="10"
+                  style="width:60px;background:#1a1a1a;border:1px solid #333;color:#fff;border-radius:4px;padding:2px 6px;font-size:12px;text-align:right" />
+              </div>
+            </div>
+          </div>
+
           <!-- Admin-only radius control — hidden until admin mode is unlocked -->
           <div id="admin-radius-section" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid #2a2a2a">
             <div class="setting-row">

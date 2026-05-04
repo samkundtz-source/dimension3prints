@@ -27,6 +27,8 @@ import {
   ensureCW,
   deduplicateRing,
   clamp,
+  bilinearInterp,
+  pointInConvexPolygon,
 } from '../utils/helpers.js';
 import { getHexVertices, getShapeVertices } from '../geo/geoMath.js';
 import { clipToHex, bufferLinestring } from '../geo/clipper.js';
@@ -118,7 +120,11 @@ class GeomAccumulator {
 
 // ─── Public entry point ──────────────────────────────────────────────────────
 
-export function buildMapModel(features, _elevGrid, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, _parkHills = false, orderId = '', _roadElevation = false, proceduralInfill = false) {
+export function buildMapModel(features, terrainOptions, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, _parkHills = false, orderId = '', _roadElevation = false, proceduralInfill = false) {
+  // terrainOptions: { elevGrid, gridSize, terrainExag } or null for flat mode
+  const elevGrid     = terrainOptions?.elevGrid    || null;
+  const ELEV_N       = terrainOptions?.gridSize    || 64;
+  const terrainExag  = terrainOptions?.terrainExag || 1.5;
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -151,6 +157,16 @@ export function buildMapModel(features, _elevGrid, projection, vertExag, onProgr
   // ── 1. Base plate — always solid, never carved ────────────────────────────
   onProgress?.('Building base plate…', 65);
   collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
+
+  // ── 1b. Terrain surface (test mode only) ──────────────────────────────────
+  // Pre-compute center elevation for normalization so terrain is relative.
+  let centerElev = 0;
+  if (elevGrid) {
+    centerElev = bilinearInterp(elevGrid, ELEV_N, 0, 0, MODEL_RADIUS_MM);
+    onProgress?.('Building terrain surface…', 67);
+    collectTerrainSurface(baseAcc, elevGrid, ELEV_N, hexInner, BASE, centerElev, hScale, terrainExag);
+    collectTerrainBorderWall(baseAcc, hexFull, elevGrid, ELEV_N, BASE, centerElev, hScale, terrainExag);
+  }
 
   // Road types to render — skip noise (footway, path, cycleway, steps, service)
   const ROAD_TYPES = new Set([
@@ -244,8 +260,17 @@ export function buildMapModel(features, _elevGrid, projection, vertExag, onProgr
 
     const heightM      = parseBuildingHeight(bf.tags, bf.polygon);
     const baseHeightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
-    const baseY        = BASE;
     const heightMM     = baseHeightMM;
+
+    // In terrain mode, sit each building on the terrain surface at its centroid.
+    let baseY = BASE;
+    if (elevGrid) {
+      const cx = bf.polygon.reduce((s, p) => s + p.x, 0) / bf.polygon.length;
+      const cy = bf.polygon.reduce((s, p) => s + p.y, 0) / bf.polygon.length;
+      const elev = bilinearInterp(elevGrid, ELEV_N, cx, cy, MODEL_RADIUS_MM);
+      const relMM = (elev - centerElev) * hScale * terrainExag;
+      baseY = BASE + Math.max(-(BASE - 0.2), relMM);
+    }
 
     if (detailedBuildings) {
       // ── 3-tier building generation system ──────────────────────────────
@@ -609,6 +634,84 @@ function engraveTextOnBottom(acc, text) {
     }
     cursorX += (CHAR_W + CHAR_GAP) * PIXEL_SIZE;
   }
+}
+
+// ── Terrain surface mesh (test mode) ──────────────────────────────────────────
+// Generates a grid of quads on top of the base plate, displaced by real elevation.
+// Vertices outside the shape boundary are clamped to BASE so the border is flat.
+function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag) {
+  const GRID = 56; // internal terrain mesh resolution
+  const R = MODEL_RADIUS_MM;
+  const mmPerM = hScale * terrainExag;
+
+  function terrainY(mx, my) {
+    const elev = bilinearInterp(elevGrid, N, mx, my, R);
+    const rel  = (elev - centerElev) * mmPerM;
+    return BASE + Math.max(-(BASE - 0.2), rel);
+  }
+
+  const pos = [], idx = [];
+  let vc = 0;
+
+  for (let j = 0; j < GRID - 1; j++) {
+    for (let i = 0; i < GRID - 1; i++) {
+      const x0 = (i       / (GRID - 1) * 2 - 1) * R;
+      const x1 = ((i + 1) / (GRID - 1) * 2 - 1) * R;
+      const y0 = (j       / (GRID - 1) * 2 - 1) * R;
+      const y1 = ((j + 1) / (GRID - 1) * 2 - 1) * R;
+
+      // Check quad centre is inside shape (convex test)
+      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+      if (!pointInConvexPolygon({ x: cx, y: cy }, shapeVerts)) continue;
+
+      const h00 = terrainY(x0, y0), h10 = terrainY(x1, y0);
+      const h01 = terrainY(x0, y1), h11 = terrainY(x1, y1);
+
+      // Three.js: (modelX, height, -modelY)
+      pos.push(
+        x0, h00, -y0,
+        x1, h10, -y0,
+        x0, h01, -y1,
+        x1, h11, -y1,
+      );
+      idx.push(vc, vc + 1, vc + 2, vc + 1, vc + 3, vc + 2);
+      vc += 4;
+    }
+  }
+  if (pos.length) acc.add(pos, idx);
+}
+
+// Adds vertical border walls at the hex perimeter, from BASE up to the terrain
+// height at each perimeter vertex — ensures the model is watertight at the edge.
+function collectTerrainBorderWall(acc, shapeVerts, elevGrid, N, BASE, centerElev, hScale, terrainExag) {
+  const R = MODEL_RADIUS_MM;
+  const mmPerM = hScale * terrainExag;
+  const n = shapeVerts.length;
+  const pos = [], idx = [];
+  let vc = 0;
+
+  for (let i = 0; i < n; i++) {
+    const a = shapeVerts[i], b = shapeVerts[(i + 1) % n];
+
+    function edgeY(v) {
+      const elev = bilinearInterp(elevGrid, N, v.x, v.y, R);
+      const rel  = (elev - centerElev) * mmPerM;
+      return BASE + Math.max(-(BASE - 0.2), rel);
+    }
+
+    const topA = edgeY(a), topB = edgeY(b);
+    // Wall quad: from BASE (bottom) up to terrain height
+    pos.push(
+      a.x, BASE, -a.y,
+      b.x, BASE, -b.y,
+      a.x, topA, -a.y,
+      b.x, topB, -b.y,
+    );
+    // Outward-facing (winding depends on CCW shape — CCW = normals face outward)
+    idx.push(vc, vc + 2, vc + 1,  vc + 1, vc + 2, vc + 3);
+    vc += 4;
+  }
+  if (pos.length) acc.add(pos, idx);
 }
 
 function collectHexBase(acc, shapeVerts, chamfer = 0) {

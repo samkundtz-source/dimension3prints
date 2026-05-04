@@ -27,6 +27,7 @@ import { buildMapModel } from './geometry/buildMap.js';
 import { SceneManager }  from './preview/scene.js';
 import { exportSTL, export3MF } from './export/exporters.js';
 import { MODEL_RADIUS_MM } from './utils/helpers.js';
+import { fetchElevationForModel } from './terrain/terrain.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +44,7 @@ let generateId      = 0;      // increments each run — stale runs bail out
 let lastGenerateTime = 0;
 let searchDebounceTimer = null;
 let adminMode       = false;  // unlocked via Ctrl+Shift+E
+let testTerrainMode = false;  // shown only when adminMode is true
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -246,11 +248,29 @@ async function generate() {
       }
     }
 
-    // 4. Build 3D model
+    // 4. Optionally fetch real terrain elevation (test mode only)
+    let terrainOptions = null;
+    if (testTerrainMode) {
+      try {
+        setStatus('Fetching terrain elevation…', 52);
+        const terrainExag = parseFloat(el('test-terrain-exag')?.value || '1.5');
+        const GRID_SIZE = 64;
+        const elevGrid = await fetchElevationForModel(
+          lat, lng, radiusMeters, MODEL_RADIUS_MM, GRID_SIZE,
+          msg => setStatus(msg, 55),
+        );
+        terrainOptions = { elevGrid, gridSize: GRID_SIZE, terrainExag };
+        setStatus('Terrain loaded', 58);
+      } catch (err) {
+        setStatus(`Terrain fetch failed (${err.message}) — using flat base`, 58);
+      }
+    }
+
+    // 5. Build 3D model
     setStatus('Building 3D model...', 60);
     const detailedBuildings  = el('detailed-buildings')?.checked  || false;
     const proceduralInfill   = el('procedural-infill')?.checked   || false;
-    const result = buildMapModel(features, null, projection, vertExag, setStatus, currentShape, detailedBuildings, false, false, activeOrderId, false, proceduralInfill);
+    const result = buildMapModel(features, terrainOptions, projection, vertExag, setStatus, currentShape, detailedBuildings, false, false, activeOrderId, false, proceduralInfill);
     const group = result.group;
     const modelStats = result.stats;
 
@@ -555,13 +575,23 @@ function initControls() {
             el('export-stl').style.display = '';
             el('export-3mf').style.display = '';
             el('admin-radius-section').style.display = '';
-            setStatus('Admin mode enabled', 0);
+            el('test-mode-section').style.display = '';
+            setStatus('Admin mode enabled — Test Mode available in Settings', 0);
           } else {
             setStatus('Invalid admin password', 0);
           }
         })
         .catch(() => setStatus('Admin verification failed', 0));
     }
+  });
+
+  // Test mode terrain toggle + exaggeration slider
+  el('test-terrain-enabled').addEventListener('change', e => {
+    testTerrainMode = e.target.checked;
+    el('test-terrain-options').style.display = testTerrainMode ? '' : 'none';
+  });
+  el('test-terrain-exag').addEventListener('input', () => {
+    el('test-terrain-exag-val').textContent = parseFloat(el('test-terrain-exag').value).toFixed(2) + '×';
   });
 
   // Wireframe toggle
