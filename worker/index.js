@@ -495,7 +495,7 @@ async function handleAdminOrders(request, env) {
   }
 
   const stripeResp = await fetch(`https://api.stripe.com/v1/checkout/sessions?${params.toString()}`, {
-    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}` },
+    headers: { Authorization: `Bearer ${env.STRIPE_SECRET_KEY}`, 'Stripe-Version': '2023-10-16' },
   });
 
   let sessions;
