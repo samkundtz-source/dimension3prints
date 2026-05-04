@@ -165,7 +165,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     centerElev = bilinearInterp(elevGrid, ELEV_N, 0, 0, MODEL_RADIUS_MM);
     onProgress?.('Building terrain surface…', 67);
     collectTerrainSurface(baseAcc, elevGrid, ELEV_N, hexInner, BASE, centerElev, hScale, terrainExag);
-    collectTerrainBorderWall(baseAcc, hexFull, elevGrid, ELEV_N, BASE, centerElev, hScale, terrainExag);
+    collectTerrainBorderWall(baseAcc, hexInner, elevGrid, ELEV_N, BASE, centerElev, hScale, terrainExag);
   }
 
   // Road types to render — skip noise (footway, path, cycleway, steps, service)
@@ -637,14 +637,16 @@ function engraveTextOnBottom(acc, text) {
 }
 
 // ── Terrain surface mesh (test mode) ──────────────────────────────────────────
-// Generates a grid of quads on top of the base plate, displaced by real elevation.
-// Vertices outside the shape boundary are clamped to BASE so the border is flat.
+// Generates a grid of quads displaced by real elevation. Any vertex outside
+// shapeVerts (hexInner) is clamped to BASE so no geometry pokes into the gap ring.
 function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag) {
-  const GRID = 56; // internal terrain mesh resolution
+  const GRID = 56;
   const R = MODEL_RADIUS_MM;
   const mmPerM = hScale * terrainExag;
 
   function terrainY(mx, my) {
+    // Clamp outside-boundary vertices to BASE so they don't poke into the gap
+    if (!pointInConvexPolygon({ x: mx, y: my }, shapeVerts)) return BASE;
     const elev = bilinearInterp(elevGrid, N, mx, my, R);
     const rel  = (elev - centerElev) * mmPerM;
     return BASE + Math.max(-(BASE - 0.2), rel);
@@ -660,56 +662,58 @@ function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, h
       const y0 = (j       / (GRID - 1) * 2 - 1) * R;
       const y1 = ((j + 1) / (GRID - 1) * 2 - 1) * R;
 
-      // Check quad centre is inside shape (convex test)
-      const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-      if (!pointInConvexPolygon({ x: cx, y: cy }, shapeVerts)) continue;
+      // Include quad if ANY corner is inside shape — handles edge cells cleanly
+      if (!pointInConvexPolygon({ x: x0, y: y0 }, shapeVerts) &&
+          !pointInConvexPolygon({ x: x1, y: y0 }, shapeVerts) &&
+          !pointInConvexPolygon({ x: x0, y: y1 }, shapeVerts) &&
+          !pointInConvexPolygon({ x: x1, y: y1 }, shapeVerts)) continue;
 
       const h00 = terrainY(x0, y0), h10 = terrainY(x1, y0);
       const h01 = terrainY(x0, y1), h11 = terrainY(x1, y1);
 
-      // Three.js: (modelX, height, -modelY)
-      pos.push(
-        x0, h00, -y0,
-        x1, h10, -y0,
-        x0, h01, -y1,
-        x1, h11, -y1,
-      );
-      idx.push(vc, vc + 1, vc + 2, vc + 1, vc + 3, vc + 2);
+      pos.push(x0, h00, -y0,  x1, h10, -y0,  x0, h01, -y1,  x1, h11, -y1);
+      idx.push(vc, vc + 1, vc + 2,  vc + 1, vc + 3, vc + 2);
       vc += 4;
     }
   }
   if (pos.length) acc.add(pos, idx);
 }
 
-// Adds vertical border walls at the hex perimeter, from BASE up to the terrain
-// height at each perimeter vertex — ensures the model is watertight at the edge.
+// Adds vertical border walls along hexInner perimeter, from BASE to terrain height.
+// Walls sit before the gap ring so the gap remains a clean flat band of base plate.
+// Each hex edge is subdivided for a smoother wall profile on uneven terrain.
 function collectTerrainBorderWall(acc, shapeVerts, elevGrid, N, BASE, centerElev, hScale, terrainExag) {
   const R = MODEL_RADIUS_MM;
   const mmPerM = hScale * terrainExag;
   const n = shapeVerts.length;
+  const SEGS = 8; // subdivisions per hex edge — smoother walls on hilly terrain
   const pos = [], idx = [];
   let vc = 0;
+
+  function edgeTerrainY(x, y) {
+    const elev = bilinearInterp(elevGrid, N, x, y, R);
+    const rel  = (elev - centerElev) * mmPerM;
+    return BASE + Math.max(-(BASE - 0.2), rel);
+  }
 
   for (let i = 0; i < n; i++) {
     const a = shapeVerts[i], b = shapeVerts[(i + 1) % n];
 
-    function edgeY(v) {
-      const elev = bilinearInterp(elevGrid, N, v.x, v.y, R);
-      const rel  = (elev - centerElev) * mmPerM;
-      return BASE + Math.max(-(BASE - 0.2), rel);
-    }
+    for (let s = 0; s < SEGS; s++) {
+      const t0 = s       / SEGS;
+      const t1 = (s + 1) / SEGS;
+      const x0 = a.x + (b.x - a.x) * t0,  y0 = a.y + (b.y - a.y) * t0;
+      const x1 = a.x + (b.x - a.x) * t1,  y1 = a.y + (b.y - a.y) * t1;
 
-    const topA = edgeY(a), topB = edgeY(b);
-    // Wall quad: from BASE (bottom) up to terrain height
-    pos.push(
-      a.x, BASE, -a.y,
-      b.x, BASE, -b.y,
-      a.x, topA, -a.y,
-      b.x, topB, -b.y,
-    );
-    // Outward-facing (winding depends on CCW shape — CCW = normals face outward)
-    idx.push(vc, vc + 2, vc + 1,  vc + 1, vc + 2, vc + 3);
-    vc += 4;
+      const topA = edgeTerrainY(x0, y0);
+      const topB = edgeTerrainY(x1, y1);
+      if (topA <= BASE + 0.01 && topB <= BASE + 0.01) continue; // flat — no wall needed
+
+      // Outward-facing winding: (botA, botB, topA), (botB, topB, topA)
+      pos.push(x0, BASE, -y0,  x1, BASE, -y1,  x0, topA, -y0,  x1, topB, -y1);
+      idx.push(vc, vc + 1, vc + 2,  vc + 1, vc + 3, vc + 2);
+      vc += 4;
+    }
   }
   if (pos.length) acc.add(pos, idx);
 }
