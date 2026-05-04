@@ -104,6 +104,15 @@ function validateBbox(body) {
   return null;
 }
 
+function validateBboxSize(south, north, west, east) {
+  const latSpan = north - south;
+  const lngSpan = east - west;
+  const midLat  = (north + south) / 2;
+  const approxKm2 = latSpan * 111.32 * lngSpan * 111.32 * Math.cos(midLat * Math.PI / 180);
+  if (approxKm2 > 500) return 'bbox area too large (max ~500 km² — roughly a 12 km radius)';
+  return null;
+}
+
 function validateSessionId(id) {
   if (typeof id !== 'string')          return 'sessionId must be a string';
   if (id.length > 200)                 return 'sessionId too long';
@@ -141,6 +150,40 @@ async function recordFailedAttempt(env, ip) {
 async function clearRateLimit(env, ip) {
   if (!env.SETTINGS) return;
   await env.SETTINGS.delete(`ratelimit:${ip}`).catch(() => {});
+}
+
+async function checkIPBlocked(env, ip) {
+  if (!env.SETTINGS) return false;
+  try { return (await env.SETTINGS.get(`blocked:${ip}`)) !== null; } catch { return false; }
+}
+
+async function setIPBlocked(env, ip, reason) {
+  if (!env.SETTINGS) return;
+  try {
+    await env.SETTINGS.put(`blocked:${ip}`, JSON.stringify({ ip, reason, at: Date.now() }), { expirationTtl: 3600 });
+  } catch {}
+}
+
+async function checkAndRecordAbuse(env, ip) {
+  if (!env.SETTINGS) return false;
+  const key = `rapid:${ip}`;
+  const windowSecs = 600;
+  const maxReqs = 20;
+  const now = Math.floor(Date.now() / 1000);
+  try {
+    let record = await env.SETTINGS.get(key, 'json');
+    if (!record || now - record.windowStart >= windowSecs) {
+      await env.SETTINGS.put(key, JSON.stringify({ count: 1, windowStart: now }), { expirationTtl: windowSecs * 2 }).catch(() => {});
+      return false;
+    }
+    const newCount = record.count + 1;
+    await env.SETTINGS.put(key, JSON.stringify({ count: newCount, windowStart: record.windowStart }), { expirationTtl: windowSecs * 2 }).catch(() => {});
+    if (newCount >= maxReqs) {
+      await setIPBlocked(env, ip, `Exceeded ${maxReqs} requests in ${windowSecs / 60} minutes`);
+      return true;
+    }
+  } catch {}
+  return false;
 }
 
 async function checkPublicRateLimit(env, ip, endpoint, maxRequests, windowSecs) {
@@ -443,6 +486,108 @@ async function handleGetContent(request, env) {
   });
 }
 
+const OVERPASS_SERVERS_WORKER = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.fr/api/interpreter',
+];
+
+function buildOverpassQuery(south, west, north, east) {
+  const bb = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
+  return `[out:json][timeout:90];
+(
+  way["building"](${bb});
+  way["building:part"](${bb});
+  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
+  relation["building"](${bb});
+  relation["building:part"](${bb});
+  way["natural"="water"](${bb});
+  way["water"](${bb});
+  way["waterway"="riverbank"](${bb});
+  way["landuse"="reservoir"](${bb});
+  relation["natural"="water"](${bb});
+  relation["water"](${bb});
+  way["landuse"~"^(residential|commercial|industrial|retail|mixed|civic)$"](${bb});
+  relation["landuse"~"^(residential|commercial|industrial|retail|mixed|civic)$"](${bb});
+);
+out body;
+>;
+out skel qt;`;
+}
+
+async function handleOSMData(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+
+  const ip = getClientIP(request);
+  if (await checkIPBlocked(env, ip)) return jsonResponse({ error: 'Access temporarily blocked due to excessive requests.' }, 429);
+
+  const rl = await checkPublicRateLimit(env, ip, 'osm-data', 5, 3600);
+  if (rl.blocked) return jsonResponse({ error: 'Too many map requests. Please wait before generating another map.' }, 429, { 'Retry-After': String(rl.retryAfter) });
+
+  if (await checkAndRecordAbuse(env, ip)) return jsonResponse({ error: 'Access temporarily blocked due to excessive requests.' }, 429);
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Invalid JSON body' }, 400); }
+
+  const bboxError = validateBbox(body);
+  if (bboxError) return jsonResponse({ error: bboxError }, 400);
+
+  const sizeError = validateBboxSize(body.south, body.north, body.west, body.east);
+  if (sizeError) return jsonResponse({ error: sizeError }, 400);
+
+  const query     = buildOverpassQuery(body.south, body.west, body.north, body.east);
+  const queryBody = `data=${encodeURIComponent(query)}`;
+
+  for (const server of OVERPASS_SERVERS_WORKER) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 55000);
+    try {
+      const resp = await fetch(server, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body:    queryBody,
+        signal:  controller.signal,
+      });
+      clearTimeout(timer);
+      if (!resp.ok) continue;
+      const data = await resp.json();
+      if (!Array.isArray(data.elements)) continue;
+      return jsonResponse(data);
+    } catch { clearTimeout(timer); continue; }
+  }
+
+  return jsonResponse({ error: 'Map data servers unavailable. Please try again.' }, 503);
+}
+
+async function handleGeocode(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+
+  const ip = getClientIP(request);
+  if (await checkIPBlocked(env, ip)) return jsonResponse({ error: 'Access temporarily blocked.' }, 429);
+
+  const rl = await checkPublicRateLimit(env, ip, 'geocode', 30, 60);
+  if (rl.blocked) return jsonResponse({ error: 'Too many requests.' }, 429, { 'Retry-After': String(rl.retryAfter) });
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Invalid JSON body' }, 400); }
+
+  if (typeof body.query !== 'string' || !body.query.trim() || body.query.length > 500) {
+    return jsonResponse({ error: 'query must be a non-empty string (max 500 chars)' }, 400);
+  }
+
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(body.query.trim())}&format=json&limit=6`;
+  try {
+    const resp = await fetch(url, {
+      headers: { 'Accept-Language': 'en', 'User-Agent': 'Cities3ds/0.3 (https://cities3ds.com)' },
+    });
+    if (!resp.ok) return jsonResponse({ error: `Geocoding service error (${resp.status})` }, 502);
+    const data = await resp.json();
+    return jsonResponse(data);
+  } catch {
+    return jsonResponse({ error: 'Geocoding service unavailable. Please try again.' }, 503);
+  }
+}
+
 function timingSafeEqual(a, b) {
   if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
   let diff = 0;
@@ -676,6 +821,42 @@ async function handleUpdateContent(request, env) {
   return jsonResponse({ success: true, content: updated });
 }
 
+async function handleAdminBlockedIPs(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+
+  const ip = getClientIP(request);
+  const rl = await checkRateLimit(env, ip);
+  if (rl.blocked) return jsonResponse({ error: 'Too many failed attempts.' }, 429);
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+  if (!await validateAdminToken(body.token, env)) {
+    await recordFailedAttempt(env, ip);
+    return jsonResponse({ error: 'Unauthorized' }, 401);
+  }
+
+  if (!env.SETTINGS) return jsonResponse({ blocked: [] });
+
+  if (body.action === 'unblock' && typeof body.targetIp === 'string' && body.targetIp.length < 50) {
+    await env.SETTINGS.delete(`blocked:${body.targetIp}`).catch(() => {});
+    await env.SETTINGS.delete(`rapid:${body.targetIp}`).catch(() => {});
+    return jsonResponse({ success: true });
+  }
+
+  try {
+    const list = await env.SETTINGS.list({ prefix: 'blocked:' });
+    const blocked = await Promise.all(
+      list.keys.map(async k => {
+        const val = await env.SETTINGS.get(k.name, 'json').catch(() => null);
+        return val ? { ...val, expiresAt: k.expiration } : null;
+      })
+    );
+    return jsonResponse({ blocked: blocked.filter(Boolean) });
+  } catch {
+    return jsonResponse({ blocked: [] });
+  }
+}
+
 export default {
   async fetch(request, env, _ctx) {
     const url = new URL(request.url);
@@ -686,12 +867,15 @@ export default {
       case '/api/order-availability':    return handleOrderAvailability(request, env);
       case '/api/ms-buildings':          return handleMsBuildings(request, env);
       case '/api/content':               return handleGetContent(request, env);
+      case '/api/osm-data':              return handleOSMData(request, env);
+      case '/api/geocode':               return handleGeocode(request, env);
       case '/api/admin-verify':          return handleAdminVerify(request, env);
       case '/api/admin-orders':          return handleAdminOrders(request, env);
       case '/api/admin-update-order':    return handleAdminUpdateOrder(request, env);
       case '/api/admin-settings':        return handleGetSettings(request, env);
       case '/api/admin-update-settings': return handleUpdateSettings(request, env);
       case '/api/admin-update-content':  return handleUpdateContent(request, env);
+      case '/api/admin-blocked-ips':     return handleAdminBlockedIPs(request, env);
     }
 
     return env.ASSETS.fetch(request);

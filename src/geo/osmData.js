@@ -12,9 +12,15 @@ import { clipToHex } from './clipper.js';
 // ─── Geocoding ────────────────────────────────────────────────────────────────
 
 export async function geocode(query) {
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&limit=6`;
-  const resp = await fetch(url, { headers: { 'Accept-Language': 'en', 'User-Agent': 'Cities3ds/0.3 (https://cities3ds.com)' } });
-  if (!resp.ok) throw new Error(`Nominatim: HTTP ${resp.status}`);
+  const resp = await fetch('/api/geocode', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify({ query }),
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `Geocoding failed (${resp.status})`);
+  }
   const data = await resp.json();
   return data.map(r => ({
     displayName: r.display_name,
@@ -23,102 +29,23 @@ export async function geocode(query) {
   }));
 }
 
-// ─── Overpass API ─────────────────────────────────────────────────────────────
-
-const OVERPASS_SERVERS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://overpass.openstreetmap.fr/api/interpreter',
-  'https://overpass.private.coffee/api/interpreter',
-  'https://overpass.openstreetmap.ru/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-];
-
-/**
- * Classic two-step query:
- *   `out body` → way tags + node-ID lists
- *   `>; out skel qt` → all referenced nodes with lat/lon
- *
- * This format works on every Overpass instance without exception.
- */
-function buildQuery(bbox) {
-  const { south, west, north, east } = bbox;
-  const bb = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
-
-  // Buildings + roads + water + landuse zones for procedural infill.
-  return `[out:json][timeout:90];
-(
-  way["building"](${bb});
-  way["building:part"](${bb});
-  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
-  relation["building"](${bb});
-  relation["building:part"](${bb});
-  way["natural"="water"](${bb});
-  way["water"](${bb});
-  way["waterway"="riverbank"](${bb});
-  way["landuse"="reservoir"](${bb});
-  relation["natural"="water"](${bb});
-  relation["water"](${bb});
-  way["landuse"~"^(residential|commercial|industrial|retail|mixed|civic)$"](${bb});
-  relation["landuse"~"^(residential|commercial|industrial|retail|mixed|civic)$"](${bb});
-);
-out body;
->;
-out skel qt;`;
-}
+// ─── Overpass API (proxied through worker) ────────────────────────────────────
 
 export async function fetchOSMData(bbox, onProgress) {
-  const query = buildQuery(bbox);
-  const body  = `data=${encodeURIComponent(query)}`;
-
-  // Staggered parallel: start server[0] immediately, then add more every 8s
-  // if no success yet. First valid response wins — no waiting for slow servers.
-  return new Promise((resolve, reject) => {
-    let done = false;
-    let started = 0;
-    let failed  = 0;
-
-    function tryServer(server) {
-      if (done) return;
-      started++;
-      const host = server.replace('https://', '').split('/')[0];
-      onProgress?.(`Querying ${host}…`, 12 + Math.min(started * 3, 18));
-
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 55000);
-
-      fetch(server, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
-        signal: controller.signal,
-      })
-        .then(r => { clearTimeout(timer); if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-        .then(json => {
-          if (!Array.isArray(json.elements)) throw new Error('Bad response');
-          if (done) return;
-          done = true;
-          console.log(`[Overpass] ${json.elements.length} elements from ${host}`);
-          resolve(json);
-        })
-        .catch(err => {
-          clearTimeout(timer);
-          const msg = err.name === 'AbortError' ? 'timed out' : err.message;
-          console.warn(`[Overpass] ${host}: ${msg}`);
-          failed++;
-          if (failed === started && started === OVERPASS_SERVERS.length && !done) {
-            done = true;
-            reject(new Error('All map servers failed. Check your internet connection and try again.'));
-          }
-        });
-    }
-
-    // Start first server immediately, stagger the rest every 2 seconds
-    // so all 6 servers are in-flight within 10s instead of 40s.
-    OVERPASS_SERVERS.forEach((server, i) => {
-      setTimeout(() => tryServer(server), i * 2000);
-    });
+  onProgress?.('Querying map data…', 12);
+  const resp = await fetch('/api/osm-data', {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(bbox),
   });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error || `Map data error (${resp.status}). Please try again.`);
+  }
+  const json = await resp.json();
+  if (!Array.isArray(json.elements)) throw new Error('Unexpected response from map server. Please try again.');
+  onProgress?.('Processing map data…', 30);
+  return json;
 }
 
 // ─── OSM Parser ───────────────────────────────────────────────────────────────
