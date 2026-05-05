@@ -807,11 +807,22 @@ function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, h
   const R = MODEL_RADIUS_MM;
   const mmPerM = hScale * terrainExag;
 
-  function terrainY(mx, my) {
-    if (!pointInConvexPolygon({ x: mx, y: my }, shapeVerts)) return BASE;
+  // rawTerrainY: compute terrain height without a polygon containment check.
+  // Safe to call for any point inside OR on the boundary of hexInner.
+  // (pointInConvexPolygon uses ray-casting which is unreliable for points
+  //  exactly on a polygon edge — clamped border corners would incorrectly
+  //  return BASE and leave a gap at the border wall.)
+  function rawTerrainY(mx, my) {
     const elev = bilinearInterp(elevGrid, N, mx, my, R);
     const rel  = (elev - centerElev) * mmPerM;
     return BASE + Math.max(-(BASE - 0.2), rel);
+  }
+
+  // terrainY: used only for the cell-centre check — still guards against
+  // sampling far-outside points with bad elevation data.
+  function terrainY(mx, my) {
+    if (!pointInConvexPolygon({ x: mx, y: my }, shapeVerts)) return BASE;
+    return rawTerrainY(mx, my);
   }
 
   const pos = [], idx = [];
@@ -830,15 +841,18 @@ function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, h
       if (!pointInConvexPolygon({ x: cx, y: cy }, shapeVerts)) continue;
 
       // Clamp any corner outside hexInner onto the nearest hexInner edge so
-      // no geometry bleeds into the gap ring.  The clamped point is on the
-      // hexInner boundary, so terrainY() samples the correct elevation there.
+      // no geometry bleeds into the gap ring.
       const p00 = clampToConvexPoly({ x: x0, y: y0 }, shapeVerts);
       const p10 = clampToConvexPoly({ x: x1, y: y0 }, shapeVerts);
       const p01 = clampToConvexPoly({ x: x0, y: y1 }, shapeVerts);
       const p11 = clampToConvexPoly({ x: x1, y: y1 }, shapeVerts);
 
-      const h00 = terrainY(p00.x, p00.y), h10 = terrainY(p10.x, p10.y);
-      const h01 = terrainY(p01.x, p01.y), h11 = terrainY(p11.x, p11.y);
+      // Use rawTerrainY for clamped corners: they lie on the hexInner boundary
+      // where pointInConvexPolygon is ambiguous, so we skip the inside check.
+      // This ensures the terrain surface height at the boundary matches the
+      // border wall top exactly — no gap between them.
+      const h00 = rawTerrainY(p00.x, p00.y), h10 = rawTerrainY(p10.x, p10.y);
+      const h01 = rawTerrainY(p01.x, p01.y), h11 = rawTerrainY(p11.x, p11.y);
 
       // Degenerate triangles (multiple clamped corners at the same hex corner)
       // are automatically culled by GeomAccumulator.build().
