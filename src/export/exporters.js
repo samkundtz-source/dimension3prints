@@ -245,14 +245,39 @@ ${partSettingsXML}
     filamentColors[b.extruder - 1] = b.color.toLowerCase();
   }
   const projectSettingsJSON = JSON.stringify({
-    print_settings_id: "0.20mm Standard @BBL A1",
-    filament_colour: filamentColors,
-    filament_settings_id: filamentIds,
-    filament_diameter: filamentDiam,
-    filament_is_support: filamentSupp,
-    printer_model: "Bambu Lab A1",
-    layer_height: "0.2",
-    enable_support: "0",
+    // ── Print profile ─────────────────────────────────────────────────────────
+    print_settings_id:       "0.20mm Standard @BBL A1",
+    printer_model:           "Bambu Lab A1",
+    printer_settings_id:     "Bambu Lab A1",
+    layer_height:            "0.2",
+    initial_layer_print_height: "0.2",
+
+    // ── Filament ──────────────────────────────────────────────────────────────
+    filament_colour:         filamentColors,
+    filament_settings_id:    filamentIds,
+    filament_diameter:       filamentDiam,
+    filament_is_support:     filamentSupp,
+    filament_type:           filamentIds.map(() => "PLA"),
+
+    // ── Z-hop (retract_lift): lifts nozzle 0.4 mm during every travel move so
+    //    it clears already-printed terrain/roads and does not scratch them.
+    //    This is the primary fix for the "nozzle scratches the model" issue.
+    retract_lift:            filamentIds.map(() => "0.4"),
+    retract_lift_above:      filamentIds.map(() => "0"),
+    retract_lift_below:      filamentIds.map(() => "0"),
+
+    // ── Wipe tower: required for clean colour transitions on AMS printers ─────
+    wipe_tower_enabled:      "1",
+    wipe_tower_volume:       "15",       // cm³ — small but enough for PLA
+
+    // ── Travel routing: go around the print, not through it ──────────────────
+    avoid_crossing_perimeters:      "1",
+    avoid_crossing_perimeters_type: "2", // 2 = Contour-only (fastest safe option)
+    travel_speed:            "200",
+
+    // ── Other safety settings ─────────────────────────────────────────────────
+    enable_support:          "0",
+    bed_type:                "auto",
   });
 
   // ── 6. Build rels files ─────────────────────────────────────────────────
