@@ -804,12 +804,14 @@ function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, h
       const y0 = (j       / (GRID - 1) * 2 - 1) * R;
       const y1 = ((j + 1) / (GRID - 1) * 2 - 1) * R;
 
-      // All-corners check: skip any cell with a vertex outside hexInner so no
-      // terrain geometry reaches into the 5 mm gap ring.
-      if (!pointInConvexPolygon({ x: x0, y: y0 }, shapeVerts) ||
-          !pointInConvexPolygon({ x: x1, y: y0 }, shapeVerts) ||
-          !pointInConvexPolygon({ x: x0, y: y1 }, shapeVerts) ||
-          !pointInConvexPolygon({ x: x1, y: y1 }, shapeVerts)) continue;
+      // Centre-inside check: include a cell when its centre falls inside hexInner.
+      // Border cells that straddle hexInner are included — their outside corners
+      // return BASE from terrainY(), so they sit flush with the base plate and
+      // connect seamlessly to the bottom of the border wall.  This eliminates
+      // the staircase gap that left triangles visually disconnected from the border.
+      // Cells whose centre is outside hexInner are skipped entirely.
+      const cx = (x0 + x1) * 0.5, cy = (y0 + y1) * 0.5;
+      if (!pointInConvexPolygon({ x: cx, y: cy }, shapeVerts)) continue;
 
       const h00 = terrainY(x0, y0), h10 = terrainY(x1, y0);
       const h01 = terrainY(x0, y1), h11 = terrainY(x1, y1);
