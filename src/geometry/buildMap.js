@@ -779,9 +779,29 @@ function engraveTextOnBottom(acc, text) {
   }
 }
 
+// Project a point onto the nearest edge of a convex polygon.
+// Returns the original point unchanged if it is already inside.
+function clampToConvexPoly(pt, verts) {
+  if (pointInConvexPolygon(pt, verts)) return pt;
+  const n = verts.length;
+  let bestDist2 = Infinity, best = pt;
+  for (let i = 0; i < n; i++) {
+    const a = verts[i], b = verts[(i + 1) % n];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1e-10) continue;
+    const t = Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / len2));
+    const px = a.x + t * dx, py = a.y + t * dy;
+    const d2 = (pt.x - px) ** 2 + (pt.y - py) ** 2;
+    if (d2 < bestDist2) { bestDist2 = d2; best = { x: px, y: py }; }
+  }
+  return best;
+}
+
 // ── Terrain surface mesh (test mode) ──────────────────────────────────────────
-// Generates a grid of quads displaced by real elevation. Any vertex outside
-// shapeVerts (hexInner) is clamped to BASE so no geometry pokes into the gap ring.
+// Generates a grid of quads displaced by real elevation. Border cells that
+// straddle hexInner have their outside corners clamped to the hexInner boundary
+// so the terrain fills right up to the wall with no gap and no bleed into the ring.
 function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag) {
   const GRID = 56;
   const R = MODEL_RADIUS_MM;
@@ -804,19 +824,26 @@ function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, h
       const y0 = (j       / (GRID - 1) * 2 - 1) * R;
       const y1 = ((j + 1) / (GRID - 1) * 2 - 1) * R;
 
-      // Centre-inside check: include a cell when its centre falls inside hexInner.
-      // Border cells that straddle hexInner are included — their outside corners
-      // return BASE from terrainY(), so they sit flush with the base plate and
-      // connect seamlessly to the bottom of the border wall.  This eliminates
-      // the staircase gap that left triangles visually disconnected from the border.
-      // Cells whose centre is outside hexInner are skipped entirely.
+      // Centre-inside check: include border cells that straddle hexInner.
+      // Skip cells whose centre is fully outside.
       const cx = (x0 + x1) * 0.5, cy = (y0 + y1) * 0.5;
       if (!pointInConvexPolygon({ x: cx, y: cy }, shapeVerts)) continue;
 
-      const h00 = terrainY(x0, y0), h10 = terrainY(x1, y0);
-      const h01 = terrainY(x0, y1), h11 = terrainY(x1, y1);
+      // Clamp any corner outside hexInner onto the nearest hexInner edge so
+      // no geometry bleeds into the gap ring.  The clamped point is on the
+      // hexInner boundary, so terrainY() samples the correct elevation there.
+      const p00 = clampToConvexPoly({ x: x0, y: y0 }, shapeVerts);
+      const p10 = clampToConvexPoly({ x: x1, y: y0 }, shapeVerts);
+      const p01 = clampToConvexPoly({ x: x0, y: y1 }, shapeVerts);
+      const p11 = clampToConvexPoly({ x: x1, y: y1 }, shapeVerts);
 
-      pos.push(x0, h00, -y0,  x1, h10, -y0,  x0, h01, -y1,  x1, h11, -y1);
+      const h00 = terrainY(p00.x, p00.y), h10 = terrainY(p10.x, p10.y);
+      const h01 = terrainY(p01.x, p01.y), h11 = terrainY(p11.x, p11.y);
+
+      // Degenerate triangles (multiple clamped corners at the same hex corner)
+      // are automatically culled by GeomAccumulator.build().
+      pos.push(p00.x, h00, -p00.y,  p10.x, h10, -p10.y,
+               p01.x, h01, -p01.y,  p11.x, h11, -p11.y);
       idx.push(vc, vc + 1, vc + 2,  vc + 1, vc + 3, vc + 2);
       vc += 4;
     }
