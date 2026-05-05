@@ -136,9 +136,10 @@ export async function fetchElevationForModel(centerLat, centerLng, radiusMeters,
     }
   }
 
-  // Smooth the grid with 3 passes of a weighted kernel (Gaussian-like) to
-  // remove tile-boundary stair-steps and produce rounder, more natural hills.
-  for (let pass = 0; pass < 3; pass++) {
+  // Smooth the grid with 2 passes of a weighted kernel (Gaussian-like) to
+  // remove tile-boundary stair-steps while preserving enough detail for
+  // visible terrain relief in the final print.
+  for (let pass = 0; pass < 2; pass++) {
     const tmp = new Float32Array(gridSize * gridSize);
     for (let j = 0; j < gridSize; j++) {
       for (let i = 0; i < gridSize; i++) {

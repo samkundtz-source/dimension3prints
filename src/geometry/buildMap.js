@@ -444,13 +444,18 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
 
     if (elevGrid) {
-      // Per-vertex terrain height: each point of the road follows the slope
+      // Per-vertex terrain height: road is a thin ROAD_SLAB cap on terrain surface.
+      // Bottom = terrain height, Top = terrain + ROAD_SLAB → zero overlap with terrain mesh.
       const mmPerM = hScale * terrainExag;
-      extrudeTerrainSlab(blackAcc, clipped, (mx, my) => {
+      const terrainY = (mx, my) => {
         const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
         const rel  = (elev - centerElev) * mmPerM;
-        return BASE + Math.max(-(BASE - 0.2), rel) + ROAD_SLAB;
-      });
+        return BASE + Math.max(-(BASE - 0.2), rel);
+      };
+      extrudeTerrainSlab(blackAcc, clipped,
+        (mx, my) => terrainY(mx, my) + ROAD_SLAB,
+        terrainY,
+      );
     } else {
       extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
     }
@@ -460,14 +465,18 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   onProgress?.('Building water areas…', 88);
   for (const poly of waterPolys) {
     if (elevGrid) {
+      // Same thin-cap approach: water slab bottom = terrain height, top = terrain + ROAD_SLAB.
+      // No overlap with terrain mesh — water is visible as a black cap on the surface.
       const mmPerM = hScale * terrainExag;
-      // Position water slab so its top sits just above the terrain surface,
-      // making it visible as a black area without creating cliff artifacts.
-      extrudeTerrainSlab(blackAcc, poly, (mx, my) => {
+      const terrainY = (mx, my) => {
         const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
         const rel  = (elev - centerElev) * mmPerM;
-        return BASE + Math.max(-(BASE - 0.2), rel) + ROAD_SLAB;
-      });
+        return BASE + Math.max(-(BASE - 0.2), rel);
+      };
+      extrudeTerrainSlab(blackAcc, poly,
+        (mx, my) => terrainY(mx, my) + ROAD_SLAB,
+        terrainY,
+      );
     } else {
       extrudeSlab(blackAcc, poly, BASE, ROAD_SLAB);
     }
@@ -548,10 +557,14 @@ function extrudeSlab(acc, polygon, baseY, height) {
   }
 }
 
-// Like extrudeSlab but the top face follows terrain: each vertex gets its own
-// Y from getTopY(x, y). Bottom is fixed at BASE_THICKNESS_MM so the slab is
-// always anchored to the base plate regardless of slope.
-function extrudeTerrainSlab(acc, polygon, getTopY) {
+// Like extrudeSlab but both top and bottom faces follow terrain per-vertex.
+// getTopY(x,y)    → top surface height at each vertex
+// getBottomY(x,y) → bottom surface height (optional; falls back to BASE_THICKNESS_MM)
+//
+// Passing getBottomY equal to terrain height (with top = terrain + ROAD_SLAB)
+// produces a thin cap that sits ON the terrain surface with ZERO volume overlap
+// with the terrain mesh — critical for clean 3D printing (no clog-causing coincident faces).
+function extrudeTerrainSlab(acc, polygon, getTopY, getBottomY = null) {
   if (!polygon || polygon.length < 3) return false;
   try {
     const ring = deduplicateRing(polygon);
@@ -560,7 +573,6 @@ function extrudeTerrainSlab(acc, polygon, getTopY) {
 
     const outer  = ensureCCW(ring);
     const n      = outer.length;
-    const baseY  = BASE_THICKNESS_MM;
 
     const flat = new Float64Array(n * 2);
     for (let i = 0; i < n; i++) {
@@ -572,23 +584,26 @@ function extrudeTerrainSlab(acc, polygon, getTopY) {
     if (!tris || tris.length < 3) return false;
     if (Math.abs(earcut.deviation(flat, null, 2, tris)) > 0.3) return false;
 
-    const tops = outer.map(p => getTopY(p.x, p.y));
-    const pos  = [], idx = [];
+    const tops    = outer.map(p => getTopY(p.x, p.y));
+    const bottoms = getBottomY
+      ? outer.map(p => getBottomY(p.x, p.y))
+      : outer.map(() => BASE_THICKNESS_MM);
+
+    const pos = [], idx = [];
 
     // Top face — per-vertex terrain heights
     for (let i = 0; i < n; i++) pos.push(outer[i].x, tops[i], -outer[i].y);
     for (const t of tris) idx.push(t);
 
-    // Bottom face — flat at BASE, reversed winding
-    for (const p of outer) pos.push(p.x, baseY, -p.y);
+    // Bottom face — per-vertex or fixed at BASE, reversed winding
+    for (let i = 0; i < n; i++) pos.push(outer[i].x, bottoms[i], -outer[i].y);
     for (let t = 0; t < tris.length; t += 3) {
       idx.push(n + tris[t + 2], n + tris[t + 1], n + tris[t]);
     }
 
-    // Side walls — top varies per vertex, bottom is fixed
+    // Side walls — top[i], top[j], bot[i], bot[j] all per-vertex
     for (let i = 0; i < n; i++) {
-      const j  = (i + 1) % n;
-      // top[i]=i, top[j]=j, bot[i]=n+i, bot[j]=n+j
+      const j = (i + 1) % n;
       idx.push(i, j, n + i,  n + i, j, n + j);
     }
 
