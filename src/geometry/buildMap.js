@@ -482,6 +482,62 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     }
   }
 
+  // ── 6b. Linear waterways (rivers, streams, canals stored as linestrings) ───
+  // OSM rivers are often tagged as waterway=river linestrings rather than
+  // closed polygons. Buffer them into ribbons and render as black slabs,
+  // same as roads. Without this, most rivers are invisible.
+  const WATERWAY_HALF_M = {
+    river:       12,   // half-width in real-world metres
+    canal:        6,
+    stream:       2,
+    drain:        1.5,
+    ditch:        1.2,
+    tidal_channel:10,
+  };
+  const WATERWAY_MIN_HALF_MM = {
+    river:       1.2,
+    canal:       0.8,
+    stream:      0.45,
+    drain:       0.35,
+    ditch:       0.3,
+    tidal_channel:1.0,
+  };
+
+  let waterwayCount = 0;
+  for (const feat of (features.waterways || [])) {
+    if (!feat.points || feat.points.length < 2) continue;
+    const wtype = feat.tags?.waterway || 'river';
+    const realHalf = hScale * (WATERWAY_HALF_M[wtype]   ?? WATERWAY_HALF_M.stream);
+    const minHalf  = WATERWAY_MIN_HALF_MM[wtype] ?? WATERWAY_MIN_HALF_MM.stream;
+    const halfW    = Math.max(realHalf, minHalf);
+
+    const raw = bufferLinestring(feat.points, halfW);
+    if (!raw || raw.length < 3) continue;
+
+    const clipped = clipToHex(raw, hexInner);
+    if (!clipped || clipped.length < 3) continue;
+
+    const area = Math.abs(signedArea2D(clipped));
+    if (area < 0.3 || area > hexArea * 0.40) continue;
+    if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
+
+    if (elevGrid) {
+      const mmPerM = hScale * terrainExag;
+      const terrainY = (mx, my) => {
+        const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
+        const rel  = (elev - centerElev) * mmPerM;
+        return BASE + Math.max(-(BASE - 0.2), rel);
+      };
+      extrudeTerrainSlab(blackAcc, clipped,
+        (mx, my) => terrainY(mx, my) + ROAD_SLAB,
+        terrainY,
+      );
+    } else {
+      extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
+    }
+    waterwayCount++;
+  }
+
   // ── 7. Order ID engraving on base bottom ─────────────────────────────────
   // Tiny raised text on the bottom face (Y=0) so you can flip the print
   // and identify which order it belongs to.
@@ -504,7 +560,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   return {
     group,
     stats: {
-      buildings: buildingCount, roads: roadCount, water: waterPolys.length,
+      buildings: buildingCount, roads: roadCount, water: waterPolys.length + waterwayCount,
       landmarks: landmarkCount, tallTowers: tallTowerCount,
     },
   };
