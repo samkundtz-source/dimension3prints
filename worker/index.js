@@ -514,15 +514,20 @@ async function handleGetContent(request, env) {
   });
 }
 
+// Primary + fallback Overpass mirrors tried in order.
+// More mirrors = fewer "unavailable" errors when one is slow or rate-limiting.
 const OVERPASS_SERVERS_WORKER = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
   'https://overpass.openstreetmap.fr/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
 ];
 
 function buildOverpassQuery(south, west, north, east) {
   const bb = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
-  return `[out:json][timeout:90];
+  // timeout:40 lets Overpass return a partial result before our 50 s fetch
+  // abort fires — previously timeout:90 > fetch abort:55 caused silent failures.
+  return `[out:json][timeout:40];
 (
   way["building"](${bb});
   way["building:part"](${bb});
@@ -532,6 +537,7 @@ function buildOverpassQuery(south, west, north, east) {
   way["natural"="water"](${bb});
   way["water"](${bb});
   way["waterway"="riverbank"](${bb});
+  way["waterway"~"^(river|canal|stream|drain|ditch|tidal_channel)$"](${bb});
   way["landuse"="reservoir"](${bb});
   relation["natural"="water"](${bb});
   relation["water"](${bb});
@@ -572,7 +578,9 @@ async function handleOSMData(request, env) {
 
   for (const server of OVERPASS_SERVERS_WORKER) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 55000);
+    // 50 s fetch timeout > 40 s Overpass timeout, so Overpass always responds
+    // (even with partial data) before we abort the fetch.
+    const timer = setTimeout(() => controller.abort(), 50000);
     try {
       const resp = await fetch(server, {
         method:  'POST',
@@ -583,12 +591,14 @@ async function handleOSMData(request, env) {
       clearTimeout(timer);
       if (!resp.ok) continue;
       const data = await resp.json();
+      // Accept partial results (Overpass returns elements even on timeout)
       if (!Array.isArray(data.elements)) continue;
+      if (data.elements.length === 0 && data.remark?.includes('error')) continue;
       return jsonResponse(data);
     } catch { clearTimeout(timer); continue; }
   }
 
-  return jsonResponse({ error: 'Map data servers unavailable. Please try again.' }, 503);
+  return jsonResponse({ error: 'Map data servers unavailable. Please try again in a moment.' }, 503);
 }
 
 async function handleGeocode(request, env) {

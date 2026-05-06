@@ -825,6 +825,9 @@ function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, h
     return rawTerrainY(mx, my);
   }
 
+  // Fast duplicate check (epsilon tolerance)
+  const same = (a, b) => Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.y) < 1e-4;
+
   const pos = [], idx = [];
   let vc = 0;
 
@@ -836,30 +839,59 @@ function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, h
       const y1 = ((j + 1) / (GRID - 1) * 2 - 1) * R;
 
       // Centre-inside check: include border cells that straddle hexInner.
-      // Skip cells whose centre is fully outside.
       const cx = (x0 + x1) * 0.5, cy = (y0 + y1) * 0.5;
       if (!pointInConvexPolygon({ x: cx, y: cy }, shapeVerts)) continue;
 
-      // Clamp any corner outside hexInner onto the nearest hexInner edge so
-      // no geometry bleeds into the gap ring.
-      const p00 = clampToConvexPoly({ x: x0, y: y0 }, shapeVerts);
-      const p10 = clampToConvexPoly({ x: x1, y: y0 }, shapeVerts);
-      const p01 = clampToConvexPoly({ x: x0, y: y1 }, shapeVerts);
-      const p11 = clampToConvexPoly({ x: x1, y: y1 }, shapeVerts);
+      // Determine which corners need clamping
+      const in00 = pointInConvexPolygon({ x: x0, y: y0 }, shapeVerts);
+      const in10 = pointInConvexPolygon({ x: x1, y: y0 }, shapeVerts);
+      const in01 = pointInConvexPolygon({ x: x0, y: y1 }, shapeVerts);
+      const in11 = pointInConvexPolygon({ x: x1, y: y1 }, shapeVerts);
+      const allIn = in00 && in10 && in01 && in11;
 
-      // Use rawTerrainY for clamped corners: they lie on the hexInner boundary
-      // where pointInConvexPolygon is ambiguous, so we skip the inside check.
-      // This ensures the terrain surface height at the boundary matches the
-      // border wall top exactly — no gap between them.
-      const h00 = rawTerrainY(p00.x, p00.y), h10 = rawTerrainY(p10.x, p10.y);
-      const h01 = rawTerrainY(p01.x, p01.y), h11 = rawTerrainY(p11.x, p11.y);
+      if (allIn) {
+        // ── Interior cell: fast direct 2-triangle path ───────────────────────
+        const h00 = rawTerrainY(x0, y0), h10 = rawTerrainY(x1, y0);
+        const h01 = rawTerrainY(x0, y1), h11 = rawTerrainY(x1, y1);
+        pos.push(x0, h00, -y0,  x1, h10, -y0,  x0, h01, -y1,  x1, h11, -y1);
+        idx.push(vc, vc + 1, vc + 2,  vc + 1, vc + 3, vc + 2);
+        vc += 4;
+      } else {
+        // ── Border cell: clamp outside corners → dedup → earcut ─────────────
+        // Corners in CCW order [BL, BR, TR, TL] for correct earcut winding.
+        // Multiple corners near a hex vertex clamp to the same point →
+        // dedup removes them, preventing degenerate triangles and holes.
+        const raw = [
+          { x: x0, y: y0 }, { x: x1, y: y0 },
+          { x: x1, y: y1 }, { x: x0, y: y1 },
+        ];
+        const clamped = raw.map(p => clampToConvexPoly(p, shapeVerts));
 
-      // Degenerate triangles (multiple clamped corners at the same hex corner)
-      // are automatically culled by GeomAccumulator.build().
-      pos.push(p00.x, h00, -p00.y,  p10.x, h10, -p10.y,
-               p01.x, h01, -p01.y,  p11.x, h11, -p11.y);
-      idx.push(vc, vc + 1, vc + 2,  vc + 1, vc + 3, vc + 2);
-      vc += 4;
+        // Deduplicate while preserving CCW order
+        const uPts = [], uH = [];
+        for (const p of clamped) {
+          if (uPts.some(u => same(u, p))) continue;
+          uPts.push(p);
+          uH.push(rawTerrainY(p.x, p.y));
+        }
+        if (uPts.length < 3) continue;
+
+        // Earcut on 2-D model coords → CCW triangles → correct upward normals
+        const flat = new Float64Array(uPts.length * 2);
+        for (let k = 0; k < uPts.length; k++) {
+          flat[k * 2]     = uPts[k].x;
+          flat[k * 2 + 1] = uPts[k].y;
+        }
+        const tris = earcut(flat, null, 2);
+        if (!tris || tris.length < 3) continue;
+
+        const base = vc;
+        for (let k = 0; k < uPts.length; k++) {
+          pos.push(uPts[k].x, uH[k], -uPts[k].y);
+          vc++;
+        }
+        for (const t of tris) idx.push(base + t);
+      }
     }
   }
   if (pos.length) acc.add(pos, idx);
