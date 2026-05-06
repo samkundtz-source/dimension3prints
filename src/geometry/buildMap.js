@@ -145,8 +145,10 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     try { poly = clipToHex(feat.polygon, hexInner); } catch { continue; }
     if (!poly || poly.length < 3) continue;
     const area = Math.abs(signedArea2D(poly));
-    if (area < 1.0)            continue;
-    if (area > hexArea * 0.40) continue;
+    if (area < 1.0) continue;
+    // Raised from 40% → 85%: large rivers (Hudson, Thames, etc.) and coastal
+    // features were being silently dropped for city-scale captures.
+    if (area > hexArea * 0.85) continue;
     waterPolys.push(poly);
   }
 
@@ -414,7 +416,14 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   // testing naturally occludes roads behind buildings — no earcut-with-holes
   // or building-avoidance geometry is required.
   //
-  const ROAD_SLAB    = NOZZLE_MM;
+  // 1.5 nozzle diameters tall — more visually prominent than a single layer,
+  // still a clean 0.6 mm for slicers using 0.2 mm layer height (3 layers).
+  const ROAD_SLAB    = NOZZLE_MM * 1.5;  // 0.6 mm
+  // In flat mode the road bottom sits exactly at BASE (coincident with the
+  // base-plate top face).  EMBED pushes it 0.05 mm into the base so there
+  // is never any z-fighting between the two surfaces in the preview or the
+  // slicer — the slab is still essentially flush for printing purposes.
+  const ROAD_EMBED   = elevGrid ? 0 : 0.05;
   const MAX_ROAD_AREA = hexArea * 0.06;
 
   let roadCount = 0;
@@ -457,7 +466,9 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
         terrainY,
       );
     } else {
-      extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
+      // ROAD_EMBED: sink 0.05 mm into base so road bottom never z-fights
+      // with the coincident base-plate top face in flat mode.
+      extrudeSlab(blackAcc, clipped, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
     }
     roadCount++;
   }
@@ -478,7 +489,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
         terrainY,
       );
     } else {
-      extrudeSlab(blackAcc, poly, BASE, ROAD_SLAB);
+      extrudeSlab(blackAcc, poly, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
     }
   }
 
@@ -533,7 +544,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
         terrainY,
       );
     } else {
-      extrudeSlab(blackAcc, clipped, BASE, ROAD_SLAB);
+      extrudeSlab(blackAcc, clipped, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
     }
     waterwayCount++;
   }

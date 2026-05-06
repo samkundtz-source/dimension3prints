@@ -132,11 +132,12 @@ export class SceneManager {
       path:     { roughness: 0.75, metalness: 0.0 },
     };
 
-    // Polygon offset per type — higher = pushed further back.
-    // Roads/paths on top, then parks, then base/terrain furthest back.
+    // Polygon offset per type — higher = pushed further back in depth buffer.
+    // Large negative = pulled toward camera = always wins depth test.
+    // Base is pushed furthest back so roads/water always render on top of it.
     const polyOff = {
-      road: -4, path: -3, park: -2, water: -1,
-      building: 0, terrain: 1, base: 2,
+      road: -6, path: -5, water: -5, park: -3,
+      building: 0, terrain: 2, base: 4,
     };
 
     for (const [type, color] of Object.entries(FEATURE_COLORS)) {
