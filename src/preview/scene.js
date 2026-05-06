@@ -251,13 +251,16 @@ export class SceneManager {
 
   _applyMaterials(group) {
     const matLib = this.wireframe ? this.wfMaterials : this.materials;
+    // renderOrder: road/water drawn last → always wins at identical depths.
+    // Polygon offset handles sub-pixel separation; renderOrder handles equal-z.
+    const renderOrders = { base: 0, terrain: 0, building: 1, road: 2, water: 2, park: 2, path: 2 };
     group.traverse(obj => {
       if (!obj.isMesh) return;
       const type = obj.userData.featureType || 'base';
       obj.material      = matLib[type] ?? matLib.base;
+      obj.renderOrder   = renderOrders[type] ?? 0;
       obj.castShadow    = (type === 'building');
       obj.receiveShadow = (type === 'terrain' || type === 'base');
-
     });
   }
 

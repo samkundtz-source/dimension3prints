@@ -160,7 +160,17 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   onProgress?.('Building base plate…', 65);
   collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
 
-  // ── 1b. Terrain surface (test mode only) ──────────────────────────────────
+  // ── 1b. Flat-mode inner border wall ───────────────────────────────────────
+  // In flat mode, road/water slabs clipped to hexInner can have outward-facing
+  // side walls that poke above the base plate into the gap ring (visible as black
+  // on the white ring).  A thin white wall at hexInner from BASE upward covers
+  // those edges completely.  In terrain mode the collectTerrainBorderWall handles
+  // this with a height-matched wall, so this is only needed for flat mode.
+  if (!elevGrid) {
+    collectFlatInnerWall(baseAcc, hexInner, BASE_THICKNESS_MM, BASE_THICKNESS_MM + NOZZLE_MM * 1.5 + 0.2);
+  }
+
+  // ── 1d. Terrain surface (test mode only) ──────────────────────────────────
   // Pre-compute center elevation for normalization so terrain is relative.
   let centerElev = 0;
   if (elevGrid) {
@@ -420,10 +430,10 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   // still a clean 0.6 mm for slicers using 0.2 mm layer height (3 layers).
   const ROAD_SLAB    = NOZZLE_MM * 1.5;  // 0.6 mm
   // In flat mode the road bottom sits exactly at BASE (coincident with the
-  // base-plate top face).  EMBED pushes it 0.05 mm into the base so there
+  // base-plate top face).  EMBED pushes it 0.1 mm into the base so there
   // is never any z-fighting between the two surfaces in the preview or the
-  // slicer — the slab is still essentially flush for printing purposes.
-  const ROAD_EMBED   = elevGrid ? 0 : 0.05;
+  // slicer — 0.1 mm is half a layer height, well within printing tolerance.
+  const ROAD_EMBED   = elevGrid ? 0 : 0.1;
   const MAX_ROAD_AREA = hexArea * 0.06;
 
   let roadCount = 0;
@@ -792,6 +802,26 @@ function engraveTextOnBottom(acc, text) {
 
 // Project a point onto the nearest edge of a convex polygon.
 // Returns the original point unchanged if it is already inside.
+// Thin white wall ring at hexInner from fromY up to toY.
+// Covers the outward-facing side walls of road/water slabs that touch the
+// hexInner boundary in flat mode, preventing black edges from bleeding into
+// the white gap ring.  Both faces rendered (FrontSide-only renderer).
+function collectFlatInnerWall(acc, shapeVerts, fromY, toY) {
+  if (fromY >= toY) return;
+  const n = shapeVerts.length;
+  const pos = [], idx = [];
+  let vc = 0;
+  for (let i = 0; i < n; i++) {
+    const a = shapeVerts[i], b = shapeVerts[(i + 1) % n];
+    pos.push(a.x, fromY, -a.y,  b.x, fromY, -b.y,
+             a.x, toY,   -a.y,  b.x, toY,   -b.y);
+    idx.push(vc, vc + 1, vc + 2,  vc + 1, vc + 3, vc + 2); // inward face
+    idx.push(vc + 2, vc + 1, vc,  vc + 2, vc + 3, vc + 1); // outward face (covers gap ring edge)
+    vc += 4;
+  }
+  if (pos.length) acc.add(pos, idx);
+}
+
 function clampToConvexPoly(pt, verts) {
   if (pointInConvexPolygon(pt, verts)) return pt;
   const n = verts.length;
