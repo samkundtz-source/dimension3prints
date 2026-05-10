@@ -282,14 +282,19 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     const baseHeightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
     const heightMM     = baseHeightMM;
 
-    // In terrain mode, sit each building on the terrain surface at its centroid.
+    // In terrain mode, sit each building on its LOWEST terrain vertex so no
+    // corner floats above the terrain surface.  Buildings on slopes are "cut
+    // into" the hillside on the high side — correct physical behaviour.
     let baseY = BASE;
     if (elevGrid) {
-      const cx = bf.polygon.reduce((s, p) => s + p.x, 0) / bf.polygon.length;
-      const cy = bf.polygon.reduce((s, p) => s + p.y, 0) / bf.polygon.length;
-      const elev = bilinearInterp(elevGrid, ELEV_N, cx, cy, MODEL_RADIUS_MM);
-      const relMM = (elev - centerElev) * hScale * terrainExag;
-      baseY = BASE + Math.max(-(BASE - 0.2), relMM);
+      let minH = Infinity;
+      for (const p of bf.polygon) {
+        const elev  = bilinearInterp(elevGrid, ELEV_N, p.x, p.y, MODEL_RADIUS_MM);
+        const relMM = (elev - centerElev) * hScale * terrainExag;
+        const h = BASE + Math.max(-(BASE - 0.2), relMM);
+        if (h < minH) minH = h;
+      }
+      baseY = minH;
     }
 
     if (detailedBuildings) {
@@ -494,8 +499,9 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   onProgress?.('Building water areas…', 88);
   for (const poly of waterPolys) {
     if (elevGrid) {
-      // Same thin-cap approach: water slab bottom = terrain height, top = terrain + ROAD_SLAB.
-      // No overlap with terrain mesh — water is visible as a black cap on the surface.
+      // Water slab bottom is embedded 0.3 mm BELOW the terrain surface so the
+      // terrain mesh is physically inside the water slab → no z-fighting.
+      // Top = terrain + ROAD_SLAB so water stays visually raised above terrain.
       const mmPerM = hScale * terrainExag;
       const terrainY = (mx, my) => {
         const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
@@ -504,7 +510,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       };
       extrudeTerrainSlab(blackAcc, poly,
         (mx, my) => terrainY(mx, my) + ROAD_SLAB,
-        terrainY,
+        (mx, my) => terrainY(mx, my) - 0.3,  // embed into terrain → eliminates z-fight
       );
     } else {
       extrudeSlab(blackAcc, poly, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
@@ -874,9 +880,9 @@ function computeAutoExag(elevGrid, N, hScale) {
   // How many mm this elevation range produces at exag=1
   const naturalHeightMM = elevRange * hScale;
 
-  const TARGET_MM = 15;
-  const EXAG_MIN  = 0.4;
-  const EXAG_MAX  = 8.0;
+  const TARGET_MM = 4;   // ~1/4 the original target — subtle, printable relief
+  const EXAG_MIN  = 0.3; // don't over-flatten real mountains
+  const EXAG_MAX  = 3.0; // don't over-exaggerate flat cities
 
   return Math.max(EXAG_MIN, Math.min(EXAG_MAX, TARGET_MM / naturalHeightMM));
 }
@@ -987,7 +993,7 @@ function collectTerrainBorderWall(acc, shapeVerts, elevGrid, N, BASE, centerElev
   const R = MODEL_RADIUS_MM;
   const mmPerM = hScale * terrainExag;
   const n = shapeVerts.length;
-  const SEGS = 8; // subdivisions per hex edge — smoother walls on hilly terrain
+  const SEGS = 32; // subdivisions per hex edge — must match 128-grid terrain density
   const pos = [], idx = [];
   let vc = 0;
 
