@@ -514,8 +514,9 @@ async function handleGetContent(request, env) {
   });
 }
 
-// Primary + fallback Overpass mirrors tried in order.
-// More mirrors = fewer "unavailable" errors when one is slow or rate-limiting.
+// All mirrors raced in parallel — fastest successful response wins.
+// Serial retries used to fail when Cloudflare's 30s wall-clock limit was
+// hit before reaching the 3rd or 4th server.
 const OVERPASS_SERVERS_WORKER = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
@@ -525,9 +526,9 @@ const OVERPASS_SERVERS_WORKER = [
 
 function buildOverpassQuery(south, west, north, east) {
   const bb = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
-  // timeout:40 lets Overpass return a partial result before our 50 s fetch
-  // abort fires — previously timeout:90 > fetch abort:55 caused silent failures.
-  return `[out:json][timeout:40];
+  // timeout:25 matches our per-server fetch abort; Overpass returns partial
+  // data on timeout rather than nothing, so we still get useful results.
+  return `[out:json][timeout:25];
 (
   way["building"](${bb});
   way["building:part"](${bb});
@@ -547,6 +548,31 @@ function buildOverpassQuery(south, west, north, east) {
 out body;
 >;
 out skel qt;`;
+}
+
+// Attempt one Overpass server; throws on failure so Promise.any() can try others.
+async function fetchOverpassServer(server, queryBody) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 28000); // 28s > 25s query timeout
+  try {
+    const resp = await fetch(server, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body:    queryBody,
+      signal:  controller.signal,
+    });
+    clearTimeout(timer);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    if (!Array.isArray(data.elements)) throw new Error('bad response');
+    // Reject only if the remark explicitly says "error" — empty areas (parks,
+    // water) legitimately return 0 elements and should not be retried.
+    if (data.remark && /\berror\b/i.test(data.remark)) throw new Error('overpass error');
+    return data;
+  } catch (e) {
+    clearTimeout(timer);
+    throw e;
+  }
 }
 
 async function handleOSMData(request, env) {
@@ -576,29 +602,16 @@ async function handleOSMData(request, env) {
   const query     = buildOverpassQuery(body.south, body.west, body.north, body.east);
   const queryBody = `data=${encodeURIComponent(query)}`;
 
-  for (const server of OVERPASS_SERVERS_WORKER) {
-    const controller = new AbortController();
-    // 50 s fetch timeout > 40 s Overpass timeout, so Overpass always responds
-    // (even with partial data) before we abort the fetch.
-    const timer = setTimeout(() => controller.abort(), 50000);
-    try {
-      const resp = await fetch(server, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body:    queryBody,
-        signal:  controller.signal,
-      });
-      clearTimeout(timer);
-      if (!resp.ok) continue;
-      const data = await resp.json();
-      // Accept partial results (Overpass returns elements even on timeout)
-      if (!Array.isArray(data.elements)) continue;
-      if (data.elements.length === 0 && data.remark?.includes('error')) continue;
-      return jsonResponse(data);
-    } catch { clearTimeout(timer); continue; }
+  // Race all mirrors simultaneously — first successful response wins.
+  // Max latency is now one server's timeout (28 s) rather than N × timeout.
+  try {
+    const data = await Promise.any(
+      OVERPASS_SERVERS_WORKER.map(s => fetchOverpassServer(s, queryBody))
+    );
+    return jsonResponse(data);
+  } catch {
+    return jsonResponse({ error: 'Map data servers are temporarily unavailable. Please try again in a moment.' }, 503);
   }
-
-  return jsonResponse({ error: 'Map data servers unavailable. Please try again in a moment.' }, 503);
 }
 
 async function handleGeocode(request, env) {
