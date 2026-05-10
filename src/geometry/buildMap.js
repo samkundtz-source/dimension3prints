@@ -123,8 +123,17 @@ class GeomAccumulator {
 export function buildMapModel(features, terrainOptions, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, _parkHills = false, orderId = '', _roadElevation = false, proceduralInfill = false) {
   // terrainOptions: { elevGrid, gridSize, terrainExag } or null for flat mode
   const elevGrid     = terrainOptions?.elevGrid    || null;
-  const ELEV_N       = terrainOptions?.gridSize    || 64;
-  const terrainExag  = terrainOptions?.terrainExag || 1.5;
+  const ELEV_N       = terrainOptions?.gridSize    || 96;
+  // Auto terrain exaggeration: analyse the elevation grid to find the range
+  // that best fills ~15 mm of vertical relief — readable terrain without an
+  // impractically tall print.  Manual override still works: set terrainExag
+  // to a non-zero number in terrainOptions to bypass auto-detection.
+  let terrainExag = terrainOptions?.terrainExag || 0;
+  if (elevGrid && !terrainExag) {
+    terrainExag = computeAutoExag(elevGrid, ELEV_N, projection.horizontalScale);
+    onProgress?.(`Auto terrain exaggeration: ${terrainExag.toFixed(2)}×`, 62);
+  }
+  terrainExag = terrainExag || 1.5; // final fallback
   const group = new THREE.Group();
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
@@ -838,12 +847,46 @@ function clampToConvexPoly(pt, verts) {
   return best;
 }
 
+// ── Auto terrain exaggeration ─────────────────────────────────────────────────
+// Analyses the elevation grid and returns an exaggeration factor that maps the
+// terrain's natural relief to ~TARGET_MM above the base plate.
+//
+// Uses the 5th→95th percentile range instead of min/max so that single-pixel
+// ocean edges or data spikes don't skew the whole exaggeration.
+//
+// Physical constraints:
+//   • TARGET_MM = 15  — tall enough to read as real terrain; printable (≈1 h extra)
+//   • EXAG_MIN  = 0.4 — prevents extreme alpine areas from printing impractically tall
+//   • EXAG_MAX  = 8.0 — prevents near-flat cities from showing nonsensical relief
+//
+// Examples (MODEL_RADIUS_MM=75):
+//   Swiss Alps  2000 m range, 2 km radius → naturalH=75 mm → exag=0.20 → clamped→0.40
+//   Colorado    500 m range,  5 km radius → naturalH=7.5 mm → exag=2.0
+//   NYC         30 m range,   2 km radius → naturalH=1.1 mm → exag=13.6 → clamped→8.0
+function computeAutoExag(elevGrid, N, hScale) {
+  const count  = N * N;
+  const sorted = Float32Array.from(elevGrid).sort();
+
+  const p05 = sorted[Math.max(0, Math.floor(count * 0.05))];
+  const p95 = sorted[Math.min(count - 1, Math.floor(count * 0.95))];
+  const elevRange = Math.max(p95 - p05, 1); // metres; guard against 0-range
+
+  // How many mm this elevation range produces at exag=1
+  const naturalHeightMM = elevRange * hScale;
+
+  const TARGET_MM = 15;
+  const EXAG_MIN  = 0.4;
+  const EXAG_MAX  = 8.0;
+
+  return Math.max(EXAG_MIN, Math.min(EXAG_MAX, TARGET_MM / naturalHeightMM));
+}
+
 // ── Terrain surface mesh (test mode) ──────────────────────────────────────────
 // Generates a grid of quads displaced by real elevation. Border cells that
 // straddle hexInner have their outside corners clamped to the hexInner boundary
 // so the terrain fills right up to the wall with no gap and no bleed into the ring.
 function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag) {
-  const GRID = 56;
+  const GRID = 128; // 128×128 → ~1.2 mm/cell @ 75 mm radius — smooth mountains
   const R = MODEL_RADIUS_MM;
   const mmPerM = hScale * terrainExag;
 

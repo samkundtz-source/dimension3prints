@@ -254,14 +254,16 @@ async function generate() {
     if (testTerrainMode) {
       try {
         setStatus('Fetching terrain elevation…', 52);
-        const terrainExag = parseFloat(el('test-terrain-exag')?.value || '1.5');
-        const GRID_SIZE = 64;
+        // Higher grid → more elevation samples → smoother, more detailed terrain.
+        // 96×96 ≈ one sample every ~10 m for a 1 km radius — close to tile resolution.
+        const GRID_SIZE = 96;
         const elevGrid = await fetchElevationForModel(
           lat, lng, radiusMeters, MODEL_RADIUS_MM, GRID_SIZE,
           msg => setStatus(msg, 55),
         );
-        terrainOptions = { elevGrid, gridSize: GRID_SIZE, terrainExag };
-        setStatus('Terrain loaded', 58);
+        // terrainExag = 0 → buildMap auto-detects the best exaggeration for this area
+        terrainOptions = { elevGrid, gridSize: GRID_SIZE, terrainExag: 0 };
+        setStatus('Terrain loaded — auto-scaling relief…', 58);
       } catch (err) {
         setStatus(`Terrain fetch failed (${err.message}) — using flat base`, 58);
       }
