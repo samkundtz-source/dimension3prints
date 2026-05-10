@@ -129,6 +129,10 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
 
   const hexFull  = getShapeVertices(MODEL_RADIUS_MM, shape);
   const hexInner = getShapeVertices(MODEL_RADIUS_MM - 5, shape);
+  // In flat mode, clip black features (roads/water/parks) 1 mm inside hexInner so
+  // their cut side-walls are tucked behind the gap ring and never protrude visibly.
+  // In terrain mode, the terrain surface wraps everything up to hexInner naturally.
+  const blackClip = elevGrid ? hexInner : getShapeVertices(MODEL_RADIUS_MM - 6, shape);
 
   const hScale = projection.horizontalScale;
 
@@ -142,7 +146,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   const waterPolys = [];
   for (const feat of (features.water || [])) {
     let poly;
-    try { poly = clipToHex(feat.polygon, hexInner); } catch { continue; }
+    try { poly = clipToHex(feat.polygon, blackClip); } catch { continue; }
     if (!poly || poly.length < 3) continue;
     const area = Math.abs(signedArea2D(poly));
     if (area < 1.0) continue;
@@ -160,15 +164,10 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   onProgress?.('Building base plate…', 65);
   collectHexBase(baseAcc, hexFull, premiumDetail ? 0.8 : 0);
 
-  // ── 1b. Flat-mode inner border wall ───────────────────────────────────────
-  // In flat mode, road/water slabs clipped to hexInner can have outward-facing
-  // side walls that poke above the base plate into the gap ring (visible as black
-  // on the white ring).  A thin white wall at hexInner from BASE upward covers
-  // those edges completely.  In terrain mode the collectTerrainBorderWall handles
-  // this with a height-matched wall, so this is only needed for flat mode.
-  if (!elevGrid) {
-    collectFlatInnerWall(baseAcc, hexInner, BASE_THICKNESS_MM, BASE_THICKNESS_MM + NOZZLE_MM * 1.5 + 0.2);
-  }
+  // Border wall: terrain mode only — collectTerrainBorderWall adds height-matched
+  // walls at hexInner that blend naturally with terrain relief.  Flat mode has no
+  // border wall; the 6 mm gap ring (hexFull→blackClip) provides a clean white
+  // margin that hides any road/water cut edges.
 
   // ── 1d. Terrain surface (test mode only) ──────────────────────────────────
   // Pre-compute center elevation for normalization so terrain is relative.
@@ -455,7 +454,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     const raw = bufferLinestring(feat.points, halfW);
     if (!raw || raw.length < 3) continue;
 
-    const clipped = clipToHex(raw, hexInner);
+    const clipped = clipToHex(raw, blackClip);
     if (!clipped || clipped.length < 3) continue;
 
     const area = Math.abs(signedArea2D(clipped));
@@ -535,7 +534,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     const raw = bufferLinestring(feat.points, halfW);
     if (!raw || raw.length < 3) continue;
 
-    const clipped = clipToHex(raw, hexInner);
+    const clipped = clipToHex(raw, blackClip);
     if (!clipped || clipped.length < 3) continue;
 
     const area = Math.abs(signedArea2D(clipped));
