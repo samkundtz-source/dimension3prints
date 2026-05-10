@@ -29,24 +29,111 @@ export async function geocode(query) {
   }));
 }
 
-// ─── Overpass API (proxied through worker) ────────────────────────────────────
+// ─── Overpass API (proxied through worker, with direct fallback) ──────────────
+
+// Mirrors for direct browser → Overpass fallback (used when the CF Worker
+// can't reach Overpass, e.g. egress-IP blocks or CF-side timeouts).
+const OVERPASS_DIRECT = [
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://overpass.openstreetmap.fr/api/interpreter',
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.private.coffee/api/interpreter',
+];
+
+function buildDirectQuery(south, west, north, east) {
+  const bb = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
+  return `[out:json][timeout:30][maxsize:33554432];
+(
+  way["building"](${bb});
+  way["building:part"](${bb});
+  relation["building"](${bb});
+  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
+  way["natural"="water"](${bb});
+  way["water"](${bb});
+  way["waterway"="riverbank"](${bb});
+  way["waterway"~"^(river|canal|stream|drain|ditch|tidal_channel)$"](${bb});
+  way["landuse"="reservoir"](${bb});
+  relation["natural"="water"](${bb});
+  way["leisure"~"^(park|garden|nature_reserve|golf_course|pitch|playground|common)$"](${bb});
+  relation["leisure"~"^(park|nature_reserve|garden)$"](${bb});
+  way["landuse"~"^(park|forest|grass|meadow|recreation_ground|village_green|cemetery|allotments|residential|commercial|industrial|retail|mixed|civic)$"](${bb});
+  way["natural"~"^(wood|scrub|grassland|heath)$"](${bb});
+);
+out body;
+>;
+out skel qt;`;
+}
+
+async function fetchOSMDirect(bbox, onProgress) {
+  onProgress?.('Trying direct data source…', 15);
+  const query    = buildDirectQuery(bbox.south, bbox.west, bbox.north, bbox.east);
+  const bodyStr  = `data=${encodeURIComponent(query)}`;
+
+  const attempts = OVERPASS_DIRECT.map(async server => {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 35000);
+    try {
+      const resp = await fetch(server, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body:    bodyStr,
+        signal:  ctrl.signal,
+      });
+      clearTimeout(timer);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const json = await resp.json();
+      if (!Array.isArray(json.elements)) throw new Error('bad response');
+      return json;
+    } catch (e) {
+      clearTimeout(timer);
+      throw e;
+    }
+  });
+
+  const json = await Promise.any(attempts);
+  onProgress?.('Processing map data…', 30);
+  return json;
+}
 
 export async function fetchOSMData(bbox, onProgress, adminToken = '') {
   onProgress?.('Querying map data…', 12);
   const body = adminToken ? { ...bbox, adminToken } : bbox;
-  const resp = await fetch('/api/osm-data', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body:    JSON.stringify(body),
-  });
-  if (!resp.ok) {
-    const err = await resp.json().catch(() => ({}));
-    throw new Error(err.error || `Map data error (${resp.status}). Please try again.`);
+
+  let workerFailed = false;
+  try {
+    const resp = await fetch('/api/osm-data', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(body),
+    });
+    if (resp.ok) {
+      const json = await resp.json();
+      if (Array.isArray(json.elements)) {
+        onProgress?.('Processing map data…', 30);
+        return json;
+      }
+    }
+    // 503 from worker = Overpass unreachable from CF; fall through to direct
+    if (resp.status === 503) {
+      workerFailed = true;
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `Map data error (${resp.status}). Please try again.`);
+    }
+  } catch (e) {
+    // Network failure reaching the worker itself → also try direct
+    if (!workerFailed) {
+      if (e.message?.includes('Map data error') || e.message?.includes('Unexpected')) throw e;
+      workerFailed = true;
+    }
   }
-  const json = await resp.json();
-  if (!Array.isArray(json.elements)) throw new Error('Unexpected response from map server. Please try again.');
-  onProgress?.('Processing map data…', 30);
-  return json;
+
+  // Fallback: browser queries Overpass directly (bypasses CF egress IPs)
+  try {
+    return await fetchOSMDirect(bbox, onProgress);
+  } catch {
+    throw new Error('Map data servers are unavailable. Please check your connection and try again.');
+  }
 }
 
 // ─── OSM Parser ───────────────────────────────────────────────────────────────

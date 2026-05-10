@@ -526,24 +526,26 @@ const OVERPASS_SERVERS_WORKER = [
 
 function buildOverpassQuery(south, west, north, east) {
   const bb = `${south.toFixed(6)},${west.toFixed(6)},${north.toFixed(6)},${east.toFixed(6)}`;
-  // timeout:25 matches our per-server fetch abort; Overpass returns partial
-  // data on timeout rather than nothing, so we still get useful results.
-  return `[out:json][timeout:25];
+  // timeout:20 + 32 MB max keeps queries fast on all servers.
+  // Relations removed except for buildings/water — relation["landuse"] was the
+  // slowest element and was timing out all 4 mirrors simultaneously.
+  // leisure + natural tags added so parks actually appear in the model.
+  return `[out:json][timeout:20][maxsize:33554432];
 (
   way["building"](${bb});
   way["building:part"](${bb});
-  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   relation["building"](${bb});
-  relation["building:part"](${bb});
+  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   way["natural"="water"](${bb});
   way["water"](${bb});
   way["waterway"="riverbank"](${bb});
   way["waterway"~"^(river|canal|stream|drain|ditch|tidal_channel)$"](${bb});
   way["landuse"="reservoir"](${bb});
   relation["natural"="water"](${bb});
-  relation["water"](${bb});
-  way["landuse"~"^(residential|commercial|industrial|retail|mixed|civic)$"](${bb});
-  relation["landuse"~"^(residential|commercial|industrial|retail|mixed|civic)$"](${bb});
+  way["leisure"~"^(park|garden|nature_reserve|golf_course|pitch|playground|common)$"](${bb});
+  relation["leisure"~"^(park|nature_reserve|garden)$"](${bb});
+  way["landuse"~"^(park|forest|grass|meadow|recreation_ground|village_green|cemetery|allotments|residential|commercial|industrial|retail|mixed|civic)$"](${bb});
+  way["natural"~"^(wood|scrub|grassland|heath)$"](${bb});
 );
 out body;
 >;
@@ -553,7 +555,7 @@ out skel qt;`;
 // Attempt one Overpass server; throws on failure so Promise.any() can try others.
 async function fetchOverpassServer(server, queryBody) {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 28000); // 28s > 25s query timeout
+  const timer = setTimeout(() => controller.abort(), 23000); // 23s > 20s query timeout
   try {
     const resp = await fetch(server, {
       method:  'POST',
