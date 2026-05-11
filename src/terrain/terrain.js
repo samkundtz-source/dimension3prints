@@ -18,19 +18,39 @@ function ty2lat(ty, z) {
 }
 function decodeTerr(r, g, b) { return (r * 256 + g + b / 256) - 32768; }
 
+// Tile sources — tried in order until one succeeds
+const TILE_SOURCES = [
+  (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`,
+  (z, x, y) => `https://tile.nextzen.org/tilezen/terrain/v1/terrarium/${z}/${x}/${y}.png`,
+];
+
 async function fetchTilePixels(tx, ty, zoom) {
-  const url = `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${zoom}/${tx}/${ty}.png`;
-  const img = await new Promise((res, rej) => {
-    const im = new Image();
-    im.crossOrigin = 'anonymous';
-    im.onload = () => res(im);
-    im.onerror = () => rej(new Error(`Tile ${zoom}/${tx}/${ty} failed`));
-    im.src = url;
-  });
-  const c = document.createElement('canvas');
-  c.width = c.height = TILE_SZ;
-  c.getContext('2d').drawImage(img, 0, 0);
-  return c.getContext('2d').getImageData(0, 0, TILE_SZ, TILE_SZ).data;
+  // Use fetch() → createObjectURL trick: loading from a blob: URL means the
+  // canvas is never considered cross-origin, so getImageData() never throws a
+  // SecurityError even when the server's CORS headers are misconfigured.
+  let lastErr;
+  for (const src of TILE_SOURCES) {
+    try {
+      const url  = src(zoom, tx, ty);
+      const resp = await fetch(url, { mode: 'cors', cache: 'force-cache' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const blob    = await resp.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const img = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload  = () => { URL.revokeObjectURL(blobUrl); res(im); };
+        im.onerror = () => { URL.revokeObjectURL(blobUrl); rej(new Error('img load')); };
+        im.src = blobUrl;
+      });
+      const c = document.createElement('canvas');
+      c.width = c.height = TILE_SZ;
+      c.getContext('2d').drawImage(img, 0, 0);
+      return c.getContext('2d').getImageData(0, 0, TILE_SZ, TILE_SZ).data;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw new Error(`Tile ${zoom}/${tx}/${ty}: ${lastErr?.message}`);
 }
 
 /**
@@ -68,12 +88,16 @@ export async function fetchElevationForModel(centerLat, centerLng, radiusMeters,
   const tyMin = Math.max(0, lat2ty(bounds.maxLat, zoom)); // NW = smaller ty
   const tyMax = Math.min(maxT, lat2ty(bounds.minLat, zoom)); // SE = larger ty
 
-  // Fetch all tiles in parallel
+  // Fetch all tiles in parallel — allSettled so a single bad tile doesn't
+  // abort the whole operation (missing tiles are left as 0 / interpolated later)
   const fetches = [];
   for (let ty = tyMin; ty <= tyMax; ty++)
     for (let tx = txMin; tx <= txMax; tx++)
       fetches.push(fetchTilePixels(tx, ty, zoom).then(p => ({ tx, ty, p })));
-  const tiles = await Promise.all(fetches);
+  const results = await Promise.allSettled(fetches);
+  const tiles = results.filter(r => r.status === 'fulfilled').map(r => r.value);
+  if (tiles.length === 0) throw new Error('All terrain tiles failed to load');
+  onProgress?.(`Terrain: ${tiles.length}/${fetches.length} tiles loaded (zoom ${zoom})`);
 
   // Stitch into one float image
   const nTX = txMax - txMin + 1;
