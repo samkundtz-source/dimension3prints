@@ -159,9 +159,10 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     if (!poly || poly.length < 3) continue;
     const area = Math.abs(signedArea2D(poly));
     if (area < 1.0) continue;
-    // Raised from 40% → 85%: large rivers (Hudson, Thames, etc.) and coastal
-    // features were being silently dropped for city-scale captures.
-    if (area > hexArea * 0.85) continue;
+    // Only drop water that covers essentially the entire model (ocean centre-point).
+    // 95% threshold: keeps large rivers, bays and harbour areas that previously
+    // fell through the 85% cutoff for coastal cities like NYC.
+    if (area > hexArea * 0.95) continue;
     waterPolys.push(poly);
   }
 
@@ -509,30 +510,27 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   // come through the waterways loop below and follow the terrain correctly.
   for (const poly of (mountainView ? [] : waterPolys)) {
     if (elevGrid) {
-      // Water must be FLAT — it's physically impossible for a water surface to
-      // be bumpy. Using extrudeTerrainSlab gives a wavy top that can be below
-      // the terrain mesh in between tessellation vertices → white hills show
-      // through the black water.
+      // Water is FLAT.  We use extrudeSlab (constant top face) so there is no
+      // tessellation mismatch that lets the terrain mesh poke through.
       //
-      // Fix: compute a single flat water level = max terrain height across ALL
-      // boundary vertices (+ centroid) plus a 1 mm safety margin.  The slab is
-      // a simple flat-topped column from BASE-0.1 up to this level.  Any terrain
-      // mesh inside the polygon is always buried below the flat water surface.
+      // Water level = MINIMUM boundary-vertex terrain height.
+      // Water fills to the lowest surrounding point — physically correct.
+      // Using minimum (not max/avg) keeps the slab thin: one elevated shoreline
+      // vertex won't raise the entire water body above road level.
+      //
+      // The slab extends from BASE-0.1 (below terrain base) to minH+ROAD_SLAB,
+      // so the terrain mesh inside is always enclosed below the flat water face.
       const mmPerM = hScale * terrainExag;
       const sampleH = (mx, my) => {
         const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
         const rel  = (elev - centerElev) * mmPerM;
         return BASE + Math.max(-(BASE - 0.2), rel);
       };
-      let maxH = BASE;
-      for (const p of poly) maxH = Math.max(maxH, sampleH(p.x, p.y));
-      // Also sample centroid in case interior terrain is higher than boundary
-      const cx = poly.reduce((s, p) => s + p.x, 0) / poly.length;
-      const cy = poly.reduce((s, p) => s + p.y, 0) / poly.length;
-      maxH = Math.max(maxH, sampleH(cx, cy));
-      const waterTopY  = maxH + ROAD_SLAB + 1.0; // 1 mm safety margin
-      const waterBotY  = BASE - 0.1;
-      extrudeSlab(blackAcc, poly, waterBotY, waterTopY - waterBotY);
+      let minH = Infinity;
+      for (const p of poly) minH = Math.min(minH, sampleH(p.x, p.y));
+      if (!isFinite(minH)) minH = BASE;
+      const waterTopY = minH + ROAD_SLAB;
+      extrudeSlab(blackAcc, poly, BASE - 0.1, waterTopY - (BASE - 0.1));
     } else {
       extrudeSlab(blackAcc, poly, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
     }
@@ -578,20 +576,17 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
 
     if (elevGrid) {
-      // Same flat-water treatment as polygon water areas: sample all clipped
-      // polygon vertices + centroid, take the max terrain height, add margin.
+      // Flat water — minimum boundary vertex terrain height, same as polygon water.
       const mmPerM = hScale * terrainExag;
       const sampleH = (mx, my) => {
         const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
         const rel  = (elev - centerElev) * mmPerM;
         return BASE + Math.max(-(BASE - 0.2), rel);
       };
-      let maxH = BASE;
-      for (const p of clipped) maxH = Math.max(maxH, sampleH(p.x, p.y));
-      const cx = clipped.reduce((s, p) => s + p.x, 0) / clipped.length;
-      const cy = clipped.reduce((s, p) => s + p.y, 0) / clipped.length;
-      maxH = Math.max(maxH, sampleH(cx, cy));
-      const waterwayTopY = maxH + ROAD_SLAB + 1.0;
+      let minH = Infinity;
+      for (const p of clipped) minH = Math.min(minH, sampleH(p.x, p.y));
+      if (!isFinite(minH)) minH = BASE;
+      const waterwayTopY = minH + ROAD_SLAB;
       extrudeSlab(blackAcc, clipped, BASE - 0.1, waterwayTopY - (BASE - 0.1));
     } else {
       extrudeSlab(blackAcc, clipped, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
