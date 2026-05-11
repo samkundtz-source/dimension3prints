@@ -53,7 +53,6 @@ function buildDirectQuery(south, west, north, east) {
   way["waterway"="riverbank"](${bb});
   way["waterway"~"^(river|canal|stream|drain|ditch|tidal_channel)$"](${bb});
   way["landuse"="reservoir"](${bb});
-  way["natural"="coastline"](${bb});
   relation["natural"="water"](${bb});
   way["leisure"~"^(park|garden|nature_reserve|golf_course|pitch|playground|common)$"](${bb});
   relation["leisure"~"^(park|nature_reserve|garden)$"](${bb});
@@ -256,25 +255,6 @@ export function parseOSMData(json, projection, hexVertices) {
     }
   }
 
-  // ── 5. Coastline → water polygons ────────────────────────────────────────
-  // natural=coastline ways are open chains (they exit the bbox).  We stitch
-  // them together and close each chain using the hex boundary — going CCW from
-  // the chain end to the chain start, which encloses the sea area to the right
-  // of the coastline direction.
-  if (features._coastlines && features._coastlines.length > 0) {
-    const chains = mergeWaysIntoRings(features._coastlines);
-    for (const chain of chains) {
-      if (chain.length < 2) continue;
-      const closed = closeOpenChainWithHex(chain, hexVertices);
-      if (!closed || closed.length < 3) continue;
-      const ccw     = ensureCCW(deduplicateRing(closed));
-      const clipped = clipToHex(ccw, hexVertices);
-      if (!clipped || clipped.length < 3) continue;
-      features.water.push({ polygon: clipped, holes: [], tags: { natural: 'water', water: 'coastline' }, osmId: 'coastline' });
-    }
-    delete features._coastlines;
-  }
-
   console.log(
     `[Parser] ${totalWays} ways + ${totalRelations} relations → ` +
     `buildings:${features.buildings.length} ` +
@@ -346,10 +326,6 @@ function classifyTags(tags) {
     return 'water';
   }
 
-  // Coastline ways define the land/sea boundary.  They form open chains within
-  // any bbox — we assemble them into water polygons by closing with hex edges.
-  if (tags.natural === 'coastline') return 'coastline';
-
   // Linear waterways (rivers, streams, canals) — these are lines, not polygons
   if (tags.waterway) {
     return 'waterway';
@@ -371,7 +347,7 @@ function classifyTags(tags) {
 /** Returns true if the feature was added, false if it was rejected/clipped. */
 function addFeature(type, coords, tags, hexVertices, features, osmId) {
   const isArea = type === 'building' || type === 'water' || type === 'park' || type === 'landuse';
-  const isLine = type === 'road' || type === 'path' || type === 'waterway' || type === 'coastline';
+  const isLine = type === 'road' || type === 'path' || type === 'waterway';
 
   if (isArea) {
     // Need a closed ring with at least 3 unique points
@@ -393,9 +369,6 @@ function addFeature(type, coords, tags, hexVertices, features, osmId) {
     if (coords.length < 2) return false;
     if (type === 'waterway') {
       features.waterways.push({ points: coords, tags });
-    } else if (type === 'coastline') {
-      if (!features._coastlines) features._coastlines = [];
-      features._coastlines.push(coords);
     } else {
       const bucket = type === 'road' ? features.roads : features.paths;
       bucket.push({ points: coords, tags });
@@ -655,58 +628,6 @@ function mergeWaysIntoRings(ways) {
 
 function ptClose(a, b) {
   return Math.abs(a.x - b.x) < 0.05 && Math.abs(a.y - b.y) < 0.05;
-}
-
-/**
- * Close an open coastline chain by travelling CCW along the hex boundary
- * from the chain's last point back to its first point.
- *
- * OSM coastline direction: land on LEFT, sea on RIGHT.
- * Going CCW around the hex from chain.end → chain.start encloses the sea.
- *
- * @param {Array<{x,y}>} chain   Open polyline (start ≠ end)
- * @param {Array<{x,y}>} hexVerts  Hex boundary vertices (CCW order)
- * @returns {Array<{x,y}>} Closed polygon, or null if endpoints can't be located
- */
-function closeOpenChainWithHex(chain, hexVerts) {
-  const first = chain[0];
-  const last  = chain[chain.length - 1];
-  if (ptClose(first, last)) return chain; // already closed
-
-  const N = hexVerts.length;
-
-  // Project a point onto the hex boundary; return { edge, t } where edge is the
-  // CCW index of the edge start and t ∈ [0,1] is the parameter along that edge.
-  function locateOnHex(pt) {
-    let bestEdge = 0, bestT = 0, bestDist = Infinity;
-    for (let i = 0; i < N; i++) {
-      const a = hexVerts[i], b = hexVerts[(i + 1) % N];
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const len2 = dx * dx + dy * dy;
-      if (len2 < 1e-12) continue;
-      const t = Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / len2));
-      const qx = a.x + t * dx - pt.x, qy = a.y + t * dy - pt.y;
-      const dist = qx * qx + qy * qy;
-      if (dist < bestDist) { bestDist = dist; bestEdge = i; bestT = t; }
-    }
-    return { edge: bestEdge, t: bestT };
-  }
-
-  const endLoc   = locateOnHex(last);
-  const startLoc = locateOnHex(first);
-
-  // Walk CCW from endLoc to startLoc, collecting intermediate hex corner vertices.
-  const corners = [];
-  if (endLoc.edge !== startLoc.edge || endLoc.t > startLoc.t) {
-    // Count how many full edges to traverse CCW
-    let steps = (startLoc.edge - endLoc.edge + N) % N;
-    if (steps === 0 && endLoc.t >= startLoc.t) steps = N; // full loop
-    for (let s = 0; s < steps; s++) {
-      corners.push(hexVerts[(endLoc.edge + 1 + s) % N]);
-    }
-  }
-
-  return [...chain, ...corners, first];
 }
 
 /** Convex polygon point-in-polygon (CCW). */
