@@ -485,8 +485,12 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
 
     if (elevGrid) {
       // Road is a solid column from the base plate up to terrain + ROAD_SLAB.
-      // Using BASE - 0.1 as the bottom (not terrainY) ensures the terrain surface
-      // mesh — computed on a different grid — can never poke through the road top.
+      // Using BASE - 0.1 as the bottom ensures the terrain surface mesh can
+      // never poke through the road top.
+      // IMPORTANT: clamp terrainY to BASE before adding ROAD_SLAB.  In coastal
+      // cities the water-level terrain is BELOW BASE (e.g. NYC centre is ~10m
+      // above the Hudson River), so unclamped terrainY < BASE - 0.1 which makes
+      // the road top sit below the slab bottom → zero-thickness, invisible road.
       const mmPerM = hScale * terrainExag;
       const terrainY = (mx, my) => {
         const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
@@ -494,7 +498,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
         return BASE + Math.max(-(BASE - 0.2), rel);
       };
       extrudeTerrainSlab(blackAcc, clipped,
-        (mx, my) => terrainY(mx, my) + ROAD_SLAB,
+        (mx, my) => Math.max(terrainY(mx, my), BASE) + ROAD_SLAB,
         () => BASE - 0.1,
       );
     } else {
@@ -529,7 +533,10 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       let minH = Infinity;
       for (const p of poly) minH = Math.min(minH, sampleH(p.x, p.y));
       if (!isFinite(minH)) minH = BASE;
-      const waterTopY = minH + ROAD_SLAB;
+      // Clamp to BASE: coastal/sea-level water vertices sit below the base
+      // plate (centre elevation > sea level) making minH < BASE - 0.1 and
+      // producing a zero or negative slab height → water invisible.
+      const waterTopY = Math.max(minH, BASE) + ROAD_SLAB;
       extrudeSlab(blackAcc, poly, BASE - 0.1, waterTopY - (BASE - 0.1));
     } else {
       extrudeSlab(blackAcc, poly, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
@@ -586,7 +593,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       let minH = Infinity;
       for (const p of clipped) minH = Math.min(minH, sampleH(p.x, p.y));
       if (!isFinite(minH)) minH = BASE;
-      const waterwayTopY = minH + ROAD_SLAB;
+      const waterwayTopY = Math.max(minH, BASE) + ROAD_SLAB; // clamp: same fix as water
       extrudeSlab(blackAcc, clipped, BASE - 0.1, waterwayTopY - (BASE - 0.1));
     } else {
       extrudeSlab(blackAcc, clipped, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
