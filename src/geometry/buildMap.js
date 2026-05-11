@@ -886,10 +886,12 @@ function computeAutoExag(elevGrid, N, hScale, mountainView = false) {
   // How many mm this elevation range produces at exag=1
   const naturalHeightMM = elevRange * hScale;
 
-  // Mountain View: target dramatic relief (~12 mm) with a much higher ceiling
-  // so actual mountains aren't flattened. Normal mode: subtle 2 mm relief.
-  const TARGET_MM = mountainView ? 12  : 2;
-  const EXAG_MIN  = mountainView ? 0.3 : 0.3;
+  // Mountain View: target dramatic relief with a higher ceiling AND a higher
+  // minimum — EXAG_MIN=1.0 ensures real mountains (Fuji, Alps, Rockies) are
+  // never de-exaggerated even when their natural height already exceeds the
+  // target. Normal mode: subtle 2 mm relief.
+  const TARGET_MM = mountainView ? 20  : 2;
+  const EXAG_MIN  = mountainView ? 1.0 : 0.3;
   const EXAG_MAX  = mountainView ? 8.0 : 3.0;
 
   return Math.max(EXAG_MIN, Math.min(EXAG_MAX, TARGET_MM / naturalHeightMM));

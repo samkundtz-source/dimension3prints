@@ -181,14 +181,29 @@ export class SceneManager {
     const box    = new THREE.Box3().setFromObject(group);
     const centre = box.getCenter(new THREE.Vector3());
     const size   = box.getSize(new THREE.Vector3());
-    const maxD   = Math.max(size.x, size.y, size.z);
+    const xySpan = Math.max(size.x, size.z); // horizontal footprint
+    const height = size.y;                    // vertical relief
 
     this.controls.target.copy(centre);
-    this.camera.position.set(
-      centre.x,
-      centre.y + maxD * 2.0,
-      centre.z + maxD * 0.7,
-    );
+
+    // If the model has significant vertical relief (terrain / mountain view),
+    // use a lower, more side-on angle so the mountain silhouette is visible.
+    // For flat city models the top-down view is kept.
+    if (height > xySpan * 0.08) {
+      // Terrain model: position camera at roughly 45° from the side
+      this.camera.position.set(
+        centre.x,
+        centre.y + xySpan * 0.9,
+        centre.z + xySpan * 1.1,
+      );
+    } else {
+      // Flat city model: high top-down overview
+      this.camera.position.set(
+        centre.x,
+        centre.y + xySpan * 2.0,
+        centre.z + xySpan * 0.7,
+      );
+    }
     this.controls.update();
   }
 
