@@ -45,7 +45,8 @@ let lastGenerateTime = 0;
 let searchDebounceTimer = null;
 let adminMode       = false;  // unlocked via Ctrl+Shift+E
 let adminToken      = '';     // HMAC token returned by /api/admin-verify
-let testTerrainMode = false;  // shown only when adminMode is true
+let testTerrainMode  = false;  // shown only when adminMode is true
+let mountainViewMode = false;  // admin: terrain + roads/rivers only, high relief
 
 // ─── DOM refs ─────────────────────────────────────────────────────────────────
 
@@ -249,9 +250,9 @@ async function generate() {
       }
     }
 
-    // 4. Optionally fetch real terrain elevation (test mode only)
+    // 4. Optionally fetch real terrain elevation (test mode or Mountain View)
     let terrainOptions = null;
-    if (testTerrainMode) {
+    if (testTerrainMode || mountainViewMode) {
       try {
         setStatus('Fetching terrain elevation…', 52);
         // Higher grid → more elevation samples → smoother, more detailed terrain.
@@ -261,9 +262,10 @@ async function generate() {
           lat, lng, radiusMeters, MODEL_RADIUS_MM, GRID_SIZE,
           msg => setStatus(msg, 55),
         );
-        // terrainExag = 0 → buildMap auto-detects the best exaggeration for this area
-        terrainOptions = { elevGrid, gridSize: GRID_SIZE, terrainExag: 0 };
-        setStatus('Terrain loaded — auto-scaling relief…', 58);
+        // terrainExag = 0 → buildMap auto-detects the best exaggeration for this area.
+        // mountainView flag unlocks higher exaggeration ceiling for dramatic relief.
+        terrainOptions = { elevGrid, gridSize: GRID_SIZE, terrainExag: 0, mountainView: mountainViewMode };
+        setStatus(mountainViewMode ? 'Terrain loaded — Mountain View mode…' : 'Terrain loaded — auto-scaling relief…', 58);
       } catch (err) {
         setStatus(`Terrain fetch failed (${err.message}) — using flat base`, 58);
       }
@@ -597,9 +599,26 @@ function initControls() {
   el('test-terrain-enabled').addEventListener('change', e => {
     testTerrainMode = e.target.checked;
     el('test-terrain-options').style.display = testTerrainMode ? '' : 'none';
+    // Mountain View requires terrain — keep it in sync
+    if (!testTerrainMode) {
+      mountainViewMode = false;
+      if (el('mountain-view-enabled')) el('mountain-view-enabled').checked = false;
+    }
   });
   el('test-terrain-exag').addEventListener('input', () => {
     el('test-terrain-exag-val').textContent = parseFloat(el('test-terrain-exag').value).toFixed(2) + '×';
+  });
+
+  // Mountain View toggle (admin + terrain mode)
+  el('mountain-view-enabled')?.addEventListener('change', e => {
+    mountainViewMode = e.target.checked;
+    // Automatically enable real terrain when Mountain View is turned on
+    if (mountainViewMode && !testTerrainMode) {
+      testTerrainMode = true;
+      const terrainCb = el('test-terrain-enabled');
+      if (terrainCb) terrainCb.checked = true;
+      el('test-terrain-options').style.display = '';
+    }
   });
 
   // Wireframe toggle

@@ -121,16 +121,16 @@ class GeomAccumulator {
 // ─── Public entry point ──────────────────────────────────────────────────────
 
 export function buildMapModel(features, terrainOptions, projection, vertExag, onProgress, shape = 'hexagon', detailedBuildings = false, premiumDetail = false, _parkHills = false, orderId = '', _roadElevation = false, proceduralInfill = false) {
-  // terrainOptions: { elevGrid, gridSize, terrainExag } or null for flat mode
+  // terrainOptions: { elevGrid, gridSize, terrainExag, mountainView } or null for flat mode
   const elevGrid     = terrainOptions?.elevGrid    || null;
   const ELEV_N       = terrainOptions?.gridSize    || 96;
+  const mountainView = terrainOptions?.mountainView || false;
   // Auto terrain exaggeration: analyse the elevation grid to find the range
-  // that best fills ~15 mm of vertical relief — readable terrain without an
-  // impractically tall print.  Manual override still works: set terrainExag
-  // to a non-zero number in terrainOptions to bypass auto-detection.
+  // that best fills the target relief height.  Manual override still works:
+  // set terrainExag to a non-zero number in terrainOptions to bypass auto-detection.
   let terrainExag = terrainOptions?.terrainExag || 0;
   if (elevGrid && !terrainExag) {
-    terrainExag = computeAutoExag(elevGrid, ELEV_N, projection.horizontalScale);
+    terrainExag = computeAutoExag(elevGrid, ELEV_N, projection.horizontalScale, mountainView);
     onProgress?.(`Auto terrain exaggeration: ${terrainExag.toFixed(2)}×`, 62);
   }
   terrainExag = terrainExag || 1.5; // final fallback
@@ -188,12 +188,15 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     collectTerrainBorderWall(baseAcc, hexInner, elevGrid, ELEV_N, BASE, centerElev, hScale, terrainExag);
   }
 
-  // Road types to render — skip noise (footway, path, cycleway, steps, service)
-  const ROAD_TYPES = new Set([
-    'motorway', 'motorway_link', 'trunk', 'trunk_link',
-    'primary', 'primary_link', 'secondary', 'secondary_link',
-    'tertiary', 'tertiary_link', 'unclassified', 'residential', 'living_street',
-  ]);
+  // Road types to render — skip noise (footway, path, cycleway, steps, service).
+  // Mountain View only renders major roads so the terrain reads clearly.
+  const ROAD_TYPES = mountainView
+    ? new Set(['motorway', 'motorway_link', 'trunk', 'trunk_link', 'primary', 'primary_link', 'secondary', 'secondary_link'])
+    : new Set([
+        'motorway', 'motorway_link', 'trunk', 'trunk_link',
+        'primary', 'primary_link', 'secondary', 'secondary_link',
+        'tertiary', 'tertiary_link', 'unclassified', 'residential', 'living_street',
+      ]);
 
   // ── 3. Pre-collect building footprints ────────────────────────────────────
   // Buildings are generated FIRST so roads can fit around them.
@@ -273,7 +276,8 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   let buildingCount = 0;
   let landmarkCount = 0, tallTowerCount = 0, standardCount = 0;
   onProgress?.('Extruding buildings…', 74);
-  for (const bf of buildingFootprints) {
+  // Mountain View mode: skip all buildings — only terrain, roads and rivers.
+  for (const bf of (mountainView ? [] : buildingFootprints)) {
     // Skip buildings too small to print — use area so narrow row-houses aren't dropped
     if (minBBoxDimension(bf.polygon) < MIN_BLDG_DIM) continue;
     if (Math.abs(signedArea2D(bf.polygon)) < 0.3) continue; // < 0.3mm² is sub-nozzle
@@ -497,7 +501,9 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   }
 
   onProgress?.('Building water areas…', 88);
-  for (const poly of waterPolys) {
+  // Mountain View mode: skip flat water polygons (lakes, sea areas) — rivers/streams
+  // come through the waterways loop below and follow the terrain correctly.
+  for (const poly of (mountainView ? [] : waterPolys)) {
     if (elevGrid) {
       // Water slab bottom is embedded 0.3 mm BELOW the terrain surface so the
       // terrain mesh is physically inside the water slab → no z-fighting.
@@ -869,7 +875,7 @@ function clampToConvexPoly(pt, verts) {
 //   Swiss Alps  2000 m range, 2 km radius → naturalH=75 mm → exag=0.20 → clamped→0.40
 //   Colorado    500 m range,  5 km radius → naturalH=7.5 mm → exag=2.0
 //   NYC         30 m range,   2 km radius → naturalH=1.1 mm → exag=13.6 → clamped→8.0
-function computeAutoExag(elevGrid, N, hScale) {
+function computeAutoExag(elevGrid, N, hScale, mountainView = false) {
   const count  = N * N;
   const sorted = Float32Array.from(elevGrid).sort();
 
@@ -880,9 +886,11 @@ function computeAutoExag(elevGrid, N, hScale) {
   // How many mm this elevation range produces at exag=1
   const naturalHeightMM = elevRange * hScale;
 
-  const TARGET_MM = 2;   // subtle printable relief
-  const EXAG_MIN  = 0.3; // don't over-flatten real mountains
-  const EXAG_MAX  = 3.0; // don't over-exaggerate flat cities
+  // Mountain View: target dramatic relief (~12 mm) with a much higher ceiling
+  // so actual mountains aren't flattened. Normal mode: subtle 2 mm relief.
+  const TARGET_MM = mountainView ? 12  : 2;
+  const EXAG_MIN  = mountainView ? 0.3 : 0.3;
+  const EXAG_MAX  = mountainView ? 8.0 : 3.0;
 
   return Math.max(EXAG_MIN, Math.min(EXAG_MAX, TARGET_MM / naturalHeightMM));
 }
