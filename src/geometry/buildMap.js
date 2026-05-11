@@ -284,12 +284,14 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
 
     const heightM      = parseBuildingHeight(bf.tags, bf.polygon);
     const baseHeightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
-    const heightMM     = baseHeightMM;
 
-    // In terrain mode, sit each building on its LOWEST terrain vertex so no
-    // corner floats above the terrain surface.  Buildings on slopes are "cut
-    // into" the hillside on the high side — correct physical behaviour.
-    let baseY = BASE;
+    // In terrain mode, buildings extrude from the base plate (BASE - 0.1) up to
+    // the roof.  The bottom goes to the base plate — not just to minH — so the
+    // terrain surface mesh inside the footprint is fully enclosed and can never
+    // poke through the building.  The roof height is adjusted to keep it at the
+    // same world-space position (minH + heightMM) as before.
+    let baseY    = BASE;
+    let heightMM = baseHeightMM;
     if (elevGrid) {
       let minH = Infinity;
       for (const p of bf.polygon) {
@@ -298,7 +300,8 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
         const h = BASE + Math.max(-(BASE - 0.2), relMM);
         if (h < minH) minH = h;
       }
-      baseY = minH;
+      baseY    = BASE - 0.1;                  // extend down to base plate
+      heightMM = baseHeightMM + (minH - baseY); // keep roof at minH + baseHeightMM
     }
 
     if (detailedBuildings) {
@@ -480,8 +483,9 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     if (minBBoxDimension(clipped) < NOZZLE_MM) continue;
 
     if (elevGrid) {
-      // Per-vertex terrain height: road is a thin ROAD_SLAB cap on terrain surface.
-      // Bottom = terrain height, Top = terrain + ROAD_SLAB → zero overlap with terrain mesh.
+      // Road is a solid column from the base plate up to terrain + ROAD_SLAB.
+      // Using BASE - 0.1 as the bottom (not terrainY) ensures the terrain surface
+      // mesh — computed on a different grid — can never poke through the road top.
       const mmPerM = hScale * terrainExag;
       const terrainY = (mx, my) => {
         const elev = bilinearInterp(elevGrid, ELEV_N, mx, my, MODEL_RADIUS_MM);
@@ -490,7 +494,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       };
       extrudeTerrainSlab(blackAcc, clipped,
         (mx, my) => terrainY(mx, my) + ROAD_SLAB,
-        terrainY,
+        () => BASE - 0.1,
       );
     } else {
       // ROAD_EMBED: sink 0.05 mm into base so road bottom never z-fights
@@ -516,7 +520,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       };
       extrudeTerrainSlab(blackAcc, poly,
         (mx, my) => terrainY(mx, my) + ROAD_SLAB,
-        (mx, my) => terrainY(mx, my) - 0.3,  // embed into terrain → eliminates z-fight
+        () => BASE - 0.1,  // solid column from base plate → terrain can't poke through
       );
     } else {
       extrudeSlab(blackAcc, poly, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
@@ -571,7 +575,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       };
       extrudeTerrainSlab(blackAcc, clipped,
         (mx, my) => terrainY(mx, my) + ROAD_SLAB,
-        terrainY,
+        () => BASE - 0.1,  // solid column from base plate → terrain can't poke through
       );
     } else {
       extrudeSlab(blackAcc, clipped, BASE - ROAD_EMBED, ROAD_SLAB + ROAD_EMBED);
