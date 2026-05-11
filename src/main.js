@@ -599,25 +599,30 @@ function initControls() {
   el('test-terrain-enabled').addEventListener('change', e => {
     testTerrainMode = e.target.checked;
     el('test-terrain-options').style.display = testTerrainMode ? '' : 'none';
-    // Mountain View requires terrain — keep it in sync
+    // Mountain View row only visible when terrain is on
+    el('mountain-view-row').style.display = testTerrainMode ? '' : 'none';
+    // If terrain is turned off, also turn off Mountain View
     if (!testTerrainMode) {
       mountainViewMode = false;
-      if (el('mountain-view-enabled')) el('mountain-view-enabled').checked = false;
+      el('mountain-view-enabled').checked = false;
     }
   });
   el('test-terrain-exag').addEventListener('input', () => {
     el('test-terrain-exag-val').textContent = parseFloat(el('test-terrain-exag').value).toFixed(2) + '×';
   });
 
-  // Mountain View toggle (admin + terrain mode)
+  // Mountain View toggle — boosts radius to 5 km for mountain-scale captures
   el('mountain-view-enabled')?.addEventListener('change', e => {
     mountainViewMode = e.target.checked;
-    // Automatically enable real terrain when Mountain View is turned on
-    if (mountainViewMode && !testTerrainMode) {
-      testTerrainMode = true;
-      const terrainCb = el('test-terrain-enabled');
-      if (terrainCb) terrainCb.checked = true;
-      el('test-terrain-options').style.display = '';
+    if (mountainViewMode) {
+      // Bump admin radius slider to 5 km so you capture the whole mountain
+      const slider  = el('admin-radius-slider');
+      const display = el('admin-radius-display');
+      if (slider && parseFloat(slider.value) < 5) {
+        slider.value = '5';
+        if (display) display.textContent = '5.0 km';
+        updateShapeOverlay();
+      }
     }
   });
 
