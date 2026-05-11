@@ -880,7 +880,7 @@ function computeAutoExag(elevGrid, N, hScale) {
   // How many mm this elevation range produces at exag=1
   const naturalHeightMM = elevRange * hScale;
 
-  const TARGET_MM = 4;   // ~1/4 the original target — subtle, printable relief
+  const TARGET_MM = 2;   // subtle printable relief
   const EXAG_MIN  = 0.3; // don't over-flatten real mountains
   const EXAG_MAX  = 3.0; // don't over-exaggerate flat cities
 

@@ -44,8 +44,7 @@ export class SceneManager {
     this.renderer.setSize(w, h);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.setClearColor(0x0d0d0d);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.enabled = false;
     this.renderer.toneMapping       = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
 
@@ -76,15 +75,7 @@ export class SceneManager {
     // Main key light — cool white from top-right
     const key = new THREE.DirectionalLight(0xffffff, 2.0);
     key.position.set(80, 250, 120);
-    key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
-    key.shadow.camera.near = 1;
-    key.shadow.camera.far  = 1000;
-    key.shadow.camera.left = key.shadow.camera.bottom = -MODEL_RADIUS_MM * 2;
-    key.shadow.camera.right = key.shadow.camera.top   =  MODEL_RADIUS_MM * 2;
-    key.shadow.bias = -0.0008;
-    key.shadow.normalBias = 0.025;
-    key.shadow.radius = 4;
+    key.castShadow = false;
     this.scene.add(key);
 
     // Warm fill from opposite side
@@ -107,7 +98,7 @@ export class SceneManager {
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = -0.5;
-    ground.receiveShadow = true;
+    ground.receiveShadow = false;
     this.scene.add(ground);
 
     // Materials
@@ -259,8 +250,8 @@ export class SceneManager {
       const type = obj.userData.featureType || 'base';
       obj.material      = matLib[type] ?? matLib.base;
       obj.renderOrder   = renderOrders[type] ?? 0;
-      obj.castShadow    = (type === 'building');
-      obj.receiveShadow = (type === 'terrain' || type === 'base');
+      obj.castShadow    = false;
+      obj.receiveShadow = false;
     });
   }
 
