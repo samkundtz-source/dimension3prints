@@ -752,7 +752,7 @@ function ptClose(a, b) {
 function dropEnvelopeBuildings(buildings) {
   if (!buildings || buildings.length < 2) return buildings;
 
-  // Pre-compute centroid + bbox + estimated vertical extent for each building.
+  // Pre-compute centroid + bbox for every building.
   const meta = buildings.map(b => {
     let cx = 0, cy = 0;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -762,76 +762,39 @@ function dropEnvelopeBuildings(buildings) {
       if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
     }
     cx /= b.polygon.length; cy /= b.polygon.length;
-    const polyDim = Math.min(maxX - minX, maxY - minY);
-
-    // Quick height read — replicates the simpler branches of parseBuildingHeight
-    // (we don't import buildMap.js here).  Used only for the aspect-ratio
-    // guard, so an approximate value is fine.
-    const t = b.tags || {};
-    let h = 0;
-    if (t.height) {
-      const v = parseFloat(t.height);
-      if (!isNaN(v) && v > 0) h = v;
-    }
-    if (!h && t['building:levels']) {
-      const v = parseFloat(t['building:levels']);
-      if (!isNaN(v) && v > 0) h = v * 3.2;
-    }
-    if (!h) h = 10; // arbitrary default
-    let minH = 0;
-    if (t.min_height) {
-      const v = parseFloat(t.min_height);
-      if (!isNaN(v) && v >= 0) minH = v;
-    }
-    const extentM = Math.max(0.1, h - minH);
-
-    return { ref: b, cx, cy, minX, maxX, minY, maxY, polyDim, extentM };
+    return { ref: b, cx, cy, minX, maxX, minY, maxY,
+             area: (maxX - minX) * (maxY - minY) };
   });
 
-  // Process largest first so nested containers don't accidentally protect
-  // each other (we want the outermost to drop first, then if anything inside
-  // is itself a container it can be considered).  Use bbox area as proxy.
-  const sortedIdx = meta.map((_, i) => i).sort((a, b) => {
-    const aA = (meta[a].maxX - meta[a].minX) * (meta[a].maxY - meta[a].minY);
-    const bA = (meta[b].maxX - meta[b].minX) * (meta[b].maxY - meta[b].minY);
-    return bA - aA;
-  });
-
-  const dropped = new Set();
-
-  for (const i of sortedIdx) {
-    if (dropped.has(i)) continue;
-    const M = meta[i];
-
-    // Aspect-ratio guard.  If the polygon's vertical extent is shorter than
-    // ~0.5x its plan dimension, treat as a horizontal slab — never a
-    // container.  Uses meters for both sides, so a 1 m tall slab over a 70 m
-    // polygon (Eiffel platform) is correctly classified as slab.
-    // polyDim is in model mm; we don't know the m/mm ratio here, but the
-    // vertical extent is in meters and polygon is in mm.  Convert: assume
-    // a 1 km hex (75 mm radius), so 1 mm ≈ 13.3 m.  Approximate enough.
-    const polyDimM = M.polyDim * (1000 / 75); // mm → real metres rough estimate
-    if (M.extentM < polyDimM * 0.5) continue; // horizontal slab — skip
-
-    // Look for any non-dropped, smaller building whose centroid is inside us
-    for (const j of sortedIdx) {
-      if (j === i || dropped.has(j)) continue;
-      const N = meta[j];
-      // Quick reject if other's centroid is outside our bbox
-      if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
-      // Skip if j's polygon is the same size or larger than i's (not contained)
-      const iArea = (M.maxX - M.minX) * (M.maxY - M.minY);
-      const jArea = (N.maxX - N.minX) * (N.maxY - N.minY);
-      if (jArea >= iArea * 0.95) continue;
-      // Full point-in-polygon test
-      if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
-        dropped.add(i);
-        break;
-      }
-    }
+  // A building is a "container candidate" only if:
+  //   1. It is NOT a building:part (envelope of the whole building), OR
+  //   2. It IS a building:part but tagged 'tower' / 'yes' / no value
+  //      (these are outline-style parts that span the full structure;
+  //      'column', 'floor', 'wall', 'roof' etc. are detail parts and
+  //      should always render regardless of containment).
+  function isContainerCandidate(b) {
+    if (!b.isBuildingPart) return true;
+    const t = b.tags?.['building:part'];
+    return t === 'tower' || t === 'yes' || !t;
   }
 
-  return buildings.filter((_, idx) => !dropped.has(idx));
+  return buildings.filter((b, idx) => {
+    if (!isContainerCandidate(b)) return true; // detail parts always kept
+
+    const M = meta[idx];
+
+    // Drop only if some smaller-area building's centroid lies inside our
+    // polygon.  The "smaller" guard prevents two equally-sized overlapping
+    // polygons from mutually killing each other.
+    for (let j = 0; j < buildings.length; j++) {
+      if (j === idx) continue;
+      const N = meta[j];
+      if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
+      if (N.area >= M.area * 0.95) continue;
+      if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) return false;
+    }
+    return true;
+  });
 }
 
 // ─── Coastline → sea-polygon construction ─────────────────────────────────────
