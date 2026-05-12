@@ -609,7 +609,12 @@ function buildOverpassQuery(south, west, north, east) {
   return `[out:json][timeout:20][maxsize:33554432];
 (
   way["building"](${bb});
-  way["building:part"](${bb});
+  // building:part NOT fetched.  After many iterations, parts caused more
+  // problems than they solved: overlap with main, inconsistent rendering
+  // depending on how completely an OSM contributor modelled the structure,
+  // and floating sub-elements when supports were missing.  For our city-print
+  // use case the main outline + landmark presets give a cleaner, more
+  // consistent result.
   relation["building"](${bb});
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   way["natural"~"^(water|wetland)$"](${bb});

@@ -45,7 +45,7 @@ function buildDirectQuery(south, west, north, east) {
   return `[out:json][timeout:30][maxsize:33554432];
 (
   way["building"](${bb});
-  way["building:part"](${bb});
+  // building:part NOT fetched — see comment in worker/index.js
   relation["building"](${bb});
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   way["natural"~"^(water|wetland)$"](${bb});
@@ -258,13 +258,10 @@ export function parseOSMData(json, projection, hexVertices) {
     }
   }
 
-  // ── 4b. Drop envelope buildings (OSM 3D rendering convention) ─────────────
-  // When a building=* polygon contains building:part=* polygons inside it, the
-  // outer building is just a 2D footprint envelope — the parts represent the
-  // actual 3D structure (legs, platforms, spire for Eiffel Tower; petal wings
-  // for Burj Khalifa).  Rendering the envelope at full height extrudes a
-  // featureless block that visually erases the parts.  Standard OSM 3D
-  // renderers (F4Map, OSM2World) skip the envelope when parts exist.
+  // ── 4b. Building post-processing ──────────────────────────────────────────
+  // With building:part no longer fetched (see Overpass query comment),
+  // there's nothing to "drop envelope around".  We keep this hook as a no-op
+  // so future additions (e.g. landmark dedup) have a clean place to land.
   features.buildings = dropEnvelopeBuildings(features.buildings);
 
   // ── 5. Build sea polygons from coastlines ─────────────────────────────────
@@ -338,10 +335,9 @@ const GREEN_NATURAL = new Set(['wood','scrub','grassland','heath']);
 function classifyTags(tags) {
   if (!tags) return null;
 
-  // Both `building` and `building:part` map to 'building' — building:parts
-  // carry a flag (set in addFeature) so we can later drop the outer envelope
-  // when sub-parts exist (OSM 3D rendering convention).
-  if (tags.building || tags['building:part']) return 'building';
+  // Only `building=*` is rendered.  building:part is intentionally ignored
+  // (see comment in worker/index.js Overpass query).
+  if (tags.building) return 'building';
 
   if (tags.highway) {
     if (ROAD_TYPES.has(tags.highway)) return 'road';

@@ -285,15 +285,35 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
 
   let buildingCount = 0;
   let landmarkCount = 0, tallTowerCount = 0, standardCount = 0;
-  // Landmark dedup: each known landmark preset fires only ONCE per unique
-  // preset name within the model.  OSM frequently models a landmark with
-  // many polygons (envelope + multiple building:parts) all carrying the
-  // landmark's name/wikidata; without dedup the preset would render that
-  // many overlapping iconic shapes, producing visual mess.
-  const renderedLandmarks = new Set();
+
+  // ── Landmark representative selection ──────────────────────────────────────
+  // OSM (and Overture) often have multiple polygons sharing a landmark's
+  // identifying tags (name, wikidata, osm-id).  The first polygon in
+  // iteration order can be a tiny stub which would generate a tiny iconic
+  // shape if the preset fires on it.  Pre-scan to find the LARGEST polygon
+  // for each landmark preset and use that as the representative.  All other
+  // landmark-tagged polygons of the same preset are skipped.
+  const landmarkRepIdx   = new Map();   // presetName → buildingFootprints index
+  const landmarkRepArea  = new Map();   // presetName → that polygon's area
+  if (!mountainView) {
+    for (let i = 0; i < buildingFootprints.length; i++) {
+      const bf = buildingFootprints[i];
+      const ident = landmarkRegistry.identify(bf.tags, bf.osmId || '');
+      if (ident.tier === 'landmark' && ident.presetName) {
+        const area = Math.abs(signedArea2D(bf.polygon));
+        if (area > (landmarkRepArea.get(ident.presetName) || 0)) {
+          landmarkRepArea.set(ident.presetName, area);
+          landmarkRepIdx.set(ident.presetName, i);
+        }
+      }
+    }
+  }
+
   onProgress?.('Extruding buildings…', 74);
   // Mountain View mode: skip all buildings — only terrain, roads and rivers.
+  let _bfIdx = -1;
   for (const bf of (mountainView ? [] : buildingFootprints)) {
+    _bfIdx++;
     // Skip buildings too small to print — use area so narrow row-houses aren't dropped
     if (minBBoxDimension(bf.polygon) < MIN_BLDG_DIM) continue;
     if (Math.abs(signedArea2D(bf.polygon)) < 0.3) continue; // < 0.3mm² is sub-nozzle
@@ -342,11 +362,11 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
 
       if (tierResult.tier === 'landmark' && tierResult.presetName) {
         // ── Tier 1: Landmark with preset geometry ────────────────────
-        // Dedup: if we've already rendered this landmark's preset (from a
-        // sibling polygon — main building, building:part, etc.), skip.
-        // The preset is a synthesised iconic shape; rendering it twice
-        // produces overlapping geometry / Z-fighting.
-        if (renderedLandmarks.has(tierResult.presetName)) {
+        // Only render the representative (largest polygon for this preset);
+        // skip other landmark-tagged polygons.  Without this, OSM's
+        // multiple polygons per landmark (or Overture's duplicates) would
+        // each fire the preset, stacking iconic shapes on top of each other.
+        if (landmarkRepIdx.get(tierResult.presetName) !== _bfIdx) {
           continue;
         }
         landmarkCtx.acc = buildingAcc;
@@ -355,7 +375,6 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
           collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
           standardCount++;
         } else {
-          renderedLandmarks.add(tierResult.presetName);
           landmarkCount++;
         }
       } else if (tierResult.tier === 'tall-tower') {
