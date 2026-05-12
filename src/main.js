@@ -304,7 +304,11 @@ async function generate() {
 
     // Show stats
     updateModelStats(modelStats);
-    setStatus(`Done — ${modelStats.buildings.toLocaleString()} buildings · ${modelStats.roads.toLocaleString()} roads`, 100);
+    if (modelStats.isAllWater) {
+      setStatus('Done — this area is open water (no land features).  Try a location closer to shore.', 100);
+    } else {
+      setStatus(`Done — ${modelStats.buildings.toLocaleString()} buildings · ${modelStats.roads.toLocaleString()} roads`, 100);
+    }
   } catch (err) {
     // Only show error if this is still the active run
     if (thisRunId === generateId) {

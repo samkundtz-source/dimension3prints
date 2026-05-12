@@ -613,7 +613,23 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
 
   // ── Build combined meshes ──────────────────────────────────────────────────
   onProgress?.('Combining geometry…', 92);
-  const baseMesh = baseAcc.build('base');
+
+  // All-water detection: OSM does not tag oceans/seas as natural=water (they
+  // are the negative space outside coastline ways), so a location centred in
+  // open water returns essentially no features.  In that case, color the base
+  // plate as water instead of leaving it as the default land/white.
+  const totalLandFeatures =
+    (features.buildings?.length || 0) +
+    (features.roads?.length     || 0) +
+    (features.paths?.length     || 0) +
+    (features.parks?.length     || 0) +
+    (features.landuse?.length   || 0);
+  const totalWaterFeatures =
+    (features.water?.length     || 0) +
+    (features.waterways?.length || 0);
+  const isAllWater = totalLandFeatures === 0 && totalWaterFeatures <= 2;
+
+  const baseMesh = baseAcc.build(isAllWater ? 'water' : 'base');
   const bldgMesh = buildingAcc.build('building');
   const roadMesh = blackAcc.build('road');
 
@@ -627,6 +643,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     stats: {
       buildings: buildingCount, roads: roadCount, water: waterPolys.length + waterwayCount,
       landmarks: landmarkCount, tallTowers: tallTowerCount,
+      isAllWater,
     },
   };
 }
