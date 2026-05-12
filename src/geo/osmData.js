@@ -492,24 +492,29 @@ export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices,
 
       const osmMatches = findOsmInBbox(minX, minY, maxX, maxY);
 
-      // Build merged tags.  Overture's class/height/levels/name win, but if
-      // Overture is missing height info we fall back to the matched OSM's so
-      // we don't lose existing height data for buildings Overture has but
-      // didn't measure.
+      // Build merged tags.  Overture's class/height/levels/name win, but we
+      // carry over critical OSM identifiers (wikidata, wikipedia, name) and
+      // the OSM osmId itself so the landmark registry can still recognise
+      // famous buildings like Burj Khalifa (Q12495 / way/263884958) and apply
+      // their preset geometry — otherwise replacing OSM with Overture's
+      // anonymous polygon would lose every landmark identification.
       const tags = { building: ovrClass || 'yes' };
       if (ovrHeight) tags.height = ovrHeight;
       if (ovrLevels) tags['building:levels'] = ovrLevels;
       if (ovrName) tags.name = ovrName;
-      if (!tags.height && !tags['building:levels']) {
-        for (const m of osmMatches) {
-          if (m.ref.tags?.height)              { tags.height = m.ref.tags.height; break; }
-          if (m.ref.tags?.['building:levels']) { tags['building:levels'] = m.ref.tags['building:levels']; break; }
+      let inheritedOsmId = null;
+      // Walk matches in order — for tags that carry over, the FIRST OSM
+      // building with the value wins.
+      for (const m of osmMatches) {
+        const t = m.ref.tags || {};
+        if (!tags.height && !tags['building:levels']) {
+          if (t.height)              tags.height = t.height;
+          if (t['building:levels'])  tags['building:levels'] = t['building:levels'];
         }
-      }
-      if (!tags.name) {
-        for (const m of osmMatches) {
-          if (m.ref.tags?.name) { tags.name = m.ref.tags.name; break; }
-        }
+        if (!tags.name && t.name)             tags.name = t.name;
+        if (!tags.wikidata && t.wikidata)     tags.wikidata = t.wikidata;
+        if (!tags.wikipedia && t.wikipedia)   tags.wikipedia = t.wikipedia;
+        if (!inheritedOsmId && m.ref.osmId)   inheritedOsmId = m.ref.osmId;
       }
 
       // Mark all matched OSM buildings for removal.  Multiple Overture polys
@@ -522,7 +527,14 @@ export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices,
       const clipped = clipToHex(ccw, hexVertices);
       if (!clipped || clipped.length < 3) continue;
 
-      overturePolys.push({ polygon: clipped, holes: [], tags, osmId: feat.id || 'overture' });
+      // Use the inherited OSM osmId if any, so landmark-by-way-id matching
+      // continues to work (e.g. way/263884958 → burjKhalifa preset).
+      overturePolys.push({
+        polygon: clipped,
+        holes:   [],
+        tags,
+        osmId:   inheritedOsmId || feat.id || 'overture',
+      });
     }
   }
 
