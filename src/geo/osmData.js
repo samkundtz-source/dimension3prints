@@ -530,114 +530,138 @@ function ptClose(a, b) {
 
 // ─── Coastline → sea-polygon construction ─────────────────────────────────────
 //
-// OSM coastlines are open polylines (LAND on LEFT, SEA on RIGHT, with respect
-// to node order).  We can't reliably "close" them into polygons via the hex
-// boundary because winding direction depends on which way the chain enters
-// vs exits the hex — the previous attempt got that wrong.
+// OSM coastlines are open polylines: LAND on LEFT, SEA on RIGHT relative to
+// node order.  Each chain crossing the hex needs to be "closed" with hex
+// boundary edges to form a sea polygon.  The right closure direction (CW vs
+// CCW around the hex) depends on which way the chain enters and exits, and
+// guessing wrong encloses LAND instead of sea (the bug from the very first
+// coastline attempt).
 //
-// Instead: rasterise the hex into a grid, classify each cell against the
-// nearest coastline segment using the signed cross product, then collapse
-// consecutive sea cells in each row into a single rectangular water polygon.
-// This is convention-direction-agnostic (the sign of the cross product picks
-// the correct side every time) and handles complex coastlines (peninsulas,
-// estuaries, multiple disconnected chains) automatically.
+// Solution: build BOTH candidate closures, then pick the one whose interior
+// is the sea side of the chain.  At the chain's midpoint, the perpendicular-
+// right of the tangent points into the sea (OSM convention, Y-up math
+// coordinates).  Sample a point a few mm in that direction; the candidate
+// polygon that contains it is the sea polygon.  Robust to any winding
+// without hard-coded direction assumptions.
+//
+// Result: SMOOTH water edges that follow the actual OSM coastline geometry,
+// not stair-stepped grid cells.
 
 function buildSeaPolysFromCoastlines(coastlines, hexVerts) {
-  // Stitch coastline ways into longer chains where they share endpoints
   const chains = mergeWaysIntoRings(coastlines).filter(c => c.length >= 2);
   if (chains.length === 0) return [];
 
-  // Precompute flat list of segments with bbox + cross-product setup
-  const segs = [];
-  for (const chain of chains) {
-    for (let k = 0; k < chain.length - 1; k++) {
-      const a = chain[k], b = chain[k + 1];
-      const sx = b.x - a.x, sy = b.y - a.y;
-      const len2 = sx * sx + sy * sy;
-      if (len2 < 1e-10) continue;
-      segs.push({ ax: a.x, ay: a.y, sx, sy, len2 });
-    }
-  }
-  if (segs.length === 0) return [];
-
-  // Hex bounding box
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-  for (const v of hexVerts) {
-    if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
-    if (v.y < minY) minY = v.y; if (v.y > maxY) maxY = v.y;
-  }
-
-  // 64×64 grid → ~16 mm cells in a 1 km hex.  Fine enough for clean prints,
-  // coarse enough that we generate ≤ ~64 strip polygons total.
-  const GRID = 64;
-  const dx = (maxX - minX) / GRID;
-  const dy = (maxY - minY) / GRID;
-  const cells = new Uint8Array(GRID * GRID); // 1 = sea
-
-  for (let j = 0; j < GRID; j++) {
-    const cy = minY + (j + 0.5) * dy;
-    for (let i = 0; i < GRID; i++) {
-      const cx = minX + (i + 0.5) * dx;
-      if (!pointInHexSimple({ x: cx, y: cy }, hexVerts)) continue;
-
-      // Find nearest segment and remember its signed cross product
-      let bestD2 = Infinity;
-      let bestCross = 0;
-      for (const s of segs) {
-        let t = ((cx - s.ax) * s.sx + (cy - s.ay) * s.sy) / s.len2;
-        if (t < 0) t = 0; else if (t > 1) t = 1;
-        const qx = s.ax + t * s.sx;
-        const qy = s.ay + t * s.sy;
-        const d2 = (cx - qx) * (cx - qx) + (cy - qy) * (cy - qy);
-        if (d2 < bestD2) {
-          bestD2 = d2;
-          // Cross product (b-a) × (p-a).  Math convention (Y up):
-          //   > 0 → P on LEFT of chain direction → LAND
-          //   < 0 → P on RIGHT → SEA
-          bestCross = s.sx * (cy - s.ay) - s.sy * (cx - s.ax);
-        }
-      }
-      if (bestCross < 0) cells[j * GRID + i] = 1;
-    }
-  }
-
-  // Run-length encode each row into rectangular strips.  Adjacent sea cells
-  // in the same row become one polygon, drastically cutting polygon count.
   const polys = [];
-  for (let j = 0; j < GRID; j++) {
-    let i = 0;
-    while (i < GRID) {
-      if (cells[j * GRID + i] !== 1) { i++; continue; }
-      let end = i + 1;
-      while (end < GRID && cells[j * GRID + end] === 1) end++;
 
-      const x0 = minX + i * dx;
-      const x1 = minX + end * dx;
-      const y0 = minY + j * dy;
-      const y1 = minY + (j + 1) * dy;
+  for (const chain of chains) {
+    const first = chain[0];
+    const last  = chain[chain.length - 1];
 
-      const rect = [
-        { x: x0, y: y0 },
-        { x: x1, y: y0 },
-        { x: x1, y: y1 },
-        { x: x0, y: y1 },
-      ];
+    // Closed chain (island ring): LAND inside, SEA outside.  Proper handling
+    // would render the hex with the island as a polygon hole; skip for now.
+    // Tiny islands inside larger sea regions just appear submerged, which is
+    // acceptable at the scales we print.
+    if (ptClose(first, last)) continue;
 
-      const ccw     = ensureCCW(rect);
-      const clipped = clipToHex(ccw, hexVerts);
-      if (clipped && clipped.length >= 3) {
-        polys.push({
-          polygon: clipped,
-          holes:   [],
-          tags:    { natural: 'water', water: 'sea' },
-          osmId:   'coastline-derived',
-        });
-      }
-      i = end;
-    }
+    // Sea-direction sample point: perpendicular-right of the tangent at the
+    // chain midpoint, offset 3 mm into the sea.  Math conv (Y up): perp-right
+    // of vector (tx,ty) is (ty,-tx).
+    const midI = Math.floor(chain.length / 2);
+    const a = chain[Math.max(0, midI - 1)];
+    const b = chain[Math.min(chain.length - 1, midI + 1)];
+    const tx = b.x - a.x, ty = b.y - a.y;
+    const tlen = Math.hypot(tx, ty);
+    if (tlen < 1e-6) continue;
+    const OFFSET_MM = 3;
+    const seaPt = {
+      x: chain[midI].x + ( ty / tlen) * OFFSET_MM,
+      y: chain[midI].y + (-tx / tlen) * OFFSET_MM,
+    };
+
+    // Build both candidate closures and pick the one containing seaPt
+    const candA = closeChainWithHex(chain, hexVerts, 'ccw');
+    const candB = closeChainWithHex(chain, hexVerts, 'cw');
+    let chosen = null;
+    if (candA && pointInPolygonGeneral(seaPt, candA)) chosen = candA;
+    else if (candB && pointInPolygonGeneral(seaPt, candB)) chosen = candB;
+    if (!chosen) continue;
+
+    const ccw     = ensureCCW(deduplicateRing(chosen));
+    const clipped = clipToHex(ccw, hexVerts);
+    if (!clipped || clipped.length < 3) continue;
+
+    polys.push({
+      polygon: clipped,
+      holes:   [],
+      tags:    { natural: 'water', water: 'sea' },
+      osmId:   'coastline-derived',
+    });
   }
 
   return polys;
+}
+
+// Walk the hex boundary from chain.last back to chain.first in the given
+// direction, picking up corner vertices along the way.  Returns a closed
+// polygon: chain points + hex corners + back to chain.first.
+function closeChainWithHex(chain, hexVerts, direction) {
+  const N = hexVerts.length;
+  const first = chain[0];
+  const last  = chain[chain.length - 1];
+
+  const startLoc = locateOnHexEdge(first, hexVerts);
+  const endLoc   = locateOnHexEdge(last,  hexVerts);
+
+  const corners = [];
+  if (direction === 'ccw') {
+    let steps = (startLoc.edge - endLoc.edge + N) % N;
+    if (steps === 0 && endLoc.t >= startLoc.t) steps = N;
+    for (let s = 0; s < steps; s++) {
+      corners.push(hexVerts[(endLoc.edge + 1 + s) % N]);
+    }
+  } else {
+    let steps = (endLoc.edge - startLoc.edge + N) % N;
+    if (steps === 0 && startLoc.t >= endLoc.t) steps = N;
+    for (let s = 0; s < steps; s++) {
+      corners.push(hexVerts[(endLoc.edge - s + N) % N]);
+    }
+  }
+
+  return [...chain, ...corners, first];
+}
+
+// Project a point onto the nearest hex edge; return { edge, t } where edge
+// is the CCW index of that edge and t ∈ [0,1] is the parameter along it.
+function locateOnHexEdge(pt, hexVerts) {
+  const N = hexVerts.length;
+  let bestEdge = 0, bestT = 0, bestDist = Infinity;
+  for (let i = 0; i < N; i++) {
+    const a = hexVerts[i], b = hexVerts[(i + 1) % N];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 < 1e-12) continue;
+    let t = ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / len2;
+    if (t < 0) t = 0; else if (t > 1) t = 1;
+    const qx = a.x + t * dx - pt.x;
+    const qy = a.y + t * dy - pt.y;
+    const dist = qx * qx + qy * qy;
+    if (dist < bestDist) { bestDist = dist; bestEdge = i; bestT = t; }
+  }
+  return { edge: bestEdge, t: bestT };
+}
+
+// General (non-convex) point-in-polygon via even-odd ray casting.
+function pointInPolygonGeneral(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    if (((yi > pt.y) !== (yj > pt.y)) &&
+        (pt.x < (xj - xi) * (pt.y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
 }
 
 /** Convex polygon point-in-polygon (CCW). */
