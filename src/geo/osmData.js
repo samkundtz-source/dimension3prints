@@ -732,41 +732,106 @@ function ptClose(a, b) {
   return Math.abs(a.x - b.x) < 0.05 && Math.abs(a.y - b.y) < 0.05;
 }
 
-// ─── Envelope-building dropper (OSM 3D rendering convention) ─────────────────
-// For each non-part building, check if any building:part centroid is inside
-// its polygon.  If yes, the non-part is just a 2D envelope and should be
-// dropped — the parts will render the actual 3D structure.
+// ─── Container-building dropper (OSM 3D rendering convention) ────────────────
+// Universal version: drop any building (main OR part) that ACTS AS A CONTAINER
+// for other buildings — i.e. its polygon contains other buildings' centroids
+// AND its vertical extent is taller than it is wide (ruling out horizontal
+// platform slabs that legitimately overlap their inner columns).
+//
+// This handles three cases the user reported:
+//   1. building=* envelope around building:parts (Eiffel outer outline)
+//   2. building:part=* "tower" outline polygon that contains other parts
+//      (e.g. Eiffel might be modelled with a clover-shaped part spanning the
+//      full 0→324 m, alongside the leg/platform/spire parts)
+//   3. Burj Khalifa's outer Y-shape envelope around 3 wing parts
+//
+// Aspect-ratio guard preserves horizontal slabs (Eiffel platforms tagged
+// min_height=57, height=58 are 1 m tall over a ~70 m polygon — clearly a
+// slab, not a container).
 
 function dropEnvelopeBuildings(buildings) {
   if (!buildings || buildings.length < 2) return buildings;
 
-  const parts = buildings.filter(b => b.isBuildingPart);
-  if (parts.length === 0) return buildings;
-
-  // Pre-compute part centroids
-  const partCentroids = parts.map(p => {
+  // Pre-compute centroid + bbox + estimated vertical extent for each building.
+  const meta = buildings.map(b => {
     let cx = 0, cy = 0;
-    for (const pt of p.polygon) { cx += pt.x; cy += pt.y; }
-    return { cx: cx / p.polygon.length, cy: cy / p.polygon.length };
-  });
-
-  return buildings.filter(b => {
-    if (b.isBuildingPart) return true;
-
-    // Compute this main's bbox for fast-reject
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
     for (const p of b.polygon) {
+      cx += p.x; cy += p.y;
       if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
       if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
     }
+    cx /= b.polygon.length; cy /= b.polygon.length;
+    const polyDim = Math.min(maxX - minX, maxY - minY);
 
-    // Drop this main if any part centroid lies inside its polygon
-    for (const c of partCentroids) {
-      if (c.cx < minX || c.cx > maxX || c.cy < minY || c.cy > maxY) continue;
-      if (pointInPolygonGeneral({ x: c.cx, y: c.cy }, b.polygon)) return false;
+    // Quick height read — replicates the simpler branches of parseBuildingHeight
+    // (we don't import buildMap.js here).  Used only for the aspect-ratio
+    // guard, so an approximate value is fine.
+    const t = b.tags || {};
+    let h = 0;
+    if (t.height) {
+      const v = parseFloat(t.height);
+      if (!isNaN(v) && v > 0) h = v;
     }
-    return true;
+    if (!h && t['building:levels']) {
+      const v = parseFloat(t['building:levels']);
+      if (!isNaN(v) && v > 0) h = v * 3.2;
+    }
+    if (!h) h = 10; // arbitrary default
+    let minH = 0;
+    if (t.min_height) {
+      const v = parseFloat(t.min_height);
+      if (!isNaN(v) && v >= 0) minH = v;
+    }
+    const extentM = Math.max(0.1, h - minH);
+
+    return { ref: b, cx, cy, minX, maxX, minY, maxY, polyDim, extentM };
   });
+
+  // Process largest first so nested containers don't accidentally protect
+  // each other (we want the outermost to drop first, then if anything inside
+  // is itself a container it can be considered).  Use bbox area as proxy.
+  const sortedIdx = meta.map((_, i) => i).sort((a, b) => {
+    const aA = (meta[a].maxX - meta[a].minX) * (meta[a].maxY - meta[a].minY);
+    const bA = (meta[b].maxX - meta[b].minX) * (meta[b].maxY - meta[b].minY);
+    return bA - aA;
+  });
+
+  const dropped = new Set();
+
+  for (const i of sortedIdx) {
+    if (dropped.has(i)) continue;
+    const M = meta[i];
+
+    // Aspect-ratio guard.  If the polygon's vertical extent is shorter than
+    // ~0.5x its plan dimension, treat as a horizontal slab — never a
+    // container.  Uses meters for both sides, so a 1 m tall slab over a 70 m
+    // polygon (Eiffel platform) is correctly classified as slab.
+    // polyDim is in model mm; we don't know the m/mm ratio here, but the
+    // vertical extent is in meters and polygon is in mm.  Convert: assume
+    // a 1 km hex (75 mm radius), so 1 mm ≈ 13.3 m.  Approximate enough.
+    const polyDimM = M.polyDim * (1000 / 75); // mm → real metres rough estimate
+    if (M.extentM < polyDimM * 0.5) continue; // horizontal slab — skip
+
+    // Look for any non-dropped, smaller building whose centroid is inside us
+    for (const j of sortedIdx) {
+      if (j === i || dropped.has(j)) continue;
+      const N = meta[j];
+      // Quick reject if other's centroid is outside our bbox
+      if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
+      // Skip if j's polygon is the same size or larger than i's (not contained)
+      const iArea = (M.maxX - M.minX) * (M.maxY - M.minY);
+      const jArea = (N.maxX - N.minX) * (N.maxY - N.minY);
+      if (jArea >= iArea * 0.95) continue;
+      // Full point-in-polygon test
+      if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
+        dropped.add(i);
+        break;
+      }
+    }
+  }
+
+  return buildings.filter((_, idx) => !dropped.has(idx));
 }
 
 // ─── Coastline → sea-polygon construction ─────────────────────────────────────
