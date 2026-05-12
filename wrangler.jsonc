@@ -18,7 +18,8 @@
     { "binding": "SETTINGS", "id": "59a9fc521dc9450b934a359acafb9bc1" }
   ],
   "r2_buckets": [
-    { "binding": "OVERTURE_WATER", "bucket_name": "overture-water" }
+    { "binding": "OVERTURE_WATER",     "bucket_name": "overture-water"     },
+    { "binding": "OVERTURE_BUILDINGS", "bucket_name": "overture-buildings" }
     // To add MS Buildings later: create the bucket first
     //   wrangler r2 bucket create ms-buildings
     // then add the binding here:
