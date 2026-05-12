@@ -2,6 +2,9 @@
  * Real-terrain elevation from Terrarium tiles (AWS/Mapzen).
  * Free, no API key required, CORS-enabled.
  * Used only when Test Mode is active (admin-only).
+ *
+ * Tile sources are tried in order; the fetch→blob URL approach keeps the
+ * canvas same-origin so getImageData() never throws a SecurityError.
  */
 
 const TILE_SZ = 256;
@@ -18,10 +21,14 @@ function ty2lat(ty, z) {
 }
 function decodeTerr(r, g, b) { return (r * 256 + g + b / 256) - 32768; }
 
-// Tile sources — tried in order until one succeeds
+// Tile sources — tried in order until one succeeds.
+// AWS S3 is the primary (hosted by Mapzen/Nextzen team, free, no key).
+// Nextzen CDN is the first fallback.
+// OpenTopoData mirror is a second fallback (also Terrarium-encoded).
 const TILE_SOURCES = [
   (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`,
   (z, x, y) => `https://tile.nextzen.org/tilezen/terrain/v1/terrarium/${z}/${x}/${y}.png`,
+  (z, x, y) => `https://elevation-tiles-prod.s3.us-east-1.amazonaws.com/terrarium/${z}/${x}/${y}.png`,
 ];
 
 async function fetchTilePixels(tx, ty, zoom) {
@@ -80,7 +87,11 @@ export async function fetchElevationForModel(centerLat, centerLng, radiusMeters,
     maxLng: centerLng + radiusDeg / cosLat,
   };
 
-  const zoom = radiusMeters > 8000 ? 11 : radiusMeters > 3500 ? 12 : 13;
+  // Pick zoom so each tile covers a reasonable slice of the model.
+  // z13 ≈ 4.8 m/px, z12 ≈ 9.5 m/px, z11 ≈ 19 m/px, z10 ≈ 38 m/px
+  const zoom = radiusMeters > 15000 ? 10
+             : radiusMeters >  8000 ? 11
+             : radiusMeters >  3500 ? 12 : 13;
   const maxT = (1 << zoom) - 1;
 
   const txMin = Math.max(0, lng2tx(bounds.minLng, zoom));

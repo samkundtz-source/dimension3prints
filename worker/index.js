@@ -536,12 +536,14 @@ function buildOverpassQuery(south, west, north, east) {
   way["building:part"](${bb});
   relation["building"](${bb});
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
-  way["natural"="water"](${bb});
+  way["natural"~"^(water|wetland|bay|strait|lagoon)$"](${bb});
   way["water"](${bb});
   way["waterway"="riverbank"](${bb});
+  way["waterway"="dock"](${bb});
   way["waterway"~"^(river|canal|stream|drain|ditch|tidal_channel)$"](${bb});
-  way["landuse"="reservoir"](${bb});
+  way["landuse"~"^(reservoir|basin)$"](${bb});
   relation["natural"="water"](${bb});
+  relation["waterway"="riverbank"](${bb});
   way["leisure"~"^(park|garden|nature_reserve|golf_course|pitch|playground|common)$"](${bb});
   relation["leisure"~"^(park|nature_reserve|garden)$"](${bb});
   way["landuse"~"^(park|forest|grass|meadow|recreation_ground|village_green|cemetery|allotments|residential|commercial|industrial|retail|mixed|civic)$"](${bb});

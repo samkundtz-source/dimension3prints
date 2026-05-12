@@ -48,12 +48,14 @@ function buildDirectQuery(south, west, north, east) {
   way["building:part"](${bb});
   relation["building"](${bb});
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
-  way["natural"="water"](${bb});
+  way["natural"~"^(water|wetland|bay|strait|lagoon)$"](${bb});
   way["water"](${bb});
   way["waterway"="riverbank"](${bb});
+  way["waterway"="dock"](${bb});
   way["waterway"~"^(river|canal|stream|drain|ditch|tidal_channel)$"](${bb});
-  way["landuse"="reservoir"](${bb});
+  way["landuse"~"^(reservoir|basin)$"](${bb});
   relation["natural"="water"](${bb});
+  relation["waterway"="riverbank"](${bb});
   way["leisure"~"^(park|garden|nature_reserve|golf_course|pitch|playground|common)$"](${bb});
   relation["leisure"~"^(park|nature_reserve|garden)$"](${bb});
   way["landuse"~"^(park|forest|grass|meadow|recreation_ground|village_green|cemetery|allotments|residential|commercial|industrial|retail|mixed|civic)$"](${bb});
@@ -322,6 +324,7 @@ function classifyTags(tags) {
 
   if (tags.natural === 'water' || tags.water || tags.landuse === 'reservoir' ||
       tags.landuse === 'basin' || tags.natural === 'wetland' ||
+      tags.natural === 'bay' || tags.natural === 'strait' || tags.natural === 'lagoon' ||
       tags.waterway === 'riverbank' || tags.waterway === 'dock') {
     return 'water';
   }
@@ -431,136 +434,6 @@ export function parseMSBuildings(geojsonFeatures, projection, hexVertices, exist
     }
   }
   return buildings;
-}
-
-// ─── Elevation — Terrarium tile-based (AWS/Mapzen) ───────────────────────────
-//
-// Each tile is a 256×256 PNG where every pixel encodes elevation via:
-//   elevation (m) = R×256 + G + B/256 − 32768
-//
-// Tiles are served free, no API key, from AWS S3. At zoom 12 each tile
-// covers ~2.4km and has ~9.5 m/pixel — far better than point APIs.
-
-const TERRARIUM_BASE = 'https://s3.amazonaws.com/elevation-tiles-prod/terrarium';
-const TILE_SZ = 256;
-
-function pickZoom(radiusMeters) {
-  if (radiusMeters <=  1500) return 13; // ~4.8 m/px
-  if (radiusMeters <=  3500) return 12; // ~9.5 m/px
-  if (radiusMeters <=  7000) return 11; // ~19 m/px
-  return 10;                            // ~38 m/px
-}
-
-function globalPx(lat, lng, zoom) {
-  const n   = Math.pow(2, zoom) * TILE_SZ;
-  const x   = (lng + 180) / 360 * n;
-  const lr  = lat * Math.PI / 180;
-  const y   = (1 - Math.log(Math.tan(lr) + 1 / Math.cos(lr)) / Math.PI) / 2 * n;
-  return { x, y };
-}
-
-async function fetchTilePixels(url) {
-  const resp = await fetch(url);
-  if (!resp.ok) return null;
-  const blob = await resp.blob();
-  try {
-    const bmp    = await createImageBitmap(blob);
-    const canvas = new OffscreenCanvas(TILE_SZ, TILE_SZ);
-    const ctx    = canvas.getContext('2d');
-    ctx.drawImage(bmp, 0, 0, TILE_SZ, TILE_SZ);
-    return ctx.getImageData(0, 0, TILE_SZ, TILE_SZ).data;
-  } catch {
-    const canvas = document.createElement('canvas');
-    canvas.width = canvas.height = TILE_SZ;
-    const ctx = canvas.getContext('2d');
-    const img = await new Promise((res, rej) => {
-      const im = new Image();
-      im.crossOrigin = 'anonymous';
-      im.onload = () => res(im);
-      im.onerror = rej;
-      im.src = URL.createObjectURL(blob);
-    });
-    ctx.drawImage(img, 0, 0, TILE_SZ, TILE_SZ);
-    return ctx.getImageData(0, 0, TILE_SZ, TILE_SZ).data;
-  }
-}
-
-export async function fetchElevation(centerLat, centerLng, radiusMeters, N, onProgress) {
-  const zoom  = pickZoom(radiusMeters);
-  const cPx   = globalPx(centerLat, centerLng, zoom);
-  const mppx  = (156543.03 * Math.cos(centerLat * Math.PI / 180)) / Math.pow(2, zoom);
-  const rPx   = radiusMeters / mppx;
-
-  const minTX = Math.floor((cPx.x - rPx) / TILE_SZ);
-  const maxTX = Math.floor((cPx.x + rPx) / TILE_SZ);
-  const minTY = Math.floor((cPx.y - rPx) / TILE_SZ);
-  const maxTY = Math.floor((cPx.y + rPx) / TILE_SZ);
-
-  const tileList = [];
-  for (let ty = minTY; ty <= maxTY; ty++)
-    for (let tx = minTX; tx <= maxTX; tx++)
-      tileList.push({ tx, ty });
-
-  onProgress?.(`Fetching ${tileList.length} terrain tile${tileList.length > 1 ? 's' : ''}…`, 38);
-
-  const tileMap = {};
-  await Promise.all(tileList.map(async ({ tx, ty }) => {
-    const url = `${TERRARIUM_BASE}/${zoom}/${tx}/${ty}.png`;
-    try {
-      const data = await fetchTilePixels(url);
-      if (data) tileMap[`${tx},${ty}`] = data;
-    } catch { /* ocean / no-data tile — leave missing */ }
-  }));
-
-  onProgress?.('Processing elevation…', 52);
-
-  function pixElev(gxi, gyi) {
-    const tx   = Math.floor(gxi / TILE_SZ);
-    const ty   = Math.floor(gyi / TILE_SZ);
-    const data = tileMap[`${tx},${ty}`];
-    if (!data) return 0;
-    const px = ((gxi % TILE_SZ) + TILE_SZ) % TILE_SZ;
-    const py = ((gyi % TILE_SZ) + TILE_SZ) % TILE_SZ;
-    const i  = (py * TILE_SZ + px) * 4;
-    return data[i] * 256 + data[i + 1] + data[i + 2] / 256 - 32768;
-  }
-
-  function sampleElev(lat, lng) {
-    const { x, y } = globalPx(lat, lng, zoom);
-    const gx = x - 0.5, gy = y - 0.5;
-    const x0 = Math.floor(gx), y0 = Math.floor(gy);
-    const fx = gx - x0, fy = gy - y0;
-    const e00 = pixElev(x0,     y0);
-    const e10 = pixElev(x0 + 1, y0);
-    const e01 = pixElev(x0,     y0 + 1);
-    const e11 = pixElev(x0 + 1, y0 + 1);
-    return e00 * (1 - fx) * (1 - fy) + e10 * fx * (1 - fy)
-         + e01 * (1 - fx) * fy       + e11 * fx * fy;
-  }
-
-  const lat1rad         = centerLat * Math.PI / 180;
-  const metersPerDegLat = 111320;
-  const metersPerDegLng = 111320 * Math.cos(lat1rad);
-
-  const results = new Float32Array(N * N);
-  for (let j = 0; j < N; j++) {
-    for (let i = 0; i < N; i++) {
-      const u   = (i / (N - 1)) * 2 - 1;
-      const v   = (j / (N - 1)) * 2 - 1;
-      const lat = centerLat + v * radiusMeters / metersPerDegLat;
-      const lng = centerLng + u * radiusMeters / metersPerDegLng;
-      results[j * N + i] = sampleElev(lat, lng);
-    }
-  }
-
-  let min = Infinity;
-  for (const v of results) if (v < min) min = v;
-  for (let i = 0; i < results.length; i++) results[i] -= min;
-
-  const hasData = results.some(v => v > 0.1);
-  if (!hasData) return null;
-
-  return results;
 }
 
 // ─── Ring merging for relations ──────────────────────────────────────────────
