@@ -45,7 +45,7 @@ function buildDirectQuery(south, west, north, east) {
   return `[out:json][timeout:30][maxsize:33554432];
 (
   way["building"](${bb});
-  // building:part deliberately NOT fetched — see comment in worker/index.js
+  way["building:part"](${bb});
   relation["building"](${bb});
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   way["natural"~"^(water|wetland)$"](${bb});
@@ -252,10 +252,20 @@ export function parseOSMData(json, projection, hexVertices) {
                    : type === 'water'    ? features.water
                    : type === 'landuse'  ? features.landuse
                                          : features.parks;
-      bucket.push({ polygon: clipped, holes: innerRings.filter(h => h.length >= 3), tags, osmId: `relation/${el.id}` });
+      const isBuildingPartRel = type === 'building' && !!tags?.['building:part'];
+      bucket.push({ polygon: clipped, holes: innerRings.filter(h => h.length >= 3), tags, osmId: `relation/${el.id}`, isBuildingPart: isBuildingPartRel });
       relationsAdded++;
     }
   }
+
+  // ── 4b. Drop envelope buildings (OSM 3D rendering convention) ─────────────
+  // When a building=* polygon contains building:part=* polygons inside it, the
+  // outer building is just a 2D footprint envelope — the parts represent the
+  // actual 3D structure (legs, platforms, spire for Eiffel Tower; petal wings
+  // for Burj Khalifa).  Rendering the envelope at full height extrudes a
+  // featureless block that visually erases the parts.  Standard OSM 3D
+  // renderers (F4Map, OSM2World) skip the envelope when parts exist.
+  features.buildings = dropEnvelopeBuildings(features.buildings);
 
   // ── 5. Build sea polygons from coastlines ─────────────────────────────────
   // OSM does not tag oceans as natural=water — they are the negative space
@@ -328,11 +338,10 @@ const GREEN_NATURAL = new Set(['wood','scrub','grassland','heath']);
 function classifyTags(tags) {
   if (!tags) return null;
 
-  // building:part is NOT classified as a building — these are sub-element
-  // polygons that produced "small spike at full height" stacking artefacts
-  // for landmarks like Eiffel Tower and Burj Khalifa.  Defensive: even if a
-  // building:part leaks through some other query path, we discard it here.
-  if (tags.building) return 'building';
+  // Both `building` and `building:part` map to 'building' — building:parts
+  // carry a flag (set in addFeature) so we can later drop the outer envelope
+  // when sub-parts exist (OSM 3D rendering convention).
+  if (tags.building || tags['building:part']) return 'building';
 
   if (tags.highway) {
     if (ROAD_TYPES.has(tags.highway)) return 'road';
@@ -391,7 +400,8 @@ function addFeature(type, coords, tags, hexVertices, features, osmId) {
                  : type === 'water'    ? features.water
                  : type === 'landuse'  ? features.landuse
                                        : features.parks;
-    bucket.push({ polygon: clipped, holes: [], tags, osmId: osmId || '' });
+    const isBuildingPart = type === 'building' && !!tags?.['building:part'];
+    bucket.push({ polygon: clipped, holes: [], tags, osmId: osmId || '', isBuildingPart });
     return true;
 
   } else if (isLine) {
@@ -495,6 +505,12 @@ export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices,
       }
 
       const osmMatches = findOsmInBbox(minX, minY, maxX, maxY);
+
+      // If this Overture polygon would overlap building:parts (landmark
+      // detail), skip it entirely — Overture has no concept of building:part,
+      // so its single polygon would render on top of the carefully-tagged
+      // OSM parts and visually erase the landmark structure.
+      if (osmMatches.some(m => m.ref.isBuildingPart)) continue;
 
       // Build merged tags.  Overture's class/height/levels/name win, but we
       // carry over critical OSM identifiers (wikidata, wikipedia, name) and
@@ -714,6 +730,43 @@ function mergeWaysIntoRings(ways) {
 
 function ptClose(a, b) {
   return Math.abs(a.x - b.x) < 0.05 && Math.abs(a.y - b.y) < 0.05;
+}
+
+// ─── Envelope-building dropper (OSM 3D rendering convention) ─────────────────
+// For each non-part building, check if any building:part centroid is inside
+// its polygon.  If yes, the non-part is just a 2D envelope and should be
+// dropped — the parts will render the actual 3D structure.
+
+function dropEnvelopeBuildings(buildings) {
+  if (!buildings || buildings.length < 2) return buildings;
+
+  const parts = buildings.filter(b => b.isBuildingPart);
+  if (parts.length === 0) return buildings;
+
+  // Pre-compute part centroids
+  const partCentroids = parts.map(p => {
+    let cx = 0, cy = 0;
+    for (const pt of p.polygon) { cx += pt.x; cy += pt.y; }
+    return { cx: cx / p.polygon.length, cy: cy / p.polygon.length };
+  });
+
+  return buildings.filter(b => {
+    if (b.isBuildingPart) return true;
+
+    // Compute this main's bbox for fast-reject
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of b.polygon) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+
+    // Drop this main if any part centroid lies inside its polygon
+    for (const c of partCentroids) {
+      if (c.cx < minX || c.cx > maxX || c.cy < minY || c.cy > maxY) continue;
+      if (pointInPolygonGeneral({ x: c.cx, y: c.cy }, b.polygon)) return false;
+    }
+    return true;
+  });
 }
 
 // ─── Coastline → sea-polygon construction ─────────────────────────────────────

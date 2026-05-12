@@ -609,11 +609,7 @@ function buildOverpassQuery(south, west, north, east) {
   return `[out:json][timeout:20][maxsize:33554432];
 (
   way["building"](${bb});
-  // building:part deliberately NOT fetched — these are sub-element polygons
-  // (legs, platforms, floor variations) that landmarks like Eiffel Tower and
-  // Burj Khalifa are modelled with.  Rendering each part as its own building
-  // at full height produced overlapping spikes that hid the main structure.
-  // The main building polygon plus our landmark presets handle the shape.
+  way["building:part"](${bb});
   relation["building"](${bb});
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   way["natural"~"^(water|wetland)$"](${bb});
