@@ -240,11 +240,14 @@ async function generate() {
         });
         if (ovrResp.ok) {
           const ovrData = await ovrResp.json();
-          const ovrBldgs = parseOvertureBuildings(ovrData.features, projection, shapeVerts, features.buildings);
-          const augmented = ovrBldgs._augmentedCount || 0;
-          if (ovrBldgs.length > 0 || augmented > 0) {
-            features.buildings.push(...ovrBldgs);
-            setStatus(`Overture: ${augmented} OSM heights upgraded, +${ovrBldgs.length} new buildings`, 38);
+          // parseOvertureBuildings returns the FULL merged building list:
+          // surviving OSM (those Overture didn't claim) + all Overture polys.
+          const merged = parseOvertureBuildings(ovrData.features, projection, shapeVerts, features.buildings);
+          const replaced = merged._replacedCount || 0;
+          const added    = merged._addedCount    || 0;
+          if (added > 0) {
+            features.buildings = merged;  // swap the whole set
+            setStatus(`Overture: ${replaced} OSM replaced, ${added} Overture polygons total`, 38);
           } else if (ovrData.note) {
             setStatus(`Overture data unavailable (${ovrData.note}) — using OSM only`, 38);
           }

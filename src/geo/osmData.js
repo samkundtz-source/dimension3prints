@@ -422,24 +422,29 @@ function addFeature(type, coords, tags, hexVertices, features, osmId) {
 // and building-class machinery work without modification.
 
 export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices, existingBuildings) {
-  // ── Spatial index of existing OSM building centroids ─────────────────────
-  // Used to find the OSM building (if any) that an Overture footprint covers,
-  // so we can AUGMENT that OSM building with Overture's height instead of
-  // dropping the Overture one (the previous behaviour, which lost real heights).
-  // 50 mm cell ≈ ~660 m of real-world space at 1 km hex radius — a sensible
-  // bucket size for "nearby buildings".
-  const CELL = 50;
+  // ── Spatial index of OSM building centroids (with mutable matched flag) ──
+  // For each Overture polygon we find ALL OSM buildings whose centroid sits
+  // inside the Overture footprint's bbox and mark them for replacement.  This
+  // handles the common case where OSM has split a complex landmark (e.g.
+  // Burj Khalifa's petal base) into many sub-polygons that Overture represents
+  // as one — the previous augment-only approach updated only one of them and
+  // left the rest at OSM's wrong heights, producing visible "wings stacked at
+  // different heights" artefacts.
+  const CELL = 50; // mm cell — ~660 m at 1 km hex radius
+  const osmEntries = (existingBuildings || []).map(ref => {
+    let cx = 0, cy = 0;
+    for (const p of ref.polygon) { cx += p.x; cy += p.y; }
+    return { ref, matched: false, cx: cx / ref.polygon.length, cy: cy / ref.polygon.length };
+  });
   const grid = new Map();
   function cellKey(i, j) { return `${i},${j}`; }
-  for (const b of (existingBuildings || [])) {
-    let cx = 0, cy = 0;
-    for (const p of b.polygon) { cx += p.x; cy += p.y; }
-    cx /= b.polygon.length; cy /= b.polygon.length;
-    const k = cellKey(Math.floor(cx / CELL), Math.floor(cy / CELL));
+  for (const e of osmEntries) {
+    const k = cellKey(Math.floor(e.cx / CELL), Math.floor(e.cy / CELL));
     if (!grid.has(k)) grid.set(k, []);
-    grid.get(k).push({ ref: b, cx, cy });
+    grid.get(k).push(e);
   }
   function findOsmInBbox(minX, minY, maxX, maxY) {
+    const matches = [];
     const i0 = Math.floor(minX / CELL), i1 = Math.floor(maxX / CELL);
     const j0 = Math.floor(minY / CELL), j1 = Math.floor(maxY / CELL);
     for (let i = i0; i <= i1; i++) {
@@ -447,15 +452,15 @@ export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices,
         const cell = grid.get(cellKey(i, j));
         if (!cell) continue;
         for (const e of cell) {
-          if (e.cx >= minX && e.cx <= maxX && e.cy >= minY && e.cy <= maxY) return e.ref;
+          if (e.cx >= minX && e.cx <= maxX && e.cy >= minY && e.cy <= maxY) matches.push(e);
         }
       }
     }
-    return null;
+    return matches;
   }
 
-  const newBuildings = [];
-  let augmentedCount = 0;
+  const overturePolys = [];
+  let replacedCount = 0;
 
   for (const feat of (geojsonFeatures || [])) {
     const geom = feat?.geometry;
@@ -485,44 +490,49 @@ export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices,
         if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
       }
 
-      const osmMatch = findOsmInBbox(minX, minY, maxX, maxY);
+      const osmMatches = findOsmInBbox(minX, minY, maxX, maxY);
 
-      if (osmMatch) {
-        // AUGMENT — overlay Overture's better data onto the existing OSM
-        // building.  We mutate the OSM building's tags so parseBuildingHeight()
-        // picks up the new height when the geometry pipeline runs.  OSM keeps
-        // its own polygon (good enough; LiDAR overlap is not worth re-tessellating).
-        if (ovrHeight || ovrLevels || ovrName || ovrClass) {
-          const newTags = { ...osmMatch.tags };
-          // Height: Overture wins (LiDAR-derived, more accurate than building:levels guess)
-          if (ovrHeight) newTags.height = ovrHeight;
-          if (ovrLevels && !newTags['building:levels']) newTags['building:levels'] = ovrLevels;
-          if (ovrName && !newTags.name) newTags.name = ovrName;
-          if (ovrClass && (!newTags.building || newTags.building === 'yes')) newTags.building = ovrClass;
-          osmMatch.tags = newTags;
-          augmentedCount++;
+      // Build merged tags.  Overture's class/height/levels/name win, but if
+      // Overture is missing height info we fall back to the matched OSM's so
+      // we don't lose existing height data for buildings Overture has but
+      // didn't measure.
+      const tags = { building: ovrClass || 'yes' };
+      if (ovrHeight) tags.height = ovrHeight;
+      if (ovrLevels) tags['building:levels'] = ovrLevels;
+      if (ovrName) tags.name = ovrName;
+      if (!tags.height && !tags['building:levels']) {
+        for (const m of osmMatches) {
+          if (m.ref.tags?.height)              { tags.height = m.ref.tags.height; break; }
+          if (m.ref.tags?.['building:levels']) { tags['building:levels'] = m.ref.tags['building:levels']; break; }
         }
-      } else {
-        // No OSM match — add as a NEW building.  These are the rural / edge
-        // / recently-built structures OSM hasn't captured yet.
-        const ccw     = ensureCCW(deduped);
-        const clipped = clipToHex(ccw, hexVertices);
-        if (!clipped || clipped.length < 3) continue;
-
-        const tags = { building: ovrClass || 'yes' };
-        if (ovrHeight) tags.height = ovrHeight;
-        if (ovrLevels) tags['building:levels'] = ovrLevels;
-        if (ovrName) tags.name = ovrName;
-
-        newBuildings.push({ polygon: clipped, holes: [], tags, osmId: feat.id || 'overture' });
       }
+      if (!tags.name) {
+        for (const m of osmMatches) {
+          if (m.ref.tags?.name) { tags.name = m.ref.tags.name; break; }
+        }
+      }
+
+      // Mark all matched OSM buildings for removal.  Multiple Overture polys
+      // may claim the same OSM victim — only count it once.
+      for (const m of osmMatches) {
+        if (!m.matched) { m.matched = true; replacedCount++; }
+      }
+
+      const ccw     = ensureCCW(deduped);
+      const clipped = clipToHex(ccw, hexVertices);
+      if (!clipped || clipped.length < 3) continue;
+
+      overturePolys.push({ polygon: clipped, holes: [], tags, osmId: feat.id || 'overture' });
     }
   }
 
-  // Stash counter on the returned array so main.js can show both numbers in
-  // the status message ("Overture: X augmented, +Y new").
-  newBuildings._augmentedCount = augmentedCount;
-  return newBuildings;
+  // Return MERGED list: surviving OSM (those not replaced) + all Overture polys.
+  // main.js does features.buildings = result so the entire building set swaps.
+  const survivingOsm = osmEntries.filter(e => !e.matched).map(e => e.ref);
+  const result = [...survivingOsm, ...overturePolys];
+  result._replacedCount = replacedCount;
+  result._addedCount    = overturePolys.length;
+  return result;
 }
 
 // ─── Overture Maps water polygon parser ──────────────────────────────────────
