@@ -293,16 +293,29 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     if (Math.abs(signedArea2D(bf.polygon)) < 0.3) continue; // < 0.3mm² is sub-nozzle
 
     const heightM      = parseBuildingHeight(bf.tags, bf.polygon);
-    const baseHeightMM = clamp(heightM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
+    const minHeightM   = parseBuildingMinHeight(bf.tags);
+    // Effective vertical extent: min_height → height.  For ordinary buildings
+    // min_height is 0 so this collapses to (0 → height) = full extrusion.
+    // For building:parts that occupy a slice (e.g. Eiffel platform 276→324),
+    // we render only that slice.  Skip if the slice is degenerate or inverted.
+    const effectiveHM  = Math.max(0.1, heightM - minHeightM);
+    const baseHeightMM = clamp(effectiveHM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
+    const minHeightMM  = minHeightM * hScale * BUILD_EXAG;
 
     // In terrain mode, buildings extrude from the base plate (BASE - 0.1) up to
     // the roof.  The bottom goes to the base plate — not just to minH — so the
     // terrain surface mesh inside the footprint is fully enclosed and can never
     // poke through the building.  The roof height is adjusted to keep it at the
     // same world-space position (minH + heightMM) as before.
-    let baseY    = BASE;
+    // For building:parts with min_height > 0, the bottom is lifted off the
+    // base plate so legs/platforms/spire stack at the right vertical levels.
+    let baseY    = BASE + minHeightMM;
     let heightMM = baseHeightMM;
-    if (elevGrid) {
+    // Terrain adjustment only applies to ground-level buildings (min_height=0).
+    // For building:parts that sit on top of other parts (e.g. Eiffel Tower's
+    // upper platforms with min_height=115/276), we must NOT extend them down
+    // through the terrain — they should stay at their proper vertical level.
+    if (elevGrid && minHeightMM === 0) {
       let minH = Infinity;
       for (const p of bf.polygon) {
         const elev  = bilinearInterp(elevGrid, ELEV_N, p.x, p.y, MODEL_RADIUS_MM);
@@ -2031,6 +2044,32 @@ function pointInHex(pt, hexVerts) {
     if ((b.x - a.x) * (pt.y - a.y) - (b.y - a.y) * (pt.x - a.x) < -1e-6) return false;
   }
   return true;
+}
+
+/**
+ * Extract the bottom of a building's vertical extent in metres.
+ * Used by building:part polygons that occupy a slice of a tower (e.g. an
+ * Eiffel platform tagged min_height=276, height=324 should render only
+ * between those two heights, not from ground level).
+ *
+ * Falls back through:
+ *   tags.min_height           — explicit metres (with optional ft unit)
+ *   tags['building:min_level'] — number of floors below this part starts
+ *   0                          — default, building rises from base plate
+ */
+function parseBuildingMinHeight(tags) {
+  if (tags?.min_height) {
+    const raw = String(tags.min_height);
+    const val = parseFloat(raw);
+    if (!isNaN(val) && val >= 0 && val < 999) {
+      return raw.toLowerCase().includes('ft') ? val * 0.3048 : val;
+    }
+  }
+  if (tags?.['building:min_level']) {
+    const l = parseFloat(tags['building:min_level']);
+    if (!isNaN(l) && l >= 0 && l < 200) return l * 3.2;
+  }
+  return 0;
 }
 
 function parseBuildingHeight(tags, polygon) {
