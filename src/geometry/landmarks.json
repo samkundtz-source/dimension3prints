@@ -9,13 +9,15 @@
     "way/29176088": "petronasTowers",
     "way/144455043": "shanghaiTower",
     "way/185031673": "lotteWorldTower",
-    "way/154414489": "tokyoSkytree"
+    "way/154414489": "tokyoSkytree",
+    "way/5013364":   "eiffelTower"
   },
 
   "osmRelationIds": {},
 
   "wikidataIds": {
     "Q12495": "burjKhalifa",
+    "Q243":   "eiffelTower",
     "Q9188": "empireStateBuilding",
     "Q18686": "oneWorldTradeCenter",
     "Q131454": "willisTower",
@@ -44,7 +46,10 @@
     "shanghai tower": "shanghaiTower",
     "lotte world tower": "lotteWorldTower",
     "tokyo skytree": "tokyoSkytree",
-    "skytree": "tokyoSkytree"
+    "skytree": "tokyoSkytree",
+    "eiffel tower": "eiffelTower",
+    "tour eiffel": "eiffelTower",
+    "la tour eiffel": "eiffelTower"
   },
 
   "landmarkTags": [

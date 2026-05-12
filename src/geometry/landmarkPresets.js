@@ -632,6 +632,72 @@ export const LANDMARK_PRESETS = {
   },
 
   // ──────────────────────────────────────────────────────────────────────────
+  // EIFFEL TOWER — 324m total. Tapered iron lattice with 3 platforms.
+  //
+  // OSM/Overture model the Eiffel as many disconnected polygons (4 legs +
+  // platforms + spire base), each tagged building=*.  Generic extrusion gives
+  // every polygon the full 324m height, which collapses into a tall thin
+  // central pillar that hides the leg geometry.  We bypass the input polygon
+  // and synthesise a 4-tier stepped pyramid + spire that captures the iconic
+  // tapering silhouette.
+  //
+  // Real proportions:
+  //   Platform 1 (1st floor, restaurant): 57 m   (17.6%)
+  //   Platform 2 (2nd floor, restaurant): 115 m  (35.5%)
+  //   Platform 3 (3rd floor, observation): 276 m (85.2%)
+  //   Roof + spire: 276 → 324 m
+  //   Base: ~125 m square; widths taper to ~70 / ~40 / ~17 m
+  // ──────────────────────────────────────────────────────────────────────────
+  eiffelTower: {
+    name: 'Eiffel Tower',
+    generate(ctx, acc, polygon, baseY, totalH, heightM) {
+      const { collectExtrudedPolygon, minBBoxDimension } = ctx;
+      const { cx, cy } = centroid(polygon);
+      // Use polygon dim if reasonable, else derive a sensible base from height
+      // (real Eiffel base is ~38% of its height: 125m / 324m).  This handles the
+      // common case where the input polygon is just a small platform footprint
+      // rather than the full leg span.
+      const dim = Math.max(minBBoxDimension(polygon), totalH * 0.38);
+
+      function squarePoly(half) {
+        return [
+          { x: cx - half, y: cy - half },
+          { x: cx + half, y: cy - half },
+          { x: cx + half, y: cy + half },
+          { x: cx - half, y: cy + half },
+        ];
+      }
+
+      // 4 stepped tiers with aggressive Eiffel-like tapering.
+      // Width fractions match real Eiffel proportions at each platform level.
+      const tiers = [
+        { hFrac: 0.18, scale: 1.00 },   // base → platform 1 (full base width)
+        { hFrac: 0.18, scale: 0.55 },   // plat1 → plat2
+        { hFrac: 0.49, scale: 0.32 },   // plat2 → plat3 (long thin section)
+        { hFrac: 0.10, scale: 0.14 },   // plat3 → spire base (very thin)
+      ];
+      const spireFrac = 0.05;
+
+      let y = baseY;
+      let lastHalf = 0;
+      for (const tier of tiers) {
+        const tierH    = totalH * tier.hFrac;
+        const tierHalf = dim * 0.5 * tier.scale;
+        if (tierH < 0.02 || tierHalf < 0.02) continue;
+        collectExtrudedPolygon(acc, squarePoly(tierHalf), [], y, tierH);
+        y += tierH;
+        lastHalf = tierHalf;
+      }
+
+      // Spire on top
+      const spireH = totalH * spireFrac;
+      if (spireH > 0.05 && lastHalf > 0) {
+        buildSpire(acc, cx, cy, y, spireH, lastHalf * 0.5, lastHalf * 0.05);
+      }
+    },
+  },
+
+  // ──────────────────────────────────────────────────────────────────────────
   // Generic supertall fallback — for landmarks in the registry without a
   // bespoke preset. Uses the OSM footprint with simple proportional setbacks.
   // ──────────────────────────────────────────────────────────────────────────
@@ -681,6 +747,7 @@ const PRESET_ALIASES = {
   shanghaiTower:       'genericSupertall',
   lotteWorldTower:     'genericSupertall',
   tokyoSkytree:        'cnTower', // similar profile: tapered shaft + observation pod + antenna
+  eiffelTower:         'eiffelTower',
 };
 
 // ─── Public API ─────────────────────────────────────────────────────────────
