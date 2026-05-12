@@ -45,7 +45,7 @@ function buildDirectQuery(south, west, north, east) {
   return `[out:json][timeout:30][maxsize:33554432];
 (
   way["building"](${bb});
-  way["building:part"](${bb});
+  // building:part deliberately NOT fetched — see comment in worker/index.js
   relation["building"](${bb});
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   way["natural"~"^(water|wetland)$"](${bb});
@@ -328,7 +328,11 @@ const GREEN_NATURAL = new Set(['wood','scrub','grassland','heath']);
 function classifyTags(tags) {
   if (!tags) return null;
 
-  if (tags.building || tags['building:part']) return 'building';
+  // building:part is NOT classified as a building — these are sub-element
+  // polygons that produced "small spike at full height" stacking artefacts
+  // for landmarks like Eiffel Tower and Burj Khalifa.  Defensive: even if a
+  // building:part leaks through some other query path, we discard it here.
+  if (tags.building) return 'building';
 
   if (tags.highway) {
     if (ROAD_TYPES.has(tags.highway)) return 'road';
