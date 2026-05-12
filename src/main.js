@@ -241,9 +241,10 @@ async function generate() {
         if (ovrResp.ok) {
           const ovrData = await ovrResp.json();
           const ovrBldgs = parseOvertureBuildings(ovrData.features, projection, shapeVerts, features.buildings);
-          if (ovrBldgs.length > 0) {
+          const augmented = ovrBldgs._augmentedCount || 0;
+          if (ovrBldgs.length > 0 || augmented > 0) {
             features.buildings.push(...ovrBldgs);
-            setStatus(`Overture: +${ovrBldgs.length} buildings (with real heights)`, 38);
+            setStatus(`Overture: ${augmented} OSM heights upgraded, +${ovrBldgs.length} new buildings`, 38);
           } else if (ovrData.note) {
             setStatus(`Overture data unavailable (${ovrData.note}) — using OSM only`, 38);
           }
