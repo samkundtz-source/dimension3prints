@@ -264,7 +264,12 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   // Building exaggeration scales with vertExag but is capped so even at max
   // slider (8x) the tallest skyscrapers stay under MAX_BLDG_MM
   const BUILD_EXAG     = Math.min(vertExag * 0.5, 3.0);
-  const MAX_BLDG_MM    = 35; // hard cap — keeps tall buildings from looking like spires
+  // Hard cap on building height in mm.  100 mm allows Burj Khalifa-scale
+  // (828 m) to render at proper proportional height in a 1 km hex without
+  // clamping.  Earlier value of 35 mm was too aggressive — every skyscraper
+  // above ~310 m clipped to the same height, masking real-height differences
+  // (notably making Overture's LiDAR-derived heights for landmarks invisible).
+  const MAX_BLDG_MM    = 100;
   const MIN_BLDG_DIM   = NOZZLE_MM; // 0.4mm — only skip what literally can't print
 
   // Helper context for landmark presets (avoids circular imports)
