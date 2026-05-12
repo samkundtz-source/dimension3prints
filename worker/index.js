@@ -541,6 +541,7 @@ function buildOverpassQuery(south, west, north, east) {
   way["waterway"="riverbank"](${bb});
   way["waterway"~"^(river|canal|stream|drain|ditch)$"](${bb});
   way["landuse"~"^(reservoir|basin)$"](${bb});
+  way["natural"="coastline"](${bb});
   relation["natural"="water"](${bb});
   relation["waterway"="riverbank"](${bb});
   way["leisure"~"^(park|garden|nature_reserve|golf_course|pitch|playground|common)$"](${bb});

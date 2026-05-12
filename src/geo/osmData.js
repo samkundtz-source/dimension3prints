@@ -53,6 +53,7 @@ function buildDirectQuery(south, west, north, east) {
   way["waterway"="riverbank"](${bb});
   way["waterway"~"^(river|canal|stream|drain|ditch)$"](${bb});
   way["landuse"~"^(reservoir|basin)$"](${bb});
+  way["natural"="coastline"](${bb});
   relation["natural"="water"](${bb});
   relation["waterway"="riverbank"](${bb});
   way["leisure"~"^(park|garden|nature_reserve|golf_course|pitch|playground|common)$"](${bb});
@@ -256,12 +257,27 @@ export function parseOSMData(json, projection, hexVertices) {
     }
   }
 
+  // ── 5. Build sea polygons from coastlines ─────────────────────────────────
+  // OSM does not tag oceans as natural=water — they are the negative space
+  // outside natural=coastline ways.  We sample a grid across the hex and
+  // classify each cell as LAND or SEA using the OSM convention (LAND on the
+  // LEFT of the chain direction, computed via signed cross product against
+  // the nearest coastline segment).  This avoids any polygon-winding guesswork
+  // that broke earlier coastline approaches.
+  let seaPolyCount = 0;
+  if (features._coastlines && features._coastlines.length > 0) {
+    const seaPolys = buildSeaPolysFromCoastlines(features._coastlines, hexVertices);
+    for (const p of seaPolys) features.water.push(p);
+    seaPolyCount = seaPolys.length;
+  }
+  delete features._coastlines;
+
   console.log(
     `[Parser] ${totalWays} ways + ${totalRelations} relations → ` +
     `buildings:${features.buildings.length} ` +
     `roads:${features.roads.length} ` +
     `paths:${features.paths.length} ` +
-    `water:${features.water.length} ` +
+    `water:${features.water.length} (${seaPolyCount} from coastlines) ` +
     `waterways:${features.waterways.length} ` +
     `parks:${features.parks.length} ` +
     `trees:${features.trees.length} ` +
@@ -330,6 +346,11 @@ function classifyTags(tags) {
     return 'water';
   }
 
+  // Coastline ways are open chains (LAND on LEFT, SEA on RIGHT in OSM
+  // convention).  We collect them and use a per-cell cross-product test
+  // later to build sea polygons.
+  if (tags.natural === 'coastline') return 'coastline';
+
   // Linear waterways (rivers, streams, canals) — these are lines, not polygons
   if (tags.waterway) {
     return 'waterway';
@@ -351,7 +372,7 @@ function classifyTags(tags) {
 /** Returns true if the feature was added, false if it was rejected/clipped. */
 function addFeature(type, coords, tags, hexVertices, features, osmId) {
   const isArea = type === 'building' || type === 'water' || type === 'park' || type === 'landuse';
-  const isLine = type === 'road' || type === 'path' || type === 'waterway';
+  const isLine = type === 'road' || type === 'path' || type === 'waterway' || type === 'coastline';
 
   if (isArea) {
     // Need a closed ring with at least 3 unique points
@@ -373,6 +394,9 @@ function addFeature(type, coords, tags, hexVertices, features, osmId) {
     if (coords.length < 2) return false;
     if (type === 'waterway') {
       features.waterways.push({ points: coords, tags });
+    } else if (type === 'coastline') {
+      if (!features._coastlines) features._coastlines = [];
+      features._coastlines.push(coords);
     } else {
       const bucket = type === 'road' ? features.roads : features.paths;
       bucket.push({ points: coords, tags });
@@ -502,6 +526,118 @@ function mergeWaysIntoRings(ways) {
 
 function ptClose(a, b) {
   return Math.abs(a.x - b.x) < 0.05 && Math.abs(a.y - b.y) < 0.05;
+}
+
+// ─── Coastline → sea-polygon construction ─────────────────────────────────────
+//
+// OSM coastlines are open polylines (LAND on LEFT, SEA on RIGHT, with respect
+// to node order).  We can't reliably "close" them into polygons via the hex
+// boundary because winding direction depends on which way the chain enters
+// vs exits the hex — the previous attempt got that wrong.
+//
+// Instead: rasterise the hex into a grid, classify each cell against the
+// nearest coastline segment using the signed cross product, then collapse
+// consecutive sea cells in each row into a single rectangular water polygon.
+// This is convention-direction-agnostic (the sign of the cross product picks
+// the correct side every time) and handles complex coastlines (peninsulas,
+// estuaries, multiple disconnected chains) automatically.
+
+function buildSeaPolysFromCoastlines(coastlines, hexVerts) {
+  // Stitch coastline ways into longer chains where they share endpoints
+  const chains = mergeWaysIntoRings(coastlines).filter(c => c.length >= 2);
+  if (chains.length === 0) return [];
+
+  // Precompute flat list of segments with bbox + cross-product setup
+  const segs = [];
+  for (const chain of chains) {
+    for (let k = 0; k < chain.length - 1; k++) {
+      const a = chain[k], b = chain[k + 1];
+      const sx = b.x - a.x, sy = b.y - a.y;
+      const len2 = sx * sx + sy * sy;
+      if (len2 < 1e-10) continue;
+      segs.push({ ax: a.x, ay: a.y, sx, sy, len2 });
+    }
+  }
+  if (segs.length === 0) return [];
+
+  // Hex bounding box
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const v of hexVerts) {
+    if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
+    if (v.y < minY) minY = v.y; if (v.y > maxY) maxY = v.y;
+  }
+
+  // 64×64 grid → ~16 mm cells in a 1 km hex.  Fine enough for clean prints,
+  // coarse enough that we generate ≤ ~64 strip polygons total.
+  const GRID = 64;
+  const dx = (maxX - minX) / GRID;
+  const dy = (maxY - minY) / GRID;
+  const cells = new Uint8Array(GRID * GRID); // 1 = sea
+
+  for (let j = 0; j < GRID; j++) {
+    const cy = minY + (j + 0.5) * dy;
+    for (let i = 0; i < GRID; i++) {
+      const cx = minX + (i + 0.5) * dx;
+      if (!pointInHexSimple({ x: cx, y: cy }, hexVerts)) continue;
+
+      // Find nearest segment and remember its signed cross product
+      let bestD2 = Infinity;
+      let bestCross = 0;
+      for (const s of segs) {
+        let t = ((cx - s.ax) * s.sx + (cy - s.ay) * s.sy) / s.len2;
+        if (t < 0) t = 0; else if (t > 1) t = 1;
+        const qx = s.ax + t * s.sx;
+        const qy = s.ay + t * s.sy;
+        const d2 = (cx - qx) * (cx - qx) + (cy - qy) * (cy - qy);
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          // Cross product (b-a) × (p-a).  Math convention (Y up):
+          //   > 0 → P on LEFT of chain direction → LAND
+          //   < 0 → P on RIGHT → SEA
+          bestCross = s.sx * (cy - s.ay) - s.sy * (cx - s.ax);
+        }
+      }
+      if (bestCross < 0) cells[j * GRID + i] = 1;
+    }
+  }
+
+  // Run-length encode each row into rectangular strips.  Adjacent sea cells
+  // in the same row become one polygon, drastically cutting polygon count.
+  const polys = [];
+  for (let j = 0; j < GRID; j++) {
+    let i = 0;
+    while (i < GRID) {
+      if (cells[j * GRID + i] !== 1) { i++; continue; }
+      let end = i + 1;
+      while (end < GRID && cells[j * GRID + end] === 1) end++;
+
+      const x0 = minX + i * dx;
+      const x1 = minX + end * dx;
+      const y0 = minY + j * dy;
+      const y1 = minY + (j + 1) * dy;
+
+      const rect = [
+        { x: x0, y: y0 },
+        { x: x1, y: y0 },
+        { x: x1, y: y1 },
+        { x: x0, y: y1 },
+      ];
+
+      const ccw     = ensureCCW(rect);
+      const clipped = clipToHex(ccw, hexVerts);
+      if (clipped && clipped.length >= 3) {
+        polys.push({
+          polygon: clipped,
+          holes:   [],
+          tags:    { natural: 'water', water: 'sea' },
+          osmId:   'coastline-derived',
+        });
+      }
+      i = end;
+    }
+  }
+
+  return polys;
 }
 
 /** Convex polygon point-in-polygon (CCW). */
