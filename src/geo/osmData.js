@@ -752,7 +752,14 @@ function ptClose(a, b) {
 function dropEnvelopeBuildings(buildings) {
   if (!buildings || buildings.length < 2) return buildings;
 
-  // Pre-compute centroid + bbox for every building.
+  // Pre-compute centroid + bbox + aspect ratio for each building.
+  // Aspect ratio = vertical extent (m) / horizontal extent (m).  We use this
+  // instead of trusting building:part tag values (which vary wildly across
+  // OSM contributors — Eiffel's "clover" outline polygon could be tagged
+  // building:part=column, =skin, =roof, anything).
+  // Approx mm → m conversion: at 1 km radius / 75 mm model radius, 1 mm ≈ 13.3 m.
+  const MM_TO_M = 1000 / 75;
+
   const meta = buildings.map(b => {
     let cx = 0, cy = 0;
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
@@ -762,36 +769,53 @@ function dropEnvelopeBuildings(buildings) {
       if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
     }
     cx /= b.polygon.length; cy /= b.polygon.length;
+    const polyDimM = Math.min(maxX - minX, maxY - minY) * MM_TO_M;
+
+    const t = b.tags || {};
+    let h = 10;
+    if (t.height) {
+      const v = parseFloat(t.height);
+      if (!isNaN(v) && v > 0) h = v;
+    } else if (t['building:levels']) {
+      const v = parseFloat(t['building:levels']);
+      if (!isNaN(v) && v > 0) h = v * 3.2;
+    }
+    let minH = 0;
+    if (t.min_height) {
+      const v = parseFloat(t.min_height);
+      if (!isNaN(v) && v >= 0) minH = v;
+    }
+    const extentM = Math.max(0.1, h - minH);
+    const aspectRatio = extentM / Math.max(0.1, polyDimM);
+
     return { ref: b, cx, cy, minX, maxX, minY, maxY,
-             area: (maxX - minX) * (maxY - minY) };
+             area: (maxX - minX) * (maxY - minY),
+             aspectRatio };
   });
 
-  // A building is a "container candidate" only if:
-  //   1. It is NOT a building:part (envelope of the whole building), OR
-  //   2. It IS a building:part but tagged 'tower' / 'yes' / no value
-  //      (these are outline-style parts that span the full structure;
-  //      'column', 'floor', 'wall', 'roof' etc. are detail parts and
-  //      should always render regardless of containment).
-  function isContainerCandidate(b) {
-    if (!b.isBuildingPart) return true;
-    const t = b.tags?.['building:part'];
-    return t === 'tower' || t === 'yes' || !t;
-  }
-
   return buildings.filter((b, idx) => {
-    if (!isContainerCandidate(b)) return true; // detail parts always kept
-
     const M = meta[idx];
 
-    // Drop only if some smaller-area building's centroid lies inside our
-    // polygon.  The "smaller" guard prevents two equally-sized overlapping
-    // polygons from mutually killing each other.
+    // Slab guard: short, wide polygons (platforms, plinths) are never
+    // containers.  Aspect ratio < 1.5 means the polygon is wider than 0.66 ×
+    // its height — that's a slab.  Eiffel platforms (1 m tall, 70 m wide,
+    // aspect 0.014) are protected here.
+    if (M.aspectRatio < 1.5) return true;
+
+    // Tall building.  Count smaller-area children whose centroids sit inside
+    // our polygon.  2+ children = clear "envelope/outline" container — drop.
+    // 0–1 children = either a true tall building (skyscraper, leg column)
+    // or contains at most an antenna that's safe to keep alongside it.
+    let containCount = 0;
     for (let j = 0; j < buildings.length; j++) {
       if (j === idx) continue;
       const N = meta[j];
       if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
       if (N.area >= M.area * 0.95) continue;
-      if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) return false;
+      if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
+        containCount++;
+        if (containCount >= 2) return false;
+      }
     }
     return true;
   });
