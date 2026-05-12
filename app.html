@@ -150,17 +150,17 @@
               </label>
             </div>
 
-            <!-- Data source switch — admin only.  Default: OSM (existing setup).
-                 Overture path requires the OVERTURE_WATER R2 bucket to be populated. -->
+            <!-- Data source switch — admin only.  Default: OSM only (existing setup).
+                 Overture toggle requires the corresponding R2 bucket to be populated. -->
             <div style="margin-top:14px;padding-top:12px;border-top:1px dashed #2a2a2a">
               <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">Map data source</div>
               <label class="toggle-row" style="margin-bottom:6px">
                 <input type="radio" name="data-source" id="data-source-osm" value="osm" checked />
-                <span class="toggle-label" style="margin-left:8px">OSM <span style="color:var(--text-dim);font-weight:400">(current default)</span></span>
+                <span class="toggle-label" style="margin-left:8px">OSM only <span style="color:var(--text-dim);font-weight:400">(current default)</span></span>
               </label>
               <label class="toggle-row">
                 <input type="radio" name="data-source" id="data-source-overture" value="overture" />
-                <span class="toggle-label" style="margin-left:8px">OSM + Overture water <span style="color:var(--text-dim);font-weight:400">(better ocean coverage)</span></span>
+                <span class="toggle-label" style="margin-left:8px">OSM + Overture buildings <span style="color:var(--text-dim);font-weight:400">(real heights, fuller coverage)</span></span>
               </label>
             </div>
           </div>

@@ -22,7 +22,7 @@ const PIN_ICON = L.divIcon({
 });
 
 import { createProjection, getHexVerticesGeo, getHexVertices, getShapeVertices, getShapeVerticesGeo } from './geo/geoMath.js';
-import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, parseOvertureWater } from './geo/osmData.js';
+import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, parseOvertureWater, parseOvertureBuildings } from './geo/osmData.js';
 import { buildMapModel } from './geometry/buildMap.js';
 import { SceneManager }  from './preview/scene.js';
 import { exportSTL, export3MF } from './export/exporters.js';
@@ -224,26 +224,26 @@ async function generate() {
     ].join(' · ');
     setStatus(`Parsed: ${counts}`, 35);
 
-    // 3a. Overture water polygons (admin-only, opt-in via Test Mode radio).
-    // Adds proper ocean polygons that OSM doesn't tag (oceans are negative
-    // space outside coastline ways).  Requires the OVERTURE_WATER R2 bucket
-    // to be populated; if not, the endpoint returns an empty feature list
-    // and we silently fall back to the OSM coastline-derived sea polygons.
+    // 3a. Overture buildings (admin-only, opt-in via Test Mode radio).
+    // Overture supplies real LiDAR-derived building heights and fuller coverage
+    // than OSM in many areas.  Requires the OVERTURE_BUILDINGS R2 bucket to be
+    // populated; if not, the endpoint returns an empty feature list and we
+    // silently fall back to OSM-only buildings.
     const dataSource = document.querySelector('input[name="data-source"]:checked')?.value || 'osm';
     if (adminMode && dataSource === 'overture') {
       try {
-        setStatus('Fetching Overture water…', 36);
-        const ovrResp = await fetch('/api/overture-water', {
+        setStatus('Fetching Overture buildings…', 36);
+        const ovrResp = await fetch('/api/overture-buildings', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(projection.getBBox(1.0)),
         });
         if (ovrResp.ok) {
           const ovrData = await ovrResp.json();
-          const ovrPolys = parseOvertureWater(ovrData.features, projection, shapeVerts);
-          if (ovrPolys.length > 0) {
-            features.water.push(...ovrPolys);
-            setStatus(`Overture: +${ovrPolys.length} water polygons`, 38);
+          const ovrBldgs = parseOvertureBuildings(ovrData.features, projection, shapeVerts, features.buildings);
+          if (ovrBldgs.length > 0) {
+            features.buildings.push(...ovrBldgs);
+            setStatus(`Overture: +${ovrBldgs.length} buildings (with real heights)`, 38);
           } else if (ovrData.note) {
             setStatus(`Overture data unavailable (${ovrData.note}) — using OSM only`, 38);
           }

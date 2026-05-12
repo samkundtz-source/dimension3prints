@@ -407,6 +407,83 @@ function addFeature(type, coords, tags, hexVertices, features, osmId) {
   return false;
 }
 
+// ─── Overture Maps building parser ───────────────────────────────────────────
+// Converts GeoJSON building features from /api/overture-buildings into the
+// same {polygon, holes, tags} format as features.buildings entries.
+//
+// Overture buildings carry richer attributes than OSM:
+//   properties.height       — building height in metres (LiDAR-derived)
+//   properties.num_floors   — building stories
+//   properties.class        — building category (residential/commercial/etc)
+//   properties.subtype      — finer-grained type
+//   properties.names.primary — building name (for landmarks)
+//
+// We map these into OSM-style tags so the existing parseBuildingHeight()
+// and building-class machinery work without modification.
+
+export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices, existingBuildings) {
+  // Skip Overture buildings whose centroid sits inside an existing OSM
+  // building's bbox — same dedup approach as parseMSBuildings.
+  const existing = (existingBuildings || []).map(b => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of b.polygon) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    return { minX, maxX, minY, maxY };
+  });
+  function overlapsExisting(cx, cy) {
+    for (const b of existing) {
+      if (cx >= b.minX && cx <= b.maxX && cy >= b.minY && cy <= b.maxY) return true;
+    }
+    return false;
+  }
+
+  const buildings = [];
+  for (const feat of (geojsonFeatures || [])) {
+    const geom = feat?.geometry;
+    if (!geom) continue;
+
+    const rings = geom.type === 'Polygon'      ? [geom.coordinates[0]]
+                : geom.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0])
+                : [];
+
+    // Build OSM-style tags from Overture properties so parseBuildingHeight()
+    // and the landmark/class detection downstream just work.
+    const props = feat.properties || {};
+    const tags  = { building: props.class || props.subtype || 'yes' };
+    if (typeof props.height === 'number' && props.height > 0) {
+      tags.height = String(props.height);
+    }
+    if (typeof props.num_floors === 'number' && props.num_floors > 0) {
+      tags['building:levels'] = String(props.num_floors);
+    }
+    const name = props.names?.primary || (Array.isArray(props.names?.common) ? props.names.common[0]?.value : null);
+    if (name) tags.name = name;
+
+    for (const ring of rings) {
+      if (!ring || ring.length < 3) continue;
+      // GeoJSON coordinates are [lng, lat]
+      const coords = ring.map(([lng, lat]) => projection.project(lat, lng));
+      const deduped = deduplicateRing(coords);
+      if (deduped.length < 3) continue;
+
+      // Skip if centroid falls inside an existing OSM building's bbox
+      let cx = 0, cy = 0;
+      for (const p of deduped) { cx += p.x; cy += p.y; }
+      cx /= deduped.length; cy /= deduped.length;
+      if (overlapsExisting(cx, cy)) continue;
+
+      const ccw     = ensureCCW(deduped);
+      const clipped = clipToHex(ccw, hexVertices);
+      if (!clipped || clipped.length < 3) continue;
+
+      buildings.push({ polygon: clipped, holes: [], tags, osmId: feat.id || 'overture' });
+    }
+  }
+  return buildings;
+}
+
 // ─── Overture Maps water polygon parser ──────────────────────────────────────
 // Converts GeoJSON features from the /api/overture-water endpoint into the
 // same format as features.water (polygons), so they can be merged in.
