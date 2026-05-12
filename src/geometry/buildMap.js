@@ -285,6 +285,12 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
 
   let buildingCount = 0;
   let landmarkCount = 0, tallTowerCount = 0, standardCount = 0;
+  // Landmark dedup: each known landmark preset fires only ONCE per unique
+  // preset name within the model.  OSM frequently models a landmark with
+  // many polygons (envelope + multiple building:parts) all carrying the
+  // landmark's name/wikidata; without dedup the preset would render that
+  // many overlapping iconic shapes, producing visual mess.
+  const renderedLandmarks = new Set();
   onProgress?.('Extruding buildings…', 74);
   // Mountain View mode: skip all buildings — only terrain, roads and rivers.
   for (const bf of (mountainView ? [] : buildingFootprints)) {
@@ -336,12 +342,20 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
 
       if (tierResult.tier === 'landmark' && tierResult.presetName) {
         // ── Tier 1: Landmark with preset geometry ────────────────────
+        // Dedup: if we've already rendered this landmark's preset (from a
+        // sibling polygon — main building, building:part, etc.), skip.
+        // The preset is a synthesised iconic shape; rendering it twice
+        // produces overlapping geometry / Z-fighting.
+        if (renderedLandmarks.has(tierResult.presetName)) {
+          continue;
+        }
         landmarkCtx.acc = buildingAcc;
         const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
         if (!applied) {
           collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
           standardCount++;
         } else {
+          renderedLandmarks.add(tierResult.presetName);
           landmarkCount++;
         }
       } else if (tierResult.tier === 'tall-tower') {

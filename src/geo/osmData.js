@@ -788,39 +788,31 @@ function dropEnvelopeBuildings(buildings) {
     });
   }
 
-  // ── PASS 1 — Container handling (height-aware) ───────────────────────────
-  // For each building, collect smaller buildings whose centroids sit inside
-  // its polygon ("children").  Track total child area, ground-child area
-  // (children with min_height ≈ 0), and lowest non-ground min_height.
+  // ── PASS 1 — KEEP everything (no drops) ──────────────────────────────────
+  // Per user feedback: dropping ANY building leaves visible gaps in some
+  // areas.  Instead, render ALL buildings and parts.  Landmarks (Eiffel,
+  // Burj, etc.) are deduplicated downstream in buildMap.js — the iconic
+  // preset fires once and subsequent landmark-tagged polygons are skipped,
+  // so overlapping preset geometry is impossible.
   //
-  // Decision uses BOTH the building's stated height AND the ground coverage:
+  // For non-landmark buildings, parts overlap with their parent main —
+  // visually the main is a solid block at ground level (preserving the
+  // building's footprint) and parts add upper-level detail on top.  Some
+  // Z-fighting where a part's polygon equals the main's, but no missing
+  // bases and no floating shapes.
   //
-  //   * Tall landmark (height ≥ 50 m) with ANY ground-level children
-  //       → DROP me entirely.  Tall landmarks (Eiffel, Burj, Empire State)
-  //         model their structure with ground-anchored part polygons that
-  //         fully replace the outer envelope; preserving the envelope here
-  //         re-introduces the over-extruded outline problem.
-  //
-  //   * Short building (< 50 m) with ground children covering ≥ 60 % of me
-  //       → DROP me.  A small building where ground floor parts substantially
-  //         cover the footprint can safely use parts only.
-  //
-  //   * Short building with ground children covering < 60 % of me, AND
-  //     I have upper-level children
-  //       → CAP my height to lowest upper-level child's min_height so I
-  //         form a SUPPORTING BASE — keeps the small building's footprint
-  //         visible at ground level and prevents upper parts from floating.
-  //
-  //   * Otherwise → keep me unchanged.  This covers normal buildings with
-  //     no children, or buildings whose children are tiny details.
+  // The only adjustment we make here is CAPPING a main's height down to
+  // the lowest upper-level part's min_height when ALL parts are at upper
+  // levels (no ground parts).  This prevents the main from extruding over
+  // a rooftop antenna that's supposed to stick out the top.
   const meta1 = buildMeta(buildings);
   const afterPass1 = [];
 
   for (let i = 0; i < buildings.length; i++) {
     const M = meta1[i];
 
-    let childrenCount      = 0;
-    let groundChildrenArea = 0;
+    let childrenCount       = 0;
+    let groundChildrenCount = 0;
     let lowestNonGroundMinH = Infinity;
 
     for (let j = 0; j < buildings.length; j++) {
@@ -830,32 +822,24 @@ function dropEnvelopeBuildings(buildings) {
       if (N.area >= M.area * 0.95) continue;
       if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
         childrenCount++;
-        if (N.minHeightM <= 0.5) {
-          groundChildrenArea += N.area;
-        } else if (N.minHeightM < lowestNonGroundMinH) {
-          lowestNonGroundMinH = N.minHeightM;
-        }
+        if (N.minHeightM <= 0.5) groundChildrenCount++;
+        else if (N.minHeightM < lowestNonGroundMinH) lowestNonGroundMinH = N.minHeightM;
       }
     }
 
-    if (childrenCount === 0) { afterPass1.push(M.ref); continue; }
-
-    const groundCoverage = groundChildrenArea / M.area;
-
-    // Tall landmarks: drop if any ground-level child exists
-    if (M.heightM >= 50 && groundChildrenArea > 0) continue;
-
-    // Short building, ground children dominate: drop, parts replace me
-    if (M.heightM < 50 && groundCoverage >= 0.60) continue;
-
-    // Has upper-level children: cap height to make a base
-    if (lowestNonGroundMinH < Infinity && lowestNonGroundMinH < M.heightM) {
+    // Has children but ALL of them are at upper levels (none on the ground).
+    // Cap my height to where the upper parts begin so I form a clean base.
+    if (childrenCount > 0 && groundChildrenCount === 0 &&
+        lowestNonGroundMinH < Infinity && lowestNonGroundMinH < M.heightM) {
       const newTags = { ...M.ref.tags, height: String(lowestNonGroundMinH) };
       afterPass1.push({ ...M.ref, tags: newTags });
       continue;
     }
 
-    // Otherwise keep me — children are small details that don't justify drop
+    // Default: keep me unchanged.  Includes:
+    //   - No children (normal building)
+    //   - Has ground-level children (parts overlap with my full extrusion;
+    //     visually the main provides the footprint; parts add upper detail)
     afterPass1.push(M.ref);
   }
 
