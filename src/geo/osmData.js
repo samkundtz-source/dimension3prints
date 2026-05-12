@@ -45,7 +45,7 @@ function buildDirectQuery(south, west, north, east) {
   return `[out:json][timeout:30][maxsize:33554432];
 (
   way["building"](${bb});
-  // building:part NOT fetched — see comment in worker/index.js
+  way["building:part"](${bb});
   relation["building"](${bb});
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
   way["natural"~"^(water|wetland)$"](${bb});
@@ -335,9 +335,10 @@ const GREEN_NATURAL = new Set(['wood','scrub','grassland','heath']);
 function classifyTags(tags) {
   if (!tags) return null;
 
-  // Only `building=*` is rendered.  building:part is intentionally ignored
-  // (see comment in worker/index.js Overpass query).
-  if (tags.building) return 'building';
+  // Both `building` and `building:part` are classified as 'building'.  Parts
+  // carry the isBuildingPart flag (set in addFeature) for downstream smart
+  // rendering decisions.
+  if (tags.building || tags['building:part']) return 'building';
 
   if (tags.highway) {
     if (ROAD_TYPES.has(tags.highway)) return 'road';
@@ -784,59 +785,79 @@ function dropEnvelopeBuildings(buildings) {
     });
   }
 
-  // ── PASS 1 — KEEP everything (no drops) ──────────────────────────────────
-  // Per user feedback: dropping ANY building leaves visible gaps in some
-  // areas.  Instead, render ALL buildings and parts.  Landmarks (Eiffel,
-  // Burj, etc.) are deduplicated downstream in buildMap.js — the iconic
-  // preset fires once and subsequent landmark-tagged polygons are skipped,
-  // so overlapping preset geometry is impossible.
-  //
-  // For non-landmark buildings, parts overlap with their parent main —
-  // visually the main is a solid block at ground level (preserving the
-  // building's footprint) and parts add upper-level detail on top.  Some
-  // Z-fighting where a part's polygon equals the main's, but no missing
-  // bases and no floating shapes.
-  //
-  // The only adjustment we make here is CAPPING a main's height down to
-  // the lowest upper-level part's min_height when ALL parts are at upper
-  // levels (no ground parts).  This prevents the main from extruding over
-  // a rooftop antenna that's supposed to stick out the top.
+  // ── PASS 1 — Smart container handling ────────────────────────────────────
+  // For each MAIN building (non-part), look at its building:part children.
+  //   If the parts genuinely model the building (cover ≥50 % of the main's
+  //   area AND span ground-to-top vertically) → DROP main, render parts.
+  //   Otherwise → KEEP main, but skip ground-level parts that would overlap
+  //               with the main's extrusion.  Upper-level parts (rooftop
+  //               antennas, etc.) still render — they sit ON TOP of the
+  //               main without overlap.
+  // Also for each MAIN with only upper-level children, CAP the main's
+  // height to where parts begin so the main forms a clean supporting base.
   const meta1 = buildMeta(buildings);
-  const afterPass1 = [];
+  const dropMain = new Set();
+  const dropPart = new Set();
+  const capMainTo = new Map(); // index → new height in metres
 
   for (let i = 0; i < buildings.length; i++) {
     const M = meta1[i];
+    if (M.ref.isBuildingPart) continue; // analyse only mains
 
-    let childrenCount       = 0;
-    let groundChildrenCount = 0;
-    let lowestNonGroundMinH = Infinity;
-
+    const childIdx = [];
     for (let j = 0; j < buildings.length; j++) {
       if (j === i) continue;
       const N = meta1[j];
+      if (!N.ref.isBuildingPart) continue; // only parts are children
       if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
       if (N.area >= M.area * 0.95) continue;
       if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
-        childrenCount++;
-        if (N.minHeightM <= 0.5) groundChildrenCount++;
-        else if (N.minHeightM < lowestNonGroundMinH) lowestNonGroundMinH = N.minHeightM;
+        childIdx.push(j);
       }
     }
 
-    // Has children but ALL of them are at upper levels (none on the ground).
-    // Cap my height to where the upper parts begin so I form a clean base.
-    if (childrenCount > 0 && groundChildrenCount === 0 &&
-        lowestNonGroundMinH < Infinity && lowestNonGroundMinH < M.heightM) {
-      const newTags = { ...M.ref.tags, height: String(lowestNonGroundMinH) };
-      afterPass1.push({ ...M.ref, tags: newTags });
-      continue;
-    }
+    if (childIdx.length === 0) continue; // no children, render main normally
 
-    // Default: keep me unchanged.  Includes:
-    //   - No children (normal building)
-    //   - Has ground-level children (parts overlap with my full extrusion;
-    //     visually the main provides the footprint; parts add upper detail)
-    afterPass1.push(M.ref);
+    let partAreaSum = 0;
+    let lowestMinH  = Infinity;
+    let highestH    = 0;
+    for (const j of childIdx) {
+      const N = meta1[j];
+      partAreaSum += N.area;
+      if (N.minHeightM < lowestMinH) lowestMinH = N.minHeightM;
+      if (N.heightM    > highestH)   highestH   = N.heightM;
+    }
+    const coverage = partAreaSum / M.area;
+    const fullVerticalSpan = lowestMinH <= 1 && highestH >= M.heightM * 0.85;
+
+    if (coverage >= 0.5 && fullVerticalSpan) {
+      // Parts genuinely model the building — drop main, all parts render
+      dropMain.add(i);
+    } else {
+      // Keep main.  Skip ground-level parts (would overlap with main's
+      // ground extrusion).  Upper-level parts still render on top.
+      for (const j of childIdx) {
+        if (meta1[j].minHeightM <= 1) dropPart.add(j);
+      }
+      // If we have ONLY upper-level children, cap main height to lowest
+      // upper min_h so it forms a clean base for them.
+      const allUpper = childIdx.every(j => meta1[j].minHeightM > 1);
+      if (allUpper && lowestMinH > 1 && lowestMinH < M.heightM) {
+        capMainTo.set(i, lowestMinH);
+      }
+    }
+  }
+
+  const afterPass1 = [];
+  for (let i = 0; i < buildings.length; i++) {
+    if (dropMain.has(i) || dropPart.has(i)) continue;
+    if (capMainTo.has(i)) {
+      const cap = capMainTo.get(i);
+      const newTags = { ...buildings[i].tags, height: String(cap) };
+      afterPass1.push({ ...buildings[i], tags: newTags });
+    } else {
+      afterPass1.push(buildings[i]);
+    }
   }
 
   // ── PASS 2 — Ground orphan parts (no support below them) ─────────────────

@@ -286,16 +286,20 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   let buildingCount = 0;
   let landmarkCount = 0, tallTowerCount = 0, standardCount = 0;
 
-  // ── Landmark representative selection ──────────────────────────────────────
-  // OSM (and Overture) often have multiple polygons sharing a landmark's
-  // identifying tags (name, wikidata, osm-id).  The first polygon in
-  // iteration order can be a tiny stub which would generate a tiny iconic
-  // shape if the preset fires on it.  Pre-scan to find the LARGEST polygon
-  // for each landmark preset and use that as the representative.  All other
-  // landmark-tagged polygons of the same preset are skipped.
-  const landmarkRepIdx   = new Map();   // presetName → buildingFootprints index
-  const landmarkRepArea  = new Map();   // presetName → that polygon's area
+  // ── Landmark representative selection + skip-zone ─────────────────────────
+  // OSM/Overture often have many polygons sharing a landmark's identifying
+  // tags (name, wikidata, osm-id) — main building plus building:parts that
+  // each carry the same name through a relation.  We pick the LARGEST
+  // polygon for each landmark preset as the representative; the iconic
+  // shape is generated using that polygon's centroid + dim.  Then we mark
+  // every OTHER polygon (landmark-tagged OR plain building:part) whose
+  // centroid sits inside the representative's polygon for skipping —
+  // otherwise the iconic shape would have raw-extruded parts overlapping it.
+  const landmarkRepIdx   = new Map();
+  const landmarkRepArea  = new Map();
+  const landmarkSkipIdx  = new Set();
   if (!mountainView) {
+    // Round 1: find largest polygon per preset
     for (let i = 0; i < buildingFootprints.length; i++) {
       const bf = buildingFootprints[i];
       const ident = landmarkRegistry.identify(bf.tags, bf.osmId || '');
@@ -307,6 +311,24 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
         }
       }
     }
+    // Round 2: for each representative, mark polygons inside it for skipping
+    for (const repIdx of landmarkRepIdx.values()) {
+      const repPoly = buildingFootprints[repIdx].polygon;
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const p of repPoly) {
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      }
+      for (let i = 0; i < buildingFootprints.length; i++) {
+        if (i === repIdx) continue;
+        const poly = buildingFootprints[i].polygon;
+        let cx = 0, cy = 0;
+        for (const p of poly) { cx += p.x; cy += p.y; }
+        cx /= poly.length; cy /= poly.length;
+        if (cx < minX || cx > maxX || cy < minY || cy > maxY) continue;
+        if (pointInRayCast(cx, cy, repPoly)) landmarkSkipIdx.add(i);
+      }
+    }
   }
 
   onProgress?.('Extruding buildings…', 74);
@@ -314,6 +336,8 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   let _bfIdx = -1;
   for (const bf of (mountainView ? [] : buildingFootprints)) {
     _bfIdx++;
+    // Skip polygons inside a landmark's representative footprint (handled by preset)
+    if (landmarkSkipIdx.has(_bfIdx)) continue;
     // Skip buildings too small to print — use area so narrow row-houses aren't dropped
     if (minBBoxDimension(bf.polygon) < MIN_BLDG_DIM) continue;
     if (Math.abs(signedArea2D(bf.polygon)) < 0.3) continue; // < 0.3mm² is sub-nozzle
@@ -995,6 +1019,22 @@ function computeAutoExag(elevGrid, N, hScale, mountainView = false) {
 // Generates a grid of quads displaced by real elevation. Border cells that
 // straddle hexInner have their outside corners clamped to the hexInner boundary
 // so the terrain fills right up to the wall with no gap and no bleed into the ring.
+// Even-odd ray-cast point-in-polygon for general (non-convex) polygons.
+// Same as pointInPolygonRayCast — duplicated under a shorter name used by
+// the landmark skip-zone code in the building loop above.
+function pointInRayCast(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    if (((yi > y) !== (yj > y)) &&
+        (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
 // Even-odd ray-cast point-in-polygon for general (non-convex) polygons.
 // Polygon is an array of {x,y} points.
 function pointInPolygonRayCast(x, y, poly) {
