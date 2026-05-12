@@ -159,10 +159,12 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     if (!poly || poly.length < 3) continue;
     const area = Math.abs(signedArea2D(poly));
     if (area < 1.0) continue;
-    // Only drop water that covers essentially the entire model (ocean centre-point).
-    // 95% threshold: keeps large rivers, bays and harbour areas that previously
-    // fell through the 85% cutoff for coastal cities like NYC.
-    if (area > hexArea * 0.95) continue;
+    // Reject water that covers most of the model — these are almost always
+    // sea/harbour/bay multipolygons whose outer ring extends far beyond the
+    // bbox.  Genuine in-bbox rivers rarely exceed ~50% of the hex.  80% gives
+    // a safety margin for very wide rivers (Mississippi, Amazon) while still
+    // rejecting ocean/harbour relations that would clip to ugly rectangles.
+    if (area > hexArea * 0.80) continue;
     waterPolys.push(poly);
   }
 

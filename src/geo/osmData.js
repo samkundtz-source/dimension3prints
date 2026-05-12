@@ -48,11 +48,10 @@ function buildDirectQuery(south, west, north, east) {
   way["building:part"](${bb});
   relation["building"](${bb});
   way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
-  way["natural"~"^(water|wetland|bay|strait|lagoon)$"](${bb});
+  way["natural"~"^(water|wetland)$"](${bb});
   way["water"](${bb});
   way["waterway"="riverbank"](${bb});
-  way["waterway"="dock"](${bb});
-  way["waterway"~"^(river|canal|stream|drain|ditch|tidal_channel)$"](${bb});
+  way["waterway"~"^(river|canal|stream|drain|ditch)$"](${bb});
   way["landuse"~"^(reservoir|basin)$"](${bb});
   relation["natural"="water"](${bb});
   relation["waterway"="riverbank"](${bb});
@@ -322,9 +321,11 @@ function classifyTags(tags) {
     return 'road';
   }
 
+  // natural=bay/strait/lagoon are intentionally NOT classified as water — they
+  // are huge OSM polygons (e.g. "Upper New York Bay" covers the entire harbor)
+  // that clip to ugly rectangles in city-scale prints.
   if (tags.natural === 'water' || tags.water || tags.landuse === 'reservoir' ||
       tags.landuse === 'basin' || tags.natural === 'wetland' ||
-      tags.natural === 'bay' || tags.natural === 'strait' || tags.natural === 'lagoon' ||
       tags.waterway === 'riverbank' || tags.waterway === 'dock') {
     return 'water';
   }
