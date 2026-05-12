@@ -752,73 +752,129 @@ function ptClose(a, b) {
 function dropEnvelopeBuildings(buildings) {
   if (!buildings || buildings.length < 2) return buildings;
 
-  // Pre-compute centroid + bbox + aspect ratio for each building.
-  // Aspect ratio = vertical extent (m) / horizontal extent (m).  We use this
-  // instead of trusting building:part tag values (which vary wildly across
-  // OSM contributors — Eiffel's "clover" outline polygon could be tagged
-  // building:part=column, =skin, =roof, anything).
-  // Approx mm → m conversion: at 1 km radius / 75 mm model radius, 1 mm ≈ 13.3 m.
-  const MM_TO_M = 1000 / 75;
-
-  const meta = buildings.map(b => {
-    let cx = 0, cy = 0;
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (const p of b.polygon) {
-      cx += p.x; cy += p.y;
-      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
-    }
-    cx /= b.polygon.length; cy /= b.polygon.length;
-    const polyDimM = Math.min(maxX - minX, maxY - minY) * MM_TO_M;
-
-    const t = b.tags || {};
-    let h = 10;
-    if (t.height) {
+  function quickHeight(t) {
+    if (t?.height) {
       const v = parseFloat(t.height);
-      if (!isNaN(v) && v > 0) h = v;
-    } else if (t['building:levels']) {
+      if (!isNaN(v) && v > 0) return v;
+    }
+    if (t?.['building:levels']) {
       const v = parseFloat(t['building:levels']);
-      if (!isNaN(v) && v > 0) h = v * 3.2;
+      if (!isNaN(v) && v > 0) return v * 3.2;
     }
-    let minH = 0;
-    if (t.min_height) {
+    return 10;
+  }
+  function quickMinHeight(t) {
+    if (t?.min_height) {
       const v = parseFloat(t.min_height);
-      if (!isNaN(v) && v >= 0) minH = v;
+      if (!isNaN(v) && v >= 0) return v;
     }
-    const extentM = Math.max(0.1, h - minH);
-    const aspectRatio = extentM / Math.max(0.1, polyDimM);
+    return 0;
+  }
 
-    return { ref: b, cx, cy, minX, maxX, minY, maxY,
-             area: (maxX - minX) * (maxY - minY),
-             aspectRatio };
-  });
+  function buildMeta(list) {
+    return list.map(b => {
+      let cx = 0, cy = 0;
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (const p of b.polygon) {
+        cx += p.x; cy += p.y;
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+      }
+      cx /= b.polygon.length; cy /= b.polygon.length;
+      return { ref: b, cx, cy, minX, maxX, minY, maxY,
+               area: (maxX - minX) * (maxY - minY),
+               minHeightM: quickMinHeight(b.tags),
+               heightM:    quickHeight(b.tags) };
+    });
+  }
 
-  return buildings.filter((b, idx) => {
-    const M = meta[idx];
+  // ── PASS 1 — Container handling ──────────────────────────────────────────
+  // For each building, collect smaller buildings whose centroids sit inside
+  // its polygon ("children").  Decide:
+  //   - 0 children → not a container; keep unchanged.
+  //   - Total child area < 30 % of mine → just contains a small detail (a
+  //     rooftop kiosk inside a courtyard, etc); keep unchanged.
+  //   - Children cover ≥30 % AND lowest child min_height ≈ 0 → children
+  //     fully replace me from ground up; DROP me.
+  //   - Children cover ≥30 % but lowest child min_height > 0 → children
+  //     only cover the upper portion; CAP my height to lowest child's
+  //     min_height so I become a supporting BASE (no floating).
+  const meta1 = buildMeta(buildings);
+  const afterPass1 = [];
 
-    // Slab guard: short, wide polygons (platforms, plinths) are never
-    // containers.  Aspect ratio < 1.5 means the polygon is wider than 0.66 ×
-    // its height — that's a slab.  Eiffel platforms (1 m tall, 70 m wide,
-    // aspect 0.014) are protected here.
-    if (M.aspectRatio < 1.5) return true;
+  for (let i = 0; i < buildings.length; i++) {
+    const M = meta1[i];
 
-    // Tall building.  Count smaller-area children whose centroids sit inside
-    // our polygon.  2+ children = clear "envelope/outline" container — drop.
-    // 0–1 children = either a true tall building (skyscraper, leg column)
-    // or contains at most an antenna that's safe to keep alongside it.
-    let containCount = 0;
+    let childrenAreaSum = 0;
+    let lowestChildMinH = Infinity;
+    let childrenCount = 0;
+
     for (let j = 0; j < buildings.length; j++) {
-      if (j === idx) continue;
-      const N = meta[j];
+      if (j === i) continue;
+      const N = meta1[j];
       if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
       if (N.area >= M.area * 0.95) continue;
       if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
-        containCount++;
-        if (containCount >= 2) return false;
+        childrenAreaSum += N.area;
+        childrenCount++;
+        if (N.minHeightM < lowestChildMinH) lowestChildMinH = N.minHeightM;
       }
     }
-    return true;
-  });
+
+    if (childrenCount === 0 || childrenAreaSum < M.area * 0.30) {
+      afterPass1.push(M.ref);
+      continue;
+    }
+
+    if (lowestChildMinH <= 0.5) {
+      // Children cover from ground up — drop me entirely
+      continue;
+    }
+
+    // Cap my height to lowest child's min_height — I become a supporting base
+    const newTags = { ...M.ref.tags, height: String(lowestChildMinH) };
+    afterPass1.push({ ...M.ref, tags: newTags });
+  }
+
+  // ── PASS 2 — Ground orphan parts (no support below them) ─────────────────
+  // After Pass 1 some buildings have been removed or shortened.  Now any part
+  // whose min_height > 0 needs verification: is there ANOTHER building at the
+  // same (x,y) that reaches up to within 5 m of my min_height?  If not, I'm
+  // floating in the air with no visible support beneath.  Reset min_height
+  // to 0 so the part extrudes from the base plate instead.
+  const meta2 = buildMeta(afterPass1);
+  const final = [];
+
+  for (let i = 0; i < afterPass1.length; i++) {
+    const M = meta2[i];
+
+    if (M.minHeightM < 1) {
+      final.push(M.ref);
+      continue;
+    }
+
+    let hasSupport = false;
+    for (let j = 0; j < afterPass1.length; j++) {
+      if (j === i) continue;
+      const N = meta2[j];
+      // Other building must reach at least within 5 m below my min_height
+      if (N.heightM < M.minHeightM - 5) continue;
+      if (pointInPolygonGeneral({ x: M.cx, y: M.cy }, N.ref.polygon)) {
+        hasSupport = true;
+        break;
+      }
+    }
+
+    if (hasSupport) {
+      final.push(M.ref);
+    } else {
+      // Floating — ground it
+      const newTags = { ...M.ref.tags, min_height: '0' };
+      final.push({ ...M.ref, tags: newTags });
+    }
+  }
+
+  return final;
 }
 
 // ─── Coastline → sea-polygon construction ─────────────────────────────────────
