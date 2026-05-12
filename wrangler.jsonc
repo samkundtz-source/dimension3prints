@@ -17,4 +17,11 @@
   "kv_namespaces": [
     { "binding": "SETTINGS", "id": "59a9fc521dc9450b934a359acafb9bc1" }
   ]
+  // R2 buckets — uncomment after creating each bucket via:
+  //   wrangler r2 bucket create overture-water
+  //   wrangler r2 bucket create ms-buildings
+  // ,"r2_buckets": [
+  //   { "binding": "OVERTURE_WATER", "bucket_name": "overture-water" },
+  //   { "binding": "MS_BUILDINGS",   "bucket_name": "ms-buildings"   }
+  // ]
 }

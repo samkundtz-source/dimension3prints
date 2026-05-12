@@ -465,6 +465,44 @@ async function handleOrderAvailability(request, env) {
   return jsonResponse(result);
 }
 
+async function handleOvertureWater(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+
+  const ip = getClientIP(request);
+  const rl = await checkPublicRateLimit(env, ip, 'overture-water', 15, 60);
+  if (rl.blocked) return jsonResponse({ error: 'Too many requests.' }, 429, { 'Retry-After': String(rl.retryAfter) });
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+
+  const bboxError = validateBbox(body);
+  if (bboxError) return jsonResponse({ error: bboxError }, 400);
+
+  if (!env.OVERTURE_WATER) return jsonResponse({ features: [], note: 'OVERTURE_WATER R2 bucket not configured' });
+
+  const ZOOM = 12;
+  const tl   = latLngToTile(body.north, body.west, ZOOM);
+  const br   = latLngToTile(body.south, body.east, ZOOM);
+
+  const tileKeys = [];
+  for (let x = tl.x; x <= br.x; x++) {
+    for (let y = tl.y; y <= br.y; y++) tileKeys.push(`${ZOOM}/${x}/${y}.json`);
+  }
+  if (tileKeys.length > 16) return jsonResponse({ features: [], note: 'bbox too large' });
+
+  const allFeatures = [];
+  await Promise.all(tileKeys.map(async key => {
+    try {
+      const obj = await env.OVERTURE_WATER.get(key);
+      if (!obj) return;
+      const data = await obj.json();
+      if (Array.isArray(data?.features)) allFeatures.push(...data.features);
+    } catch {}
+  }));
+
+  return jsonResponse({ features: allFeatures });
+}
+
 async function handleMsBuildings(request, env) {
   if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
 
@@ -926,6 +964,7 @@ export default {
       case '/api/order-info':            return handleOrderInfo(request, env);
       case '/api/order-availability':    return handleOrderAvailability(request, env);
       case '/api/ms-buildings':          return handleMsBuildings(request, env);
+      case '/api/overture-water':        return handleOvertureWater(request, env);
       case '/api/content':               return handleGetContent(request, env);
       case '/api/osm-data':              return handleOSMData(request, env);
       case '/api/geocode':               return handleGeocode(request, env);

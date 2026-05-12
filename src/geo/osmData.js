@@ -407,6 +407,50 @@ function addFeature(type, coords, tags, hexVertices, features, osmId) {
   return false;
 }
 
+// ─── Overture Maps water polygon parser ──────────────────────────────────────
+// Converts GeoJSON features from the /api/overture-water endpoint into the
+// same format as features.water (polygons), so they can be merged in.
+//
+// Overture's `base` theme tags water bodies — including OCEANS — as proper
+// polygons (unlike OSM where the ocean is the negative space outside
+// natural=coastline ways).  For coastal locations this gives clean ocean
+// coverage without our coastline-stitching machinery.
+
+export function parseOvertureWater(geojsonFeatures, projection, hexVertices) {
+  const polys = [];
+  for (const feat of (geojsonFeatures || [])) {
+    const geom = feat?.geometry;
+    if (!geom) continue;
+
+    // Overture water features can be Polygon or MultiPolygon.  We only use
+    // the outer ring; inner rings (holes for islands) are dropped because
+    // extrudeSlab doesn't support holes — the island surface above the water
+    // slab handles that visually.
+    const rings = geom.type === 'Polygon'      ? [geom.coordinates[0]]
+                : geom.type === 'MultiPolygon' ? geom.coordinates.map(p => p[0])
+                : [];
+
+    for (const ring of rings) {
+      if (!ring || ring.length < 3) continue;
+      // GeoJSON coordinates are [lng, lat]
+      const coords = ring.map(([lng, lat]) => projection.project(lat, lng));
+      const deduped = deduplicateRing(coords);
+      if (deduped.length < 3) continue;
+
+      const ccw     = ensureCCW(deduped);
+      const clipped = clipToHex(ccw, hexVertices);
+      if (!clipped || clipped.length < 3) continue;
+
+      const tags = {
+        natural: 'water',
+        water:   feat.properties?.subtype || feat.properties?.class || 'overture',
+      };
+      polys.push({ polygon: clipped, holes: [], tags, osmId: feat.id || 'overture' });
+    }
+  }
+  return polys;
+}
+
 // ─── Microsoft Global Building Footprints parser ─────────────────────────────
 // Converts GeoJSON features from the /api/ms-buildings endpoint into the same
 // format as parseOSMData output, so they can be merged into features.buildings.
