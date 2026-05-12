@@ -187,7 +187,9 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   if (elevGrid) {
     centerElev = bilinearInterp(elevGrid, ELEV_N, 0, 0, MODEL_RADIUS_MM);
     onProgress?.('Building terrain surface…', 67);
-    collectTerrainSurface(baseAcc, elevGrid, ELEV_N, hexInner, BASE, centerElev, hScale, terrainExag);
+    // Pass water polygons so the terrain surface clamps to sea level wherever
+    // it would otherwise poke up through a flat water slab.
+    collectTerrainSurface(baseAcc, elevGrid, ELEV_N, hexInner, BASE, centerElev, hScale, terrainExag, waterPolys);
     collectTerrainBorderWall(baseAcc, hexInner, elevGrid, ELEV_N, BASE, centerElev, hScale, terrainExag);
   }
 
@@ -942,17 +944,66 @@ function computeAutoExag(elevGrid, N, hScale, mountainView = false) {
 // Generates a grid of quads displaced by real elevation. Border cells that
 // straddle hexInner have their outside corners clamped to the hexInner boundary
 // so the terrain fills right up to the wall with no gap and no bleed into the ring.
-function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag) {
+// Even-odd ray-cast point-in-polygon for general (non-convex) polygons.
+// Polygon is an array of {x,y} points.
+function pointInPolygonRayCast(x, y, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x, yi = poly[i].y;
+    const xj = poly[j].x, yj = poly[j].y;
+    if (((yi > y) !== (yj > y)) &&
+        (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function collectTerrainSurface(acc, elevGrid, N, shapeVerts, BASE, centerElev, hScale, terrainExag, waterPolys = []) {
   const GRID = 128; // 128×128 → ~1.2 mm/cell @ 75 mm radius — smooth mountains
   const R = MODEL_RADIUS_MM;
   const mmPerM = hScale * terrainExag;
+
+  // ── Water mask ────────────────────────────────────────────────────────────
+  // Precompute a coarse boolean mask of which model-space cells are inside any
+  // water polygon, so we can clamp terrain height to sea level there.  Without
+  // this clamp, the terrain mesh's interpolated heights inside large coastline
+  // polygons (interior shore terrain, micro-islands, smoothed elevation noise)
+  // poke up through the flat water slab as visible white land patches.
+  // 128×128 mask → ~1.2 mm cells, matching the terrain grid resolution.
+  const WG = 128;
+  const waterMask = new Uint8Array(WG * WG);
+  if (waterPolys.length > 0) {
+    for (let j = 0; j < WG; j++) {
+      const wy = (j / (WG - 1) * 2 - 1) * R;
+      for (let i = 0; i < WG; i++) {
+        const wx = (i / (WG - 1) * 2 - 1) * R;
+        for (const poly of waterPolys) {
+          if (pointInPolygonRayCast(wx, wy, poly)) {
+            waterMask[j * WG + i] = 1;
+            break;
+          }
+        }
+      }
+    }
+  }
+  function isWaterMM(mx, my) {
+    if (waterPolys.length === 0) return false;
+    const i = Math.round((mx / R + 1) * 0.5 * (WG - 1));
+    const j = Math.round((my / R + 1) * 0.5 * (WG - 1));
+    if (i < 0 || i >= WG || j < 0 || j >= WG) return false;
+    return waterMask[j * WG + i] === 1;
+  }
 
   // rawTerrainY: compute terrain height without a polygon containment check.
   // Safe to call for any point inside OR on the boundary of hexInner.
   // (pointInConvexPolygon uses ray-casting which is unreliable for points
   //  exactly on a polygon edge — clamped border corners would incorrectly
   //  return BASE and leave a gap at the border wall.)
+  // Inside water polygons, clamp to BASE (sea level) so the flat water slab
+  // covers the terrain cleanly.
   function rawTerrainY(mx, my) {
+    if (isWaterMM(mx, my)) return BASE;
     const elev = bilinearInterp(elevGrid, N, mx, my, R);
     const rel  = (elev - centerElev) * mmPerM;
     return BASE + Math.max(-(BASE - 0.2), rel);
