@@ -788,26 +788,40 @@ function dropEnvelopeBuildings(buildings) {
     });
   }
 
-  // ── PASS 1 — Container handling ──────────────────────────────────────────
+  // ── PASS 1 — Container handling (height-aware) ───────────────────────────
   // For each building, collect smaller buildings whose centroids sit inside
-  // its polygon ("children").  Decide:
-  //   - 0 children → not a container; keep unchanged.
-  //   - Total child area < 30 % of mine → just contains a small detail (a
-  //     rooftop kiosk inside a courtyard, etc); keep unchanged.
-  //   - Children cover ≥30 % AND lowest child min_height ≈ 0 → children
-  //     fully replace me from ground up; DROP me.
-  //   - Children cover ≥30 % but lowest child min_height > 0 → children
-  //     only cover the upper portion; CAP my height to lowest child's
-  //     min_height so I become a supporting BASE (no floating).
+  // its polygon ("children").  Track total child area, ground-child area
+  // (children with min_height ≈ 0), and lowest non-ground min_height.
+  //
+  // Decision uses BOTH the building's stated height AND the ground coverage:
+  //
+  //   * Tall landmark (height ≥ 50 m) with ANY ground-level children
+  //       → DROP me entirely.  Tall landmarks (Eiffel, Burj, Empire State)
+  //         model their structure with ground-anchored part polygons that
+  //         fully replace the outer envelope; preserving the envelope here
+  //         re-introduces the over-extruded outline problem.
+  //
+  //   * Short building (< 50 m) with ground children covering ≥ 60 % of me
+  //       → DROP me.  A small building where ground floor parts substantially
+  //         cover the footprint can safely use parts only.
+  //
+  //   * Short building with ground children covering < 60 % of me, AND
+  //     I have upper-level children
+  //       → CAP my height to lowest upper-level child's min_height so I
+  //         form a SUPPORTING BASE — keeps the small building's footprint
+  //         visible at ground level and prevents upper parts from floating.
+  //
+  //   * Otherwise → keep me unchanged.  This covers normal buildings with
+  //     no children, or buildings whose children are tiny details.
   const meta1 = buildMeta(buildings);
   const afterPass1 = [];
 
   for (let i = 0; i < buildings.length; i++) {
     const M = meta1[i];
 
-    let childrenAreaSum = 0;
-    let lowestChildMinH = Infinity;
-    let childrenCount = 0;
+    let childrenCount      = 0;
+    let groundChildrenArea = 0;
+    let lowestNonGroundMinH = Infinity;
 
     for (let j = 0; j < buildings.length; j++) {
       if (j === i) continue;
@@ -815,25 +829,34 @@ function dropEnvelopeBuildings(buildings) {
       if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
       if (N.area >= M.area * 0.95) continue;
       if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
-        childrenAreaSum += N.area;
         childrenCount++;
-        if (N.minHeightM < lowestChildMinH) lowestChildMinH = N.minHeightM;
+        if (N.minHeightM <= 0.5) {
+          groundChildrenArea += N.area;
+        } else if (N.minHeightM < lowestNonGroundMinH) {
+          lowestNonGroundMinH = N.minHeightM;
+        }
       }
     }
 
-    if (childrenCount === 0 || childrenAreaSum < M.area * 0.30) {
-      afterPass1.push(M.ref);
+    if (childrenCount === 0) { afterPass1.push(M.ref); continue; }
+
+    const groundCoverage = groundChildrenArea / M.area;
+
+    // Tall landmarks: drop if any ground-level child exists
+    if (M.heightM >= 50 && groundChildrenArea > 0) continue;
+
+    // Short building, ground children dominate: drop, parts replace me
+    if (M.heightM < 50 && groundCoverage >= 0.60) continue;
+
+    // Has upper-level children: cap height to make a base
+    if (lowestNonGroundMinH < Infinity && lowestNonGroundMinH < M.heightM) {
+      const newTags = { ...M.ref.tags, height: String(lowestNonGroundMinH) };
+      afterPass1.push({ ...M.ref, tags: newTags });
       continue;
     }
 
-    if (lowestChildMinH <= 0.5) {
-      // Children cover from ground up — drop me entirely
-      continue;
-    }
-
-    // Cap my height to lowest child's min_height — I become a supporting base
-    const newTags = { ...M.ref.tags, height: String(lowestChildMinH) };
-    afterPass1.push({ ...M.ref, tags: newTags });
+    // Otherwise keep me — children are small details that don't justify drop
+    afterPass1.push(M.ref);
   }
 
   // ── PASS 2 — Ground orphan parts (no support below them) ─────────────────
