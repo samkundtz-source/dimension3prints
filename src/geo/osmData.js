@@ -825,19 +825,28 @@ function dropEnvelopeBuildings(buildings) {
   const dropMain  = new Set();
   const capMainTo = new Map();
 
-  // Per user request: NEVER drop mains.  Every building's main outline
-  // renders, providing a visible footprint.  Parts render with a tiny
-  // Z-offset (in buildMap.js) so they win the depth test where they overlap
-  // with mains — no Z-fighting seams.  For landmarks the iconic preset
-  // fires on the main and the skip-zone removes the parts to avoid overlap.
-  // The only adjustment here is capping a main's height when it has ONLY
-  // rooftop parts (no ground parts) so it doesn't extrude over them.
+  // Height-aware container handling — restored to the pattern the user
+  // liked, with landmark protection layered on top:
+  //
+  //   * Known landmark               → KEEP main unchanged (preset will fire)
+  //   * Tall (≥50 m) + any ground    → DROP main (parts cover from ground)
+  //   * Short (<50 m) + ground cov   → DROP main (parts cover well)
+  //     ≥ 60 %
+  //   * Short (<50 m) + ground cov   → CAP main to lowest upper min_h
+  //     < 60 % + has upper parts        (becomes a supporting base)
+  //   * Short (<50 m) + ground cov   → KEEP main unchanged (preserve footprint)
+  //     < 60 % + no upper parts
+  //   * No children                  → KEEP unchanged
   for (let i = 0; i < buildings.length; i++) {
     const M = meta1[i];
     if (M.ref.isBuildingPart) continue;
 
-    let hasGroundChild  = false;
-    let lowestUpperMinH = Infinity;
+    // Landmark protection — preset fires on the full main outline
+    if (isKnownLandmark(M.ref)) continue;
+
+    let childrenCount       = 0;
+    let groundChildrenArea  = 0;
+    let lowestUpperMinH     = Infinity;
 
     for (let j = 0; j < buildings.length; j++) {
       if (j === i) continue;
@@ -847,14 +856,34 @@ function dropEnvelopeBuildings(buildings) {
       if (N.area >= M.area * 0.95) continue;
       if (!pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) continue;
 
-      if (N.minHeightM <= 1) hasGroundChild = true;
+      childrenCount++;
+      if (N.minHeightM <= 1) groundChildrenArea += N.area;
       else if (N.minHeightM < lowestUpperMinH) lowestUpperMinH = N.minHeightM;
     }
 
-    // Only-upper-parts case → cap main to where rooftop parts begin
-    if (!hasGroundChild && lowestUpperMinH < Infinity && lowestUpperMinH < M.heightM) {
-      capMainTo.set(i, lowestUpperMinH);
+    if (childrenCount === 0) continue; // no children → keep main as-is
+
+    const groundCoverage = groundChildrenArea / M.area;
+
+    // Tall ≥50 m with any ground children → drop main
+    if (M.heightM >= 50 && groundChildrenArea > 0) {
+      dropMain.add(i);
+      continue;
     }
+
+    // Short <50 m with ground coverage ≥60 % → drop main
+    if (M.heightM < 50 && groundCoverage >= 0.60) {
+      dropMain.add(i);
+      continue;
+    }
+
+    // Has upper-level parts → cap main to where they begin (becomes a base)
+    if (lowestUpperMinH < Infinity && lowestUpperMinH < M.heightM) {
+      capMainTo.set(i, lowestUpperMinH);
+      continue;
+    }
+
+    // Otherwise keep main unchanged (preserves footprint for sparse cases)
   }
 
   const afterPass1 = [];
