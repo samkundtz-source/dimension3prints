@@ -8,6 +8,21 @@
 
 import { deduplicateRing, ensureCCW, ensureCW } from '../utils/helpers.js';
 import { clipToHex } from './clipper.js';
+import landmarkData from '../geometry/landmarks.json';
+
+// Quick landmark check used by dropEnvelopeBuildings to PROTECT the main
+// polygon of known landmarks from being dropped — the landmark preset in
+// buildMap.js needs the large outer polygon to render the iconic shape.
+function isKnownLandmark(b) {
+  if (!b || !b.tags) return false;
+  const t = b.tags;
+  if (b.osmId && landmarkData.osmWayIds[b.osmId])           return true;
+  if (b.osmId && landmarkData.osmRelationIds[b.osmId])      return true;
+  if (t.wikidata && landmarkData.wikidataIds[t.wikidata])   return true;
+  const name = (t.name || '').toLowerCase().trim();
+  if (name && landmarkData.knownNames[name])                return true;
+  return false;
+}
 
 // ─── Geocoding ────────────────────────────────────────────────────────────────
 
@@ -807,6 +822,13 @@ function dropEnvelopeBuildings(buildings) {
   for (let i = 0; i < buildings.length; i++) {
     const M = meta1[i];
     if (M.ref.isBuildingPart) continue;
+
+    // PROTECTED: never drop a main that's a known landmark.  The landmark
+    // preset (e.g. eiffelTower, burjKhalifa) needs to fire on this full
+    // outer polygon to render the iconic shape at the right scale.  The
+    // landmark skip-zone in buildMap.js will remove any parts inside it
+    // so we don't get overlap.
+    if (isKnownLandmark(M.ref)) continue;
 
     let hasAnyChild     = false;
     let hasGroundChild  = false;
