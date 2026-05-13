@@ -785,90 +785,54 @@ function dropEnvelopeBuildings(buildings) {
     });
   }
 
-  // ── PASS 1 — Smart container handling ────────────────────────────────────
-  // For each MAIN building (non-part), look at its building:part children.
-  //   If the parts genuinely model the building (cover ≥50 % of the main's
-  //   area AND span ground-to-top vertically) → DROP main, render parts.
-  //   Otherwise → KEEP main, but skip ground-level parts that would overlap
-  //               with the main's extrusion.  Upper-level parts (rooftop
-  //               antennas, etc.) still render — they sit ON TOP of the
-  //               main without overlap.
-  // Also for each MAIN with only upper-level children, CAP the main's
-  // height to where parts begin so the main forms a clean supporting base.
+  // ── PASS 1 — Keep everything.  Only CAP heights to prevent over-extrusion.
+  // Per user request: don't remove any building or part.  Only adjust heights
+  // so a main doesn't extrude over its rooftop parts.  Visible overlap where
+  // a main and a part share polygon is handled by Z-offset in buildMap.js.
   const meta1 = buildMeta(buildings);
-  const dropMain = new Set();
-  const dropPart = new Set();
-  const capMainTo = new Map(); // index → new height in metres
+  const capMainTo = new Map();
 
   for (let i = 0; i < buildings.length; i++) {
     const M = meta1[i];
-    if (M.ref.isBuildingPart) continue; // analyse only mains
+    if (M.ref.isBuildingPart) continue;
 
-    const childIdx = [];
+    let lowestUpperMinH = Infinity;
+    let hasGroundChild = false;
+
     for (let j = 0; j < buildings.length; j++) {
       if (j === i) continue;
       const N = meta1[j];
-      if (!N.ref.isBuildingPart) continue; // only parts are children
+      if (!N.ref.isBuildingPart) continue;
       if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
       if (N.area >= M.area * 0.95) continue;
-      if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
-        childIdx.push(j);
-      }
+      if (!pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) continue;
+
+      if (N.minHeightM <= 1) hasGroundChild = true;
+      else if (N.minHeightM < lowestUpperMinH) lowestUpperMinH = N.minHeightM;
     }
 
-    if (childIdx.length === 0) continue; // no children, render main normally
-
-    let partAreaSum = 0;
-    let lowestMinH  = Infinity;
-    let highestH    = 0;
-    for (const j of childIdx) {
-      const N = meta1[j];
-      partAreaSum += N.area;
-      if (N.minHeightM < lowestMinH) lowestMinH = N.minHeightM;
-      if (N.heightM    > highestH)   highestH   = N.heightM;
-    }
-    const coverage = partAreaSum / M.area;
-    const fullVerticalSpan = lowestMinH <= 1 && highestH >= M.heightM * 0.85;
-
-    if (coverage >= 0.5 && fullVerticalSpan) {
-      // Parts genuinely model the building — drop main, all parts render
-      dropMain.add(i);
-    } else {
-      // Keep main.  Skip ground-level parts (would overlap with main's
-      // ground extrusion).  Upper-level parts still render on top.
-      for (const j of childIdx) {
-        if (meta1[j].minHeightM <= 1) dropPart.add(j);
-      }
-      // If we have ONLY upper-level children, cap main height to lowest
-      // upper min_h so it forms a clean base for them.
-      const allUpper = childIdx.every(j => meta1[j].minHeightM > 1);
-      if (allUpper && lowestMinH > 1 && lowestMinH < M.heightM) {
-        capMainTo.set(i, lowestMinH);
-      }
+    // ALL children at upper levels (no ground child) → cap main to where
+    // parts begin so it forms a clean base.
+    if (!hasGroundChild && lowestUpperMinH < Infinity && lowestUpperMinH < M.heightM) {
+      capMainTo.set(i, lowestUpperMinH);
     }
   }
 
-  const afterPass1 = [];
-  for (let i = 0; i < buildings.length; i++) {
-    if (dropMain.has(i) || dropPart.has(i)) continue;
+  const afterPass1 = buildings.map((b, i) => {
     if (capMainTo.has(i)) {
-      const cap = capMainTo.get(i);
-      const newTags = { ...buildings[i].tags, height: String(cap) };
-      afterPass1.push({ ...buildings[i], tags: newTags });
-    } else {
-      afterPass1.push(buildings[i]);
+      const newTags = { ...b.tags, height: String(capMainTo.get(i)) };
+      return { ...b, tags: newTags };
     }
-  }
+    return b;
+  });
 
-  // ── PASS 1b — Pair-wise part overlap (drop smaller of each Z-fighting pair)
-  // Even after Pass 1, OSM occasionally has multiple building:parts at the
-  // SAME vertical extent with overlapping polygons (e.g. a "skin" part + a
-  // structural part).  Both rendering at the same Z-range produces visible
-  // Z-fighting (vertical seams in the user's screenshot).  Detection:
-  //   * Both are building:parts.
-  //   * Either polygon's centroid lies inside the other's polygon.
-  //   * Their (min_height → height) ranges overlap by > 1 m.
-  // Action: keep the one with larger polygon area (more "complete" representation).
+  // ── PASS 1b — Pair-wise part overlap (no removal — just deduplicate exact dupes)
+  // User wants NO part removal, only stop overlaps.  We can't render two
+  // polygons at the same physical location without one occluding the other,
+  // but we CAN deduplicate when two parts model literally the same thing
+  // (same polygon, same vertical extent — pure duplicates from data import).
+  // For visible overlaps that aren't true duplicates, we use the per-part
+  // Z-offset in buildMap.js instead.
   const meta1b = buildMeta(afterPass1);
   const dropP1b = new Set();
   for (let i = 0; i < afterPass1.length; i++) {
@@ -880,23 +844,22 @@ function dropEnvelopeBuildings(buildings) {
       if (dropP1b.has(j)) continue;
       const N = meta1b[j];
 
-      // Quick bbox-overlap reject before expensive polygon test
-      if (M.maxX <= N.minX || N.maxX <= M.minX) continue;
-      if (M.maxY <= N.minY || N.maxY <= M.minY) continue;
+      // Bbox overlap area as fraction of the smaller polygon's bbox area.
+      const ovMinX = Math.max(M.minX, N.minX);
+      const ovMaxX = Math.min(M.maxX, N.maxX);
+      const ovMinY = Math.max(M.minY, N.minY);
+      const ovMaxY = Math.min(M.maxY, N.maxY);
+      const ovArea = Math.max(0, ovMaxX - ovMinX) * Math.max(0, ovMaxY - ovMinY);
+      const smaller = Math.min(M.area, N.area);
+      if (ovArea / smaller < 0.95) continue; // need ~complete overlap to count as "dup"
 
-      // Polygon-overlap check: at least one centroid inside the other
-      const mInN = pointInPolygonGeneral({ x: M.cx, y: M.cy }, N.ref.polygon);
-      const nInM = pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon);
-      if (!mInN && !nInM) continue;
+      // Vertical-extent overlap threshold: ranges must be near-identical
+      const vDiffBot = Math.abs(M.minHeightM - N.minHeightM);
+      const vDiffTop = Math.abs(M.heightM    - N.heightM);
+      if (vDiffBot > 1 || vDiffTop > 1) continue;
 
-      // Vertical-overlap check (>1 m of shared range)
-      const overlapBot = Math.max(M.minHeightM, N.minHeightM);
-      const overlapTop = Math.min(M.heightM,    N.heightM);
-      if (overlapTop - overlapBot < 1) continue;
-
-      // Drop the smaller-area one (the larger is the "main" detail)
-      if (M.area < N.area) { dropP1b.add(i); break; }
-      else                   dropP1b.add(j);
+      // Pure duplicate.  Drop one.
+      dropP1b.add(j);
     }
   }
   const afterPass1b = afterPass1.filter((_, i) => !dropP1b.has(i));
