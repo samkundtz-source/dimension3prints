@@ -524,6 +524,12 @@ export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices,
       // OSM parts and visually erase the landmark structure.
       if (osmMatches.some(m => m.ref.isBuildingPart)) continue;
 
+      // Also skip if any match is a known landmark.  Overture's polygon for
+      // a famous building is often smaller (just the central tower section)
+      // than the OSM main outline, which would make the iconic preset
+      // generate a miniature shape.  Keep the OSM main intact.
+      if (osmMatches.some(m => isKnownLandmark(m.ref))) continue;
+
       // Build merged tags.  Overture's class/height/levels/name win, but we
       // carry over critical OSM identifiers (wikidata, wikipedia, name) and
       // the OSM osmId itself so the landmark registry can still recognise

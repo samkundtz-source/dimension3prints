@@ -190,7 +190,10 @@ export const LANDMARK_PRESETS = {
     generate(ctx, acc, polygon, baseY, totalH, heightM) {
       const { collectExtrudedPolygon, minBBoxDimension } = ctx;
       const { cx, cy } = centroid(polygon);
-      const dim = minBBoxDimension(polygon);
+      // Use polygon dim if reasonable, else derive from height: real Burj base
+      // is ~75 m for 828 m height = 9 % of height.  Fallback prevents tiny
+      // iconic shapes when the input polygon is just a small platform stub.
+      const dim = Math.max(minBBoxDimension(polygon), totalH * 0.09);
 
       // Real proportions: 828m total, 636m roof, 200m spire
       const spireH = totalH * (200 / 828);
