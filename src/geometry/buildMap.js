@@ -377,36 +377,38 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       heightMM = baseHeightMM + (minH - baseY); // keep roof at minH + baseHeightMM
     }
 
-    if (detailedBuildings) {
+    // Always identify landmarks regardless of detailedBuildings toggle —
+    // famous landmarks (Eiffel, Burj, Empire State) should ALWAYS render
+    // their iconic preset.  Plain block extrusion of Burj Khalifa just
+    // looks like an unrecognisable thin column.
+    const tierResult = landmarkRegistry.selectGenerator(bf.tags, bf.osmId || '', heightM, bf.polygon);
+    const isLandmarkRep = tierResult.tier === 'landmark' && tierResult.presetName
+                          && landmarkRepIdx.get(tierResult.presetName) === _bfIdx;
+    const isLandmarkOther = tierResult.tier === 'landmark' && tierResult.presetName && !isLandmarkRep;
+
+    // Skip non-representative landmark polygons (preset already fires on the
+    // representative; rendering them would stack iconic shapes on top of
+    // each other).
+    if (isLandmarkOther) continue;
+
+    if (isLandmarkRep) {
+      // ── Tier 1: Landmark preset — fire regardless of detailedBuildings ──
+      landmarkCtx.acc = buildingAcc;
+      const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
+      if (!applied) {
+        collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+        standardCount++;
+      } else {
+        landmarkCount++;
+      }
+    } else if (detailedBuildings) {
       // ── 3-tier building generation system ──────────────────────────────
-      // Tier 1: Landmark preset (identity-based, NOT height-based)
       // Tier 2: Generic tall-tower (≥100m real, no preset)
       // Tier 3: Standard class-based (everything else)
-      const tierResult = landmarkRegistry.selectGenerator(bf.tags, bf.osmId || '', heightM, bf.polygon);
-
-      if (tierResult.tier === 'landmark' && tierResult.presetName) {
-        // ── Tier 1: Landmark with preset geometry ────────────────────
-        // Only render the representative (largest polygon for this preset);
-        // skip other landmark-tagged polygons.  Without this, OSM's
-        // multiple polygons per landmark (or Overture's duplicates) would
-        // each fire the preset, stacking iconic shapes on top of each other.
-        if (landmarkRepIdx.get(tierResult.presetName) !== _bfIdx) {
-          continue;
-        }
-        landmarkCtx.acc = buildingAcc;
-        const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
-        if (!applied) {
-          collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
-          standardCount++;
-        } else {
-          landmarkCount++;
-        }
-      } else if (tierResult.tier === 'tall-tower') {
-        // ── Tier 2: Generic tall-tower (≥100m, no preset) ───────────
+      if (tierResult.tier === 'tall-tower') {
         collectGenericTallTower(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
         tallTowerCount++;
       } else {
-        // ── Tier 3: Standard class-based generation ─────────────────
         collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
         standardCount++;
       }
