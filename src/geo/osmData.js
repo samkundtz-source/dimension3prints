@@ -785,19 +785,32 @@ function dropEnvelopeBuildings(buildings) {
     });
   }
 
-  // ── PASS 1 — Keep everything.  Only CAP heights to prevent over-extrusion.
-  // Per user request: don't remove any building or part.  Only adjust heights
-  // so a main doesn't extrude over its rooftop parts.  Visible overlap where
-  // a main and a part share polygon is handled by Z-offset in buildMap.js.
+  // ── PASS 1 — Strict OSM 3D convention ────────────────────────────────────
+  // For any main building (non-part) that has at least one building:part
+  // inside it, DROP the main.  Building:parts model the actual 3D structure;
+  // the main's outline rendered as a solid block would occlude the parts and
+  // hide all the detail.  This is the same rule F4Map and OSM2World use.
+  //
+  // Side-effect for sparse-part buildings: if OSM has a building modelled
+  // with only one tiny rooftop antenna and no other parts, dropping the
+  // main loses the building's footprint.  That's a data issue — to render
+  // correctly someone needs to add ground-level parts in OSM.  Accepting
+  // this trade-off here gives us a consistent "fix-all" rule.
+  //
+  // Special case: if the only parts inside are at upper levels (rooftop
+  // antennas with no ground parts at all), cap the main to where those
+  // parts begin so it forms a base instead of extruding over the antenna.
   const meta1 = buildMeta(buildings);
+  const dropMain  = new Set();
   const capMainTo = new Map();
 
   for (let i = 0; i < buildings.length; i++) {
     const M = meta1[i];
     if (M.ref.isBuildingPart) continue;
 
+    let hasAnyChild     = false;
+    let hasGroundChild  = false;
     let lowestUpperMinH = Infinity;
-    let hasGroundChild = false;
 
     for (let j = 0; j < buildings.length; j++) {
       if (j === i) continue;
@@ -807,24 +820,32 @@ function dropEnvelopeBuildings(buildings) {
       if (N.area >= M.area * 0.95) continue;
       if (!pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) continue;
 
+      hasAnyChild = true;
       if (N.minHeightM <= 1) hasGroundChild = true;
       else if (N.minHeightM < lowestUpperMinH) lowestUpperMinH = N.minHeightM;
     }
 
-    // ALL children at upper levels (no ground child) → cap main to where
-    // parts begin so it forms a clean base.
-    if (!hasGroundChild && lowestUpperMinH < Infinity && lowestUpperMinH < M.heightM) {
+    if (!hasAnyChild) continue; // no children → keep main as-is
+
+    if (hasGroundChild) {
+      // Standard OSM convention: drop main, parts represent the building
+      dropMain.add(i);
+    } else if (lowestUpperMinH < Infinity && lowestUpperMinH < M.heightM) {
+      // Only upper-level parts → cap main to where they begin (becomes a base)
       capMainTo.set(i, lowestUpperMinH);
     }
   }
 
-  const afterPass1 = buildings.map((b, i) => {
+  const afterPass1 = [];
+  for (let i = 0; i < buildings.length; i++) {
+    if (dropMain.has(i)) continue;
     if (capMainTo.has(i)) {
-      const newTags = { ...b.tags, height: String(capMainTo.get(i)) };
-      return { ...b, tags: newTags };
+      const newTags = { ...buildings[i].tags, height: String(capMainTo.get(i)) };
+      afterPass1.push({ ...buildings[i], tags: newTags });
+    } else {
+      afterPass1.push(buildings[i]);
     }
-    return b;
-  });
+  }
 
   // ── PASS 1b — Pair-wise part overlap (no removal — just deduplicate exact dupes)
   // User wants NO part removal, only stop overlaps.  We can't render two

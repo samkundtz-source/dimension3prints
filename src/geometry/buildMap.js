@@ -361,15 +361,6 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     // base plate so legs/platforms/spire stack at the right vertical levels.
     let baseY    = BASE + minHeightMM;
     let heightMM = baseHeightMM;
-    // Z-offset for building:parts to prevent Z-fighting with the parent main
-    // and with sibling parts at the same vertical extent.  Each part gets a
-    // tiny unique offset based on its iteration index, spreading them across
-    // ~0.5 mm at the base.  Invisible at print scale (below 0.4 mm nozzle
-    // width) but enough for the depth buffer to disambiguate, so where two
-    // polygons coincide one wins cleanly instead of producing seam artifacts.
-    if (bf.isBuildingPart) {
-      baseY += 0.05 + (_bfIdx % 50) * 0.01;
-    }
     // Terrain adjustment only applies to ground-level buildings (min_height=0).
     // For building:parts that sit on top of other parts (e.g. Eiffel Tower's
     // upper platforms with min_height=115/276), we must NOT extend them down
