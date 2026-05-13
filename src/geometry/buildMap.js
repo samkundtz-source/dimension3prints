@@ -361,14 +361,6 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     // base plate so legs/platforms/spire stack at the right vertical levels.
     let baseY    = BASE + minHeightMM;
     let heightMM = baseHeightMM;
-    // Z-offset for building:parts to prevent Z-fighting with their parent
-    // main (which now always renders).  Each part gets a tiny unique offset
-    // based on iteration index, spreading them across ~0.5 mm.  Below print
-    // nozzle width — invisible — but enough for the depth buffer to make
-    // parts win cleanly where they coincide with the main's polygon.
-    if (bf.isBuildingPart) {
-      baseY += 0.05 + (_bfIdx % 50) * 0.01;
-    }
     // Terrain adjustment only applies to ground-level buildings (min_height=0).
     // For building:parts that sit on top of other parts (e.g. Eiffel Tower's
     // upper platforms with min_height=115/276), we must NOT extend them down
@@ -385,38 +377,36 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       heightMM = baseHeightMM + (minH - baseY); // keep roof at minH + baseHeightMM
     }
 
-    // Always identify landmarks regardless of detailedBuildings toggle —
-    // famous landmarks (Eiffel, Burj, Empire State) should ALWAYS render
-    // their iconic preset.  Plain block extrusion of Burj Khalifa just
-    // looks like an unrecognisable thin column.
-    const tierResult = landmarkRegistry.selectGenerator(bf.tags, bf.osmId || '', heightM, bf.polygon);
-    const isLandmarkRep = tierResult.tier === 'landmark' && tierResult.presetName
-                          && landmarkRepIdx.get(tierResult.presetName) === _bfIdx;
-    const isLandmarkOther = tierResult.tier === 'landmark' && tierResult.presetName && !isLandmarkRep;
-
-    // Skip non-representative landmark polygons (preset already fires on the
-    // representative; rendering them would stack iconic shapes on top of
-    // each other).
-    if (isLandmarkOther) continue;
-
-    if (isLandmarkRep) {
-      // ── Tier 1: Landmark preset — fire regardless of detailedBuildings ──
-      landmarkCtx.acc = buildingAcc;
-      const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
-      if (!applied) {
-        collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
-        standardCount++;
-      } else {
-        landmarkCount++;
-      }
-    } else if (detailedBuildings) {
+    if (detailedBuildings) {
       // ── 3-tier building generation system ──────────────────────────────
+      // Tier 1: Landmark preset (identity-based, NOT height-based)
       // Tier 2: Generic tall-tower (≥100m real, no preset)
       // Tier 3: Standard class-based (everything else)
-      if (tierResult.tier === 'tall-tower') {
+      const tierResult = landmarkRegistry.selectGenerator(bf.tags, bf.osmId || '', heightM, bf.polygon);
+
+      if (tierResult.tier === 'landmark' && tierResult.presetName) {
+        // ── Tier 1: Landmark with preset geometry ────────────────────
+        // Only render the representative (largest polygon for this preset);
+        // skip other landmark-tagged polygons.  Without this, OSM's
+        // multiple polygons per landmark (or Overture's duplicates) would
+        // each fire the preset, stacking iconic shapes on top of each other.
+        if (landmarkRepIdx.get(tierResult.presetName) !== _bfIdx) {
+          continue;
+        }
+        landmarkCtx.acc = buildingAcc;
+        const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
+        if (!applied) {
+          collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+          standardCount++;
+        } else {
+          landmarkCount++;
+        }
+      } else if (tierResult.tier === 'tall-tower') {
+        // ── Tier 2: Generic tall-tower (≥100m, no preset) ───────────
         collectGenericTallTower(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
         tallTowerCount++;
       } else {
+        // ── Tier 3: Standard class-based generation ─────────────────
         collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
         standardCount++;
       }

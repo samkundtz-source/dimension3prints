@@ -8,21 +8,6 @@
 
 import { deduplicateRing, ensureCCW, ensureCW } from '../utils/helpers.js';
 import { clipToHex } from './clipper.js';
-import landmarkData from '../geometry/landmarks.json';
-
-// Quick landmark check used by dropEnvelopeBuildings to PROTECT the main
-// polygon of known landmarks from being dropped — the landmark preset in
-// buildMap.js needs the large outer polygon to render the iconic shape.
-function isKnownLandmark(b) {
-  if (!b || !b.tags) return false;
-  const t = b.tags;
-  if (b.osmId && landmarkData.osmWayIds[b.osmId])           return true;
-  if (b.osmId && landmarkData.osmRelationIds[b.osmId])      return true;
-  if (t.wikidata && landmarkData.wikidataIds[t.wikidata])   return true;
-  const name = (t.name || '').toLowerCase().trim();
-  if (name && landmarkData.knownNames[name])                return true;
-  return false;
-}
 
 // ─── Geocoding ────────────────────────────────────────────────────────────────
 
@@ -524,12 +509,6 @@ export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices,
       // OSM parts and visually erase the landmark structure.
       if (osmMatches.some(m => m.ref.isBuildingPart)) continue;
 
-      // Also skip if any match is a known landmark.  Overture's polygon for
-      // a famous building is often smaller (just the central tower section)
-      // than the OSM main outline, which would make the iconic preset
-      // generate a miniature shape.  Keep the OSM main intact.
-      if (osmMatches.some(m => isKnownLandmark(m.ref))) continue;
-
       // Build merged tags.  Overture's class/height/levels/name win, but we
       // carry over critical OSM identifiers (wikidata, wikipedia, name) and
       // the OSM osmId itself so the landmark registry can still recognise
@@ -806,134 +785,80 @@ function dropEnvelopeBuildings(buildings) {
     });
   }
 
-  // ── PASS 1 — Strict OSM 3D convention ────────────────────────────────────
-  // For any main building (non-part) that has at least one building:part
-  // inside it, DROP the main.  Building:parts model the actual 3D structure;
-  // the main's outline rendered as a solid block would occlude the parts and
-  // hide all the detail.  This is the same rule F4Map and OSM2World use.
-  //
-  // Side-effect for sparse-part buildings: if OSM has a building modelled
-  // with only one tiny rooftop antenna and no other parts, dropping the
-  // main loses the building's footprint.  That's a data issue — to render
-  // correctly someone needs to add ground-level parts in OSM.  Accepting
-  // this trade-off here gives us a consistent "fix-all" rule.
-  //
-  // Special case: if the only parts inside are at upper levels (rooftop
-  // antennas with no ground parts at all), cap the main to where those
-  // parts begin so it forms a base instead of extruding over the antenna.
+  // ── PASS 1 — Smart container handling ────────────────────────────────────
+  // For each MAIN building (non-part), look at its building:part children.
+  //   If the parts genuinely model the building (cover ≥50 % of the main's
+  //   area AND span ground-to-top vertically) → DROP main, render parts.
+  //   Otherwise → KEEP main, but skip ground-level parts that would overlap
+  //               with the main's extrusion.  Upper-level parts (rooftop
+  //               antennas, etc.) still render — they sit ON TOP of the
+  //               main without overlap.
+  // Also for each MAIN with only upper-level children, CAP the main's
+  // height to where parts begin so the main forms a clean supporting base.
   const meta1 = buildMeta(buildings);
-  const dropMain  = new Set();
-  const capMainTo = new Map();
+  const dropMain = new Set();
+  const dropPart = new Set();
+  const capMainTo = new Map(); // index → new height in metres
 
-  // Height-aware container handling — restored to the pattern the user
-  // liked, with landmark protection layered on top:
-  //
-  //   * Known landmark               → KEEP main unchanged (preset will fire)
-  //   * Tall (≥50 m) + any ground    → DROP main (parts cover from ground)
-  //   * Short (<50 m) + ground cov   → DROP main (parts cover well)
-  //     ≥ 60 %
-  //   * Short (<50 m) + ground cov   → CAP main to lowest upper min_h
-  //     < 60 % + has upper parts        (becomes a supporting base)
-  //   * Short (<50 m) + ground cov   → KEEP main unchanged (preserve footprint)
-  //     < 60 % + no upper parts
-  //   * No children                  → KEEP unchanged
   for (let i = 0; i < buildings.length; i++) {
     const M = meta1[i];
-    if (M.ref.isBuildingPart) continue;
+    if (M.ref.isBuildingPart) continue; // analyse only mains
 
-    // Landmark protection — preset fires on the full main outline
-    if (isKnownLandmark(M.ref)) continue;
-
-    let childrenCount       = 0;
-    let groundChildrenArea  = 0;
-    let lowestUpperMinH     = Infinity;
-
+    const childIdx = [];
     for (let j = 0; j < buildings.length; j++) {
       if (j === i) continue;
       const N = meta1[j];
-      if (!N.ref.isBuildingPart) continue;
+      if (!N.ref.isBuildingPart) continue; // only parts are children
       if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
       if (N.area >= M.area * 0.95) continue;
-      if (!pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) continue;
-
-      childrenCount++;
-      if (N.minHeightM <= 1) groundChildrenArea += N.area;
-      else if (N.minHeightM < lowestUpperMinH) lowestUpperMinH = N.minHeightM;
+      if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
+        childIdx.push(j);
+      }
     }
 
-    if (childrenCount === 0) continue; // no children → keep main as-is
+    if (childIdx.length === 0) continue; // no children, render main normally
 
-    const groundCoverage = groundChildrenArea / M.area;
+    let partAreaSum = 0;
+    let lowestMinH  = Infinity;
+    let highestH    = 0;
+    for (const j of childIdx) {
+      const N = meta1[j];
+      partAreaSum += N.area;
+      if (N.minHeightM < lowestMinH) lowestMinH = N.minHeightM;
+      if (N.heightM    > highestH)   highestH   = N.heightM;
+    }
+    const coverage = partAreaSum / M.area;
+    const fullVerticalSpan = lowestMinH <= 1 && highestH >= M.heightM * 0.85;
 
-    // Tall ≥50 m with any ground children → drop main
-    if (M.heightM >= 50 && groundChildrenArea > 0) {
+    if (coverage >= 0.5 && fullVerticalSpan) {
+      // Parts genuinely model the building — drop main, all parts render
       dropMain.add(i);
-      continue;
+    } else {
+      // Keep main.  Skip ground-level parts (would overlap with main's
+      // ground extrusion).  Upper-level parts still render on top.
+      for (const j of childIdx) {
+        if (meta1[j].minHeightM <= 1) dropPart.add(j);
+      }
+      // If we have ONLY upper-level children, cap main height to lowest
+      // upper min_h so it forms a clean base for them.
+      const allUpper = childIdx.every(j => meta1[j].minHeightM > 1);
+      if (allUpper && lowestMinH > 1 && lowestMinH < M.heightM) {
+        capMainTo.set(i, lowestMinH);
+      }
     }
-
-    // Short <50 m with ground coverage ≥60 % → drop main
-    if (M.heightM < 50 && groundCoverage >= 0.60) {
-      dropMain.add(i);
-      continue;
-    }
-
-    // Has upper-level parts → cap main to where they begin (becomes a base)
-    if (lowestUpperMinH < Infinity && lowestUpperMinH < M.heightM) {
-      capMainTo.set(i, lowestUpperMinH);
-      continue;
-    }
-
-    // Otherwise keep main unchanged (preserves footprint for sparse cases)
   }
 
   const afterPass1 = [];
   for (let i = 0; i < buildings.length; i++) {
-    if (dropMain.has(i)) continue;
+    if (dropMain.has(i) || dropPart.has(i)) continue;
     if (capMainTo.has(i)) {
-      const newTags = { ...buildings[i].tags, height: String(capMainTo.get(i)) };
+      const cap = capMainTo.get(i);
+      const newTags = { ...buildings[i].tags, height: String(cap) };
       afterPass1.push({ ...buildings[i], tags: newTags });
     } else {
       afterPass1.push(buildings[i]);
     }
   }
-
-  // ── PASS 1b — Pair-wise part overlap (no removal — just deduplicate exact dupes)
-  // User wants NO part removal, only stop overlaps.  We can't render two
-  // polygons at the same physical location without one occluding the other,
-  // but we CAN deduplicate when two parts model literally the same thing
-  // (same polygon, same vertical extent — pure duplicates from data import).
-  // For visible overlaps that aren't true duplicates, we use the per-part
-  // Z-offset in buildMap.js instead.
-  const meta1b = buildMeta(afterPass1);
-  const dropP1b = new Set();
-  for (let i = 0; i < afterPass1.length; i++) {
-    if (!meta1b[i].ref.isBuildingPart) continue;
-    if (dropP1b.has(i)) continue;
-    const M = meta1b[i];
-    for (let j = i + 1; j < afterPass1.length; j++) {
-      if (!meta1b[j].ref.isBuildingPart) continue;
-      if (dropP1b.has(j)) continue;
-      const N = meta1b[j];
-
-      // Bbox overlap area as fraction of the smaller polygon's bbox area.
-      const ovMinX = Math.max(M.minX, N.minX);
-      const ovMaxX = Math.min(M.maxX, N.maxX);
-      const ovMinY = Math.max(M.minY, N.minY);
-      const ovMaxY = Math.min(M.maxY, N.maxY);
-      const ovArea = Math.max(0, ovMaxX - ovMinX) * Math.max(0, ovMaxY - ovMinY);
-      const smaller = Math.min(M.area, N.area);
-      if (ovArea / smaller < 0.95) continue; // need ~complete overlap to count as "dup"
-
-      // Vertical-extent overlap threshold: ranges must be near-identical
-      const vDiffBot = Math.abs(M.minHeightM - N.minHeightM);
-      const vDiffTop = Math.abs(M.heightM    - N.heightM);
-      if (vDiffBot > 1 || vDiffTop > 1) continue;
-
-      // Pure duplicate.  Drop one.
-      dropP1b.add(j);
-    }
-  }
-  const afterPass1b = afterPass1.filter((_, i) => !dropP1b.has(i));
 
   // ── PASS 2 — Ground orphan parts (no support below them) ─────────────────
   // After Pass 1 some buildings have been removed or shortened.  Now any part
@@ -941,10 +866,10 @@ function dropEnvelopeBuildings(buildings) {
   // same (x,y) that reaches up to within 5 m of my min_height?  If not, I'm
   // floating in the air with no visible support beneath.  Reset min_height
   // to 0 so the part extrudes from the base plate instead.
-  const meta2 = buildMeta(afterPass1b);
+  const meta2 = buildMeta(afterPass1);
   const final = [];
 
-  for (let i = 0; i < afterPass1b.length; i++) {
+  for (let i = 0; i < afterPass1.length; i++) {
     const M = meta2[i];
 
     if (M.minHeightM < 1) {
@@ -953,7 +878,7 @@ function dropEnvelopeBuildings(buildings) {
     }
 
     let hasSupport = false;
-    for (let j = 0; j < afterPass1b.length; j++) {
+    for (let j = 0; j < afterPass1.length; j++) {
       if (j === i) continue;
       const N = meta2[j];
       // Other building must reach at least within 5 m below my min_height
