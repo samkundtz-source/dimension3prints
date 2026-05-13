@@ -190,12 +190,7 @@ export const LANDMARK_PRESETS = {
     generate(ctx, acc, polygon, baseY, totalH, heightM) {
       const { collectExtrudedPolygon, minBBoxDimension } = ctx;
       const { cx, cy } = centroid(polygon);
-      // Real Burj base is ~75 m for 828 m height = 9 % ratio.  Use actual
-      // polygon dim if it's reasonable (≥ 5 % of totalH); else fall back to
-      // 9 % so even a small input polygon produces an iconic-sized shape.
-      const polyDim = minBBoxDimension(polygon);
-      const minDim  = totalH * 0.05;
-      const dim     = polyDim >= minDim ? polyDim : totalH * 0.09;
+      const dim = minBBoxDimension(polygon);
 
       // Real proportions: 828m total, 636m roof, 200m spire
       const spireH = totalH * (200 / 828);
@@ -230,11 +225,11 @@ export const LANDMARK_PRESETS = {
       acc.add(pos, idx);
 
       // 3 wings, 9 setback tiers each (27 total), spiral staggered.
-      // Wing termination heights — using lower fractions than real Burj so
-      // the iconic central spire dominates the silhouette.  User feedback:
-      // wings extending to 55-71% of height made the "base" too prominent.
-      // Now wings end at 35-50% so the slim upper tower is what you notice.
-      const wingEndFracs = [290 / 828, 360 / 828, 415 / 828];
+      // Wing termination heights based on real building:
+      // Wing A terminates ~level 109 (460m = 55% of 828m)
+      // Wing B terminates ~level 136 (530m = 64%)
+      // Wing C terminates ~level 156 (585m = 71%)
+      const wingEndFracs = [460 / 828, 530 / 828, 585 / 828];
 
       for (let w = 0; w < 3; w++) {
         const angle = (Math.PI / 2) + (w * Math.PI * 2 / 3);
