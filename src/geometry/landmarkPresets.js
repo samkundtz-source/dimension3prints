@@ -658,41 +658,106 @@ export const LANDMARK_PRESETS = {
       // common case where the input polygon is just a small platform footprint
       // rather than the full leg span.
       const dim = Math.max(minBBoxDimension(polygon), totalH * 0.38);
+      const halfBase = dim * 0.5;
 
-      function squarePoly(half) {
+      // Real Eiffel proportions
+      const h1 = totalH * 0.18; // platform 1
+      const h2 = totalH * 0.36; // platform 2
+      const h3 = totalH * 0.85; // platform 3
+      const hSpire = totalH * 0.95; // spire base
+
+      // Width at each level
+      const w0 = halfBase;          // base (legs spread)
+      const w1 = halfBase * 0.55;   // platform 1
+      const w2 = halfBase * 0.32;   // platform 2
+      const w3 = halfBase * 0.14;   // platform 3
+
+      function squarePoly(hx, hy) {
         return [
-          { x: cx - half, y: cy - half },
-          { x: cx + half, y: cy - half },
-          { x: cx + half, y: cy + half },
-          { x: cx - half, y: cy + half },
+          { x: cx - hx, y: cy - hy },
+          { x: cx + hx, y: cy - hy },
+          { x: cx + hx, y: cy + hy },
+          { x: cx - hx, y: cy + hy },
         ];
       }
 
-      // 4 stepped tiers with aggressive Eiffel-like tapering.
-      // Width fractions match real Eiffel proportions at each platform level.
-      const tiers = [
-        { hFrac: 0.18, scale: 1.00 },   // base → platform 1 (full base width)
-        { hFrac: 0.18, scale: 0.55 },   // plat1 → plat2
-        { hFrac: 0.49, scale: 0.32 },   // plat2 → plat3 (long thin section)
-        { hFrac: 0.10, scale: 0.14 },   // plat3 → spire base (very thin)
-      ];
-      const spireFrac = 0.05;
+      // ── 4 LEGS at base corners, tapering inward up to platform 1 ────────────
+      // Each leg is a tilted box (4-sided prism) from outer corner at base
+      // to inner corner at platform 1 height.  Creates the iconic Eiffel
+      // tripod-like leg silhouette.
+      const legThickFrac = 0.18; // fraction of base half-width
+      const legBase = halfBase * legThickFrac;  // leg cross-section at base
+      const legTop  = w1 * 0.55;                 // leg cross-section at top
+      const legCorners = [[1, 1], [-1, 1], [-1, -1], [1, -1]];
+      for (const [sx, sy] of legCorners) {
+        // Leg base: outer corner of base, inset by legBase
+        const bx0 = cx + sx * (halfBase - legBase);
+        const by0 = cy + sy * (halfBase - legBase);
+        const bx1 = cx + sx * halfBase;
+        const by1 = cy + sy * halfBase;
+        // Leg top: inset further (toward center)
+        const tx0 = cx + sx * (w1 - legTop);
+        const ty0 = cy + sy * (w1 - legTop);
+        const tx1 = cx + sx * w1;
+        const ty1 = cy + sy * w1;
 
-      let y = baseY;
-      let lastHalf = 0;
-      for (const tier of tiers) {
-        const tierH    = totalH * tier.hFrac;
-        const tierHalf = dim * 0.5 * tier.scale;
-        if (tierH < 0.02 || tierHalf < 0.02) continue;
-        collectExtrudedPolygon(acc, squarePoly(tierHalf), [], y, tierH);
-        y += tierH;
-        lastHalf = tierHalf;
+        const pos = [
+          // bottom 4 verts (CCW from above)
+          bx0, baseY, -by0,
+          bx1, baseY, -by0,
+          bx1, baseY, -by1,
+          bx0, baseY, -by1,
+          // top 4 verts
+          tx0, baseY + h1, -ty0,
+          tx1, baseY + h1, -ty0,
+          tx1, baseY + h1, -ty1,
+          tx0, baseY + h1, -ty1,
+        ];
+        const idx = [
+          // bottom (CCW from below = reversed)
+          0, 2, 1,  0, 3, 2,
+          // top (CCW from above)
+          4, 5, 6,  4, 6, 7,
+          // sides — outer-x face
+          1, 5, 4,  1, 4, 0,
+          // outer-y face
+          2, 6, 5,  2, 5, 1,
+          // inner-x face
+          3, 7, 6,  3, 6, 2,
+          // inner-y face
+          0, 4, 7,  0, 7, 3,
+        ];
+        acc.add(pos, idx);
       }
 
-      // Spire on top
-      const spireH = totalH * spireFrac;
-      if (spireH > 0.05 && lastHalf > 0) {
-        buildSpire(acc, cx, cy, y, spireH, lastHalf * 0.5, lastHalf * 0.05);
+      // ── Platform 1 slab ─────────────────────────────────────────────────────
+      const slabT = totalH * 0.012;
+      collectExtrudedPolygon(acc, squarePoly(w1, w1), [], baseY + h1, slabT);
+
+      // ── Mid section: platform 1 → platform 2 (tapering column) ──────────────
+      const midH = h2 - h1 - slabT;
+      if (midH > 0.01) {
+        // Render as a single column at width w1 (consistent with platform 1 top)
+        collectExtrudedPolygon(acc, squarePoly(w1 * 0.7, w1 * 0.7), [], baseY + h1 + slabT, midH);
+      }
+
+      // ── Platform 2 slab ─────────────────────────────────────────────────────
+      collectExtrudedPolygon(acc, squarePoly(w2, w2), [], baseY + h2, slabT * 0.85);
+
+      // ── Tall thin column: platform 2 → platform 3 ──────────────────────────
+      const upperH = h3 - h2 - slabT * 0.85;
+      if (upperH > 0.01) {
+        collectExtrudedPolygon(acc, squarePoly(w2 * 0.6, w2 * 0.6), [], baseY + h2 + slabT * 0.85, upperH);
+      }
+
+      // ── Platform 3 slab ─────────────────────────────────────────────────────
+      collectExtrudedPolygon(acc, squarePoly(w3, w3), [], baseY + h3, slabT * 0.6);
+
+      // ── Antenna spire to top ────────────────────────────────────────────────
+      const spireBaseY = baseY + hSpire;
+      const spireH    = totalH - hSpire;
+      if (spireH > 0.05) {
+        buildSpire(acc, cx, cy, spireBaseY, spireH, w3 * 0.5, w3 * 0.05);
       }
     },
   },

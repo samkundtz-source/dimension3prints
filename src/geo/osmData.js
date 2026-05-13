@@ -830,6 +830,12 @@ function dropEnvelopeBuildings(buildings) {
     // so we don't get overlap.
     if (isKnownLandmark(M.ref)) continue;
 
+    // ALSO PROTECTED: tall buildings (≥100 m).  Skyscrapers' mains usually
+    // form recognisable single shapes; dropping them in favour of sparse
+    // OSM parts loses the iconic skyscraper outline.  The genericTallTower
+    // path in buildMap.js can give them setbacks and detail without parts.
+    if (M.heightM >= 100) continue;
+
     let hasAnyChild     = false;
     let hasGroundChild  = false;
     let lowestUpperMinH = Infinity;
