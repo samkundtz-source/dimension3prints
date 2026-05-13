@@ -364,7 +364,12 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     // we render only that slice.  Skip if the slice is degenerate or inverted.
     const effectiveHM  = Math.max(0.1, heightM - minHeightM);
     const baseHeightMM = clamp(effectiveHM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
-    const minHeightMM  = minHeightM * hScale * BUILD_EXAG;
+    // Clamp min_height too (fix from review #5).  An OSM tag like
+    // min_height=900 m would otherwise push the building bottom past
+    // MAX_BLDG_MM, making the building invisible above the model ceiling.
+    // Cap absolute building TOP at MAX_BLDG_MM so nothing can disappear.
+    const rawMinHeightMM = minHeightM * hScale * BUILD_EXAG;
+    const minHeightMM    = Math.min(rawMinHeightMM, MAX_BLDG_MM - baseHeightMM);
 
     // In terrain mode, buildings extrude from the base plate (BASE - 0.1) up to
     // the roof.  The bottom goes to the base plate — not just to minH — so the

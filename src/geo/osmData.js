@@ -8,6 +8,24 @@
 
 import { deduplicateRing, ensureCCW, ensureCW } from '../utils/helpers.js';
 import { clipToHex } from './clipper.js';
+import landmarkData from '../geometry/landmarks.json';
+
+// Quick landmark check — used by dropEnvelopeBuildings to PROTECT main
+// polygons of known landmarks (Eiffel, Burj, etc.) from being dropped.
+// The landmark preset needs to fire on the full main outline, but the main
+// is often the ONLY polygon carrying the identifying name/wikidata tag —
+// dropping it leaves Phase 7 with zero matching polygons → preset never
+// fires → generic extrusion of building:parts → "fat slab" rendering.
+function isKnownLandmark(b) {
+  if (!b || !b.tags) return false;
+  const t = b.tags;
+  if (b.osmId && landmarkData.osmWayIds?.[b.osmId])         return true;
+  if (b.osmId && landmarkData.osmRelationIds?.[b.osmId])    return true;
+  if (t.wikidata && landmarkData.wikidataIds?.[t.wikidata]) return true;
+  const name = (t.name || '').toLowerCase().trim();
+  if (name && landmarkData.knownNames?.[name])              return true;
+  return false;
+}
 
 // ─── Geocoding ────────────────────────────────────────────────────────────────
 
@@ -521,7 +539,21 @@ export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices,
       if (ovrName) tags.name = ovrName;
       let inheritedOsmId = null;
       // Walk matches in order — for tags that carry over, the FIRST OSM
-      // building with the value wins.
+      // building with the value wins — EXCEPT for landmark identifiers,
+      // where we prefer a match that's a known landmark.  Otherwise an
+      // arbitrary OSM building's metadata could win and silently hide a
+      // landmark identifier that another collapsed match was carrying.
+      // (Fix from review #7.)
+      // First pass: prefer landmark tags from any match that's a known landmark.
+      const landmarkMatch = osmMatches.find(m => isKnownLandmark(m.ref));
+      if (landmarkMatch) {
+        const lt = landmarkMatch.ref.tags || {};
+        if (lt.wikidata)  tags.wikidata  = lt.wikidata;
+        if (lt.wikipedia) tags.wikipedia = lt.wikipedia;
+        if (lt.name)      tags.name      = lt.name;
+        if (landmarkMatch.ref.osmId) inheritedOsmId = landmarkMatch.ref.osmId;
+      }
+      // Second pass: fill any remaining gaps with first-match-wins.
       for (const m of osmMatches) {
         const t = m.ref.tags || {};
         if (!tags.height && !tags['building:levels']) {
@@ -804,16 +836,26 @@ function dropEnvelopeBuildings(buildings) {
     const M = meta1[i];
     if (M.ref.isBuildingPart) continue; // analyse only mains
 
+    // PROTECTION (fix #1, Hypothesis #3 from review):
+    // Never drop a known landmark's main.  The landmark preset needs to fire
+    // on this full outer polygon, and the main is often the ONLY polygon
+    // carrying the identifying name/wikidata tag (e.g. Eiffel's parts are
+    // anonymous building:part=column).  Dropping it leaves Phase 7 with
+    // zero polygons matching the preset → preset never fires → fat-slab.
+    if (isKnownLandmark(M.ref)) continue;
+
     const childIdx = [];
     for (let j = 0; j < buildings.length; j++) {
       if (j === i) continue;
       const N = meta1[j];
       if (!N.ref.isBuildingPart) continue; // only parts are children
-      if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
+      // BBOX-CONTAINMENT (fix from review #1) — replaces centroid-in-polygon.
+      // Centroid test misses parts inside L-shaped/U-shaped/courtyard mains
+      // because the centroid can land in a concave hole of the main.  Using
+      // bbox-inside-bbox catches all such parts reliably.
+      if (N.minX < M.minX || N.maxX > M.maxX || N.minY < M.minY || N.maxY > M.maxY) continue;
       if (N.area >= M.area * 0.95) continue;
-      if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
-        childIdx.push(j);
-      }
+      childIdx.push(j);
     }
 
     if (childIdx.length === 0) continue; // no children, render main normally
@@ -821,14 +863,23 @@ function dropEnvelopeBuildings(buildings) {
     let partAreaSum = 0;
     let lowestMinH  = Infinity;
     let highestH    = 0;
+    let hasGroundChild = false;
+    let hasNearTopChild = false;
     for (const j of childIdx) {
       const N = meta1[j];
       partAreaSum += N.area;
       if (N.minHeightM < lowestMinH) lowestMinH = N.minHeightM;
       if (N.heightM    > highestH)   highestH   = N.heightM;
+      if (N.minHeightM <= 1) hasGroundChild = true;
+      if (N.heightM >= M.heightM * 0.85) hasNearTopChild = true;
     }
     const coverage = partAreaSum / M.area;
-    const fullVerticalSpan = lowestMinH <= 1 && highestH >= M.heightM * 0.85;
+    // STRICTER vertical-span check (fix from review #6):
+    // Require BOTH a child reaching ground AND a child reaching near top —
+    // not just lowest-and-highest from possibly-different children. Prevents
+    // dropping mains whose parts are e.g. fat podium + skinny tower (both
+    // appear to satisfy the old check but together don't cover the volume).
+    const fullVerticalSpan = hasGroundChild && hasNearTopChild;
 
     if (coverage >= 0.5 && fullVerticalSpan) {
       // Parts genuinely model the building — drop main, all parts render
@@ -883,10 +934,15 @@ function dropEnvelopeBuildings(buildings) {
       const N = meta2[j];
       // Other building must reach at least within 5 m below my min_height
       if (N.heightM < M.minHeightM - 5) continue;
-      if (pointInPolygonGeneral({ x: M.cx, y: M.cy }, N.ref.polygon)) {
-        hasSupport = true;
-        break;
-      }
+      // BBOX-INTERSECTION (fix from review #2) — replaces centroid-only test.
+      // A canopy / overhang / balcony hangs off its parent — the part's
+      // centroid may sit in the air past the parent's footprint, but the
+      // part still rests on top of the parent at its inner edge.  Bbox
+      // intersection catches these "support exists at bbox overlap" cases.
+      if (M.maxX <= N.minX || N.maxX <= M.minX) continue;
+      if (M.maxY <= N.minY || N.maxY <= M.minY) continue;
+      hasSupport = true;
+      break;
     }
 
     if (hasSupport) {
