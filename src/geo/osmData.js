@@ -881,7 +881,15 @@ function dropEnvelopeBuildings(buildings) {
     // appear to satisfy the old check but together don't cover the volume).
     const fullVerticalSpan = hasGroundChild && hasNearTopChild;
 
-    if (coverage >= 0.5 && fullVerticalSpan) {
+    // Also require at least one child to contain the main's centroid —
+    // otherwise parts only at edges/corners (no central polygon) drop the
+    // main and leave the building's center as a visible empty hole.
+    const partCoversCenter = childIdx.some(j => {
+      const partPoly = meta1[j].ref.polygon;
+      return pointInPolygonGeneral({ x: M.cx, y: M.cy }, partPoly);
+    });
+
+    if (coverage >= 0.5 && fullVerticalSpan && partCoversCenter) {
       // Parts genuinely model the building — drop main, all parts render
       dropMain.add(i);
     } else {
