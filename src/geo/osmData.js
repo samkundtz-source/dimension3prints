@@ -860,16 +860,57 @@ function dropEnvelopeBuildings(buildings) {
     }
   }
 
+  // ── PASS 1b — Pair-wise part overlap (drop smaller of each Z-fighting pair)
+  // Even after Pass 1, OSM occasionally has multiple building:parts at the
+  // SAME vertical extent with overlapping polygons (e.g. a "skin" part + a
+  // structural part).  Both rendering at the same Z-range produces visible
+  // Z-fighting (vertical seams in the user's screenshot).  Detection:
+  //   * Both are building:parts.
+  //   * Either polygon's centroid lies inside the other's polygon.
+  //   * Their (min_height → height) ranges overlap by > 1 m.
+  // Action: keep the one with larger polygon area (more "complete" representation).
+  const meta1b = buildMeta(afterPass1);
+  const dropP1b = new Set();
+  for (let i = 0; i < afterPass1.length; i++) {
+    if (!meta1b[i].ref.isBuildingPart) continue;
+    if (dropP1b.has(i)) continue;
+    const M = meta1b[i];
+    for (let j = i + 1; j < afterPass1.length; j++) {
+      if (!meta1b[j].ref.isBuildingPart) continue;
+      if (dropP1b.has(j)) continue;
+      const N = meta1b[j];
+
+      // Quick bbox-overlap reject before expensive polygon test
+      if (M.maxX <= N.minX || N.maxX <= M.minX) continue;
+      if (M.maxY <= N.minY || N.maxY <= M.minY) continue;
+
+      // Polygon-overlap check: at least one centroid inside the other
+      const mInN = pointInPolygonGeneral({ x: M.cx, y: M.cy }, N.ref.polygon);
+      const nInM = pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon);
+      if (!mInN && !nInM) continue;
+
+      // Vertical-overlap check (>1 m of shared range)
+      const overlapBot = Math.max(M.minHeightM, N.minHeightM);
+      const overlapTop = Math.min(M.heightM,    N.heightM);
+      if (overlapTop - overlapBot < 1) continue;
+
+      // Drop the smaller-area one (the larger is the "main" detail)
+      if (M.area < N.area) { dropP1b.add(i); break; }
+      else                   dropP1b.add(j);
+    }
+  }
+  const afterPass1b = afterPass1.filter((_, i) => !dropP1b.has(i));
+
   // ── PASS 2 — Ground orphan parts (no support below them) ─────────────────
   // After Pass 1 some buildings have been removed or shortened.  Now any part
   // whose min_height > 0 needs verification: is there ANOTHER building at the
   // same (x,y) that reaches up to within 5 m of my min_height?  If not, I'm
   // floating in the air with no visible support beneath.  Reset min_height
   // to 0 so the part extrudes from the base plate instead.
-  const meta2 = buildMeta(afterPass1);
+  const meta2 = buildMeta(afterPass1b);
   const final = [];
 
-  for (let i = 0; i < afterPass1.length; i++) {
+  for (let i = 0; i < afterPass1b.length; i++) {
     const M = meta2[i];
 
     if (M.minHeightM < 1) {
@@ -878,7 +919,7 @@ function dropEnvelopeBuildings(buildings) {
     }
 
     let hasSupport = false;
-    for (let j = 0; j < afterPass1.length; j++) {
+    for (let j = 0; j < afterPass1b.length; j++) {
       if (j === i) continue;
       const N = meta2[j];
       // Other building must reach at least within 5 m below my min_height
