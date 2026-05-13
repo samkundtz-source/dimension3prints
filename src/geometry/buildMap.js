@@ -431,7 +431,10 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       }
     } else {
       // Plain block extrusion — no bevel, no empty space
-      collectExtrudedPolygon(buildingAcc, bf.polygon, [], baseY, heightMM);
+      // Pass bf.holes so courtyards (OSM inner rings) render as actual cutouts
+      // rather than the previous "empty core" effect where outer walls extruded
+      // but the courtyard interior was lost.  earcut handles holes correctly.
+      collectExtrudedPolygon(buildingAcc, bf.polygon, bf.holes || [], baseY, heightMM);
     }
     buildingCount++;
   }

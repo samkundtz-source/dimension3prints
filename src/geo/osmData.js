@@ -22,8 +22,22 @@ function isKnownLandmark(b) {
   if (b.osmId && landmarkData.osmWayIds?.[b.osmId])         return true;
   if (b.osmId && landmarkData.osmRelationIds?.[b.osmId])    return true;
   if (t.wikidata && landmarkData.wikidataIds?.[t.wikidata]) return true;
-  const name = (t.name || '').toLowerCase().trim();
-  if (name && landmarkData.knownNames?.[name])              return true;
+
+  // Try all known name fields (name, name:en, name:fr, name:zh, official_name, etc.)
+  // OSM contributors use various name keys depending on locale.
+  const namesToCheck = [
+    t.name, t['name:en'], t['name:fr'], t['name:de'], t['name:zh'],
+    t['name:ar'], t.official_name, t.alt_name, t.loc_name,
+  ].filter(Boolean).map(n => n.toLowerCase().trim());
+  const known = Object.keys(landmarkData.knownNames || {});
+  for (const candidate of namesToCheck) {
+    if (landmarkData.knownNames[candidate]) return true;
+    // Substring match: OSM names sometimes include parentheses, dashes,
+    // or extra qualifiers ("Eiffel Tower (Tour Eiffel)", "Burj Khalifa Tower")
+    for (const k of known) {
+      if (candidate.includes(k) || k.includes(candidate)) return true;
+    }
+  }
   return false;
 }
 
