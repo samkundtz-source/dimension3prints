@@ -311,22 +311,36 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
         }
       }
     }
-    // Round 2: for each representative, mark polygons inside it for skipping
+    // Round 2: for each representative, mark polygons inside it for skipping.
+    // We use BBOX-CONTAINMENT instead of centroid-in-polygon because:
+    //   - Concave polygons (Eiffel's clover-shape outline) have indented areas
+    //     where a part's centroid can sit OUTSIDE the polygon even though the
+    //     part is visibly inside the landmark's footprint.
+    //   - Bbox-containment catches every polygon whose bounding box sits
+    //     entirely within the representative's bounding box — Eiffel's legs,
+    //     platforms, spire all get caught regardless of where their centroids
+    //     land relative to the concave outline.
+    // Neighboring non-landmark buildings have bboxes that extend OUTSIDE the
+    // landmark's bbox, so they're not affected.
     for (const repIdx of landmarkRepIdx.values()) {
       const repPoly = buildingFootprints[repIdx].polygon;
-      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      let rMinX = Infinity, rMaxX = -Infinity, rMinY = Infinity, rMaxY = -Infinity;
       for (const p of repPoly) {
-        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
-        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+        if (p.x < rMinX) rMinX = p.x; if (p.x > rMaxX) rMaxX = p.x;
+        if (p.y < rMinY) rMinY = p.y; if (p.y > rMaxY) rMaxY = p.y;
       }
       for (let i = 0; i < buildingFootprints.length; i++) {
         if (i === repIdx) continue;
         const poly = buildingFootprints[i].polygon;
-        let cx = 0, cy = 0;
-        for (const p of poly) { cx += p.x; cy += p.y; }
-        cx /= poly.length; cy /= poly.length;
-        if (cx < minX || cx > maxX || cy < minY || cy > maxY) continue;
-        if (pointInRayCast(cx, cy, repPoly)) landmarkSkipIdx.add(i);
+        let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
+        for (const p of poly) {
+          if (p.x < pMinX) pMinX = p.x; if (p.x > pMaxX) pMaxX = p.x;
+          if (p.y < pMinY) pMinY = p.y; if (p.y > pMaxY) pMaxY = p.y;
+        }
+        // Skip if this polygon's ENTIRE bbox sits within the rep's bbox.
+        if (pMinX >= rMinX && pMaxX <= rMaxX && pMinY >= rMinY && pMaxY <= rMaxY) {
+          landmarkSkipIdx.add(i);
+        }
       }
     }
   }
