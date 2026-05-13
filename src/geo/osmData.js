@@ -825,18 +825,17 @@ function dropEnvelopeBuildings(buildings) {
   const dropMain  = new Set();
   const capMainTo = new Map();
 
+  // Per user request: NEVER drop mains.  Every building's main outline
+  // renders, providing a visible footprint.  Parts render with a tiny
+  // Z-offset (in buildMap.js) so they win the depth test where they overlap
+  // with mains — no Z-fighting seams.  For landmarks the iconic preset
+  // fires on the main and the skip-zone removes the parts to avoid overlap.
+  // The only adjustment here is capping a main's height when it has ONLY
+  // rooftop parts (no ground parts) so it doesn't extrude over them.
   for (let i = 0; i < buildings.length; i++) {
     const M = meta1[i];
     if (M.ref.isBuildingPart) continue;
 
-    // PROTECTED: never drop a main that's a known landmark.  The landmark
-    // preset (e.g. eiffelTower, burjKhalifa) needs to fire on this full
-    // outer polygon to render the iconic shape at the right scale.  The
-    // landmark skip-zone in buildMap.js will remove any parts inside it
-    // so we don't get overlap.
-    if (isKnownLandmark(M.ref)) continue;
-
-    let hasAnyChild     = false;
     let hasGroundChild  = false;
     let lowestUpperMinH = Infinity;
 
@@ -848,18 +847,12 @@ function dropEnvelopeBuildings(buildings) {
       if (N.area >= M.area * 0.95) continue;
       if (!pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) continue;
 
-      hasAnyChild = true;
       if (N.minHeightM <= 1) hasGroundChild = true;
       else if (N.minHeightM < lowestUpperMinH) lowestUpperMinH = N.minHeightM;
     }
 
-    if (!hasAnyChild) continue; // no children → keep main as-is
-
-    if (hasGroundChild) {
-      // Standard OSM convention: drop main, parts represent the building
-      dropMain.add(i);
-    } else if (lowestUpperMinH < Infinity && lowestUpperMinH < M.heightM) {
-      // Only upper-level parts → cap main to where they begin (becomes a base)
+    // Only-upper-parts case → cap main to where rooftop parts begin
+    if (!hasGroundChild && lowestUpperMinH < Infinity && lowestUpperMinH < M.heightM) {
       capMainTo.set(i, lowestUpperMinH);
     }
   }
