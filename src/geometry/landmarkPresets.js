@@ -190,11 +190,12 @@ export const LANDMARK_PRESETS = {
     generate(ctx, acc, polygon, baseY, totalH, heightM) {
       const { collectExtrudedPolygon, minBBoxDimension } = ctx;
       const { cx, cy } = centroid(polygon);
-      // Use actual polygon dim — landmark protection (in osmData.js + overture
-      // replace skip) ensures the OSM main outline reaches us intact, so the
-      // dim is correct.  Earlier fallback made the wings 80 % bigger than
-      // reality, dominating the silhouette.
-      const dim = minBBoxDimension(polygon);
+      // Real Burj base is ~75 m for 828 m height = 9 % ratio.  Use actual
+      // polygon dim if it's reasonable (≥ 5 % of totalH); else fall back to
+      // 9 % so even a small input polygon produces an iconic-sized shape.
+      const polyDim = minBBoxDimension(polygon);
+      const minDim  = totalH * 0.05;
+      const dim     = polyDim >= minDim ? polyDim : totalH * 0.09;
 
       // Real proportions: 828m total, 636m roof, 200m spire
       const spireH = totalH * (200 / 828);
@@ -657,9 +658,12 @@ export const LANDMARK_PRESETS = {
     generate(ctx, acc, polygon, baseY, totalH, heightM) {
       const { collectExtrudedPolygon, minBBoxDimension } = ctx;
       const { cx, cy } = centroid(polygon);
-      // Use actual polygon dim — landmark protection ensures OSM main reaches
-      // us intact at correct size.
-      const dim = minBBoxDimension(polygon);
+      // Real Eiffel base is ~125 m for 324 m height = 38 % ratio.  Use
+      // actual polygon dim if reasonable (≥ 20 % of totalH); else fall back
+      // to 38 % so even a small input polygon produces iconic-sized shape.
+      const polyDim = minBBoxDimension(polygon);
+      const minDim  = totalH * 0.20;
+      const dim     = polyDim >= minDim ? polyDim : totalH * 0.38;
       const halfBase = dim * 0.5;
 
       // Real Eiffel proportions
