@@ -311,36 +311,22 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
         }
       }
     }
-    // Round 2: for each representative, mark polygons inside it for skipping.
-    // We use BBOX-CONTAINMENT instead of centroid-in-polygon because:
-    //   - Concave polygons (Eiffel's clover-shape outline) have indented areas
-    //     where a part's centroid can sit OUTSIDE the polygon even though the
-    //     part is visibly inside the landmark's footprint.
-    //   - Bbox-containment catches every polygon whose bounding box sits
-    //     entirely within the representative's bounding box — Eiffel's legs,
-    //     platforms, spire all get caught regardless of where their centroids
-    //     land relative to the concave outline.
-    // Neighboring non-landmark buildings have bboxes that extend OUTSIDE the
-    // landmark's bbox, so they're not affected.
+    // Round 2: for each representative, mark polygons inside it for skipping
     for (const repIdx of landmarkRepIdx.values()) {
       const repPoly = buildingFootprints[repIdx].polygon;
-      let rMinX = Infinity, rMaxX = -Infinity, rMinY = Infinity, rMaxY = -Infinity;
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
       for (const p of repPoly) {
-        if (p.x < rMinX) rMinX = p.x; if (p.x > rMaxX) rMaxX = p.x;
-        if (p.y < rMinY) rMinY = p.y; if (p.y > rMaxY) rMaxY = p.y;
+        if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
       }
       for (let i = 0; i < buildingFootprints.length; i++) {
         if (i === repIdx) continue;
         const poly = buildingFootprints[i].polygon;
-        let pMinX = Infinity, pMaxX = -Infinity, pMinY = Infinity, pMaxY = -Infinity;
-        for (const p of poly) {
-          if (p.x < pMinX) pMinX = p.x; if (p.x > pMaxX) pMaxX = p.x;
-          if (p.y < pMinY) pMinY = p.y; if (p.y > pMaxY) pMaxY = p.y;
-        }
-        // Skip if this polygon's ENTIRE bbox sits within the rep's bbox.
-        if (pMinX >= rMinX && pMaxX <= rMaxX && pMinY >= rMinY && pMaxY <= rMaxY) {
-          landmarkSkipIdx.add(i);
-        }
+        let cx = 0, cy = 0;
+        for (const p of poly) { cx += p.x; cy += p.y; }
+        cx /= poly.length; cy /= poly.length;
+        if (cx < minX || cx > maxX || cy < minY || cy > maxY) continue;
+        if (pointInRayCast(cx, cy, repPoly)) landmarkSkipIdx.add(i);
       }
     }
   }
@@ -364,12 +350,7 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     // we render only that slice.  Skip if the slice is degenerate or inverted.
     const effectiveHM  = Math.max(0.1, heightM - minHeightM);
     const baseHeightMM = clamp(effectiveHM * hScale * BUILD_EXAG, MIN_BUILDING_HEIGHT_MM, MAX_BLDG_MM);
-    // Clamp min_height too (fix from review #5).  An OSM tag like
-    // min_height=900 m would otherwise push the building bottom past
-    // MAX_BLDG_MM, making the building invisible above the model ceiling.
-    // Cap absolute building TOP at MAX_BLDG_MM so nothing can disappear.
-    const rawMinHeightMM = minHeightM * hScale * BUILD_EXAG;
-    const minHeightMM    = Math.min(rawMinHeightMM, MAX_BLDG_MM - baseHeightMM);
+    const minHeightMM  = minHeightM * hScale * BUILD_EXAG;
 
     // In terrain mode, buildings extrude from the base plate (BASE - 0.1) up to
     // the roof.  The bottom goes to the base plate — not just to minH — so the
@@ -396,32 +377,42 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       heightMM = baseHeightMM + (minH - baseY); // keep roof at minH + baseHeightMM
     }
 
-    // Per user request: detailedBuildings system removed.  Only TWO paths now:
-    //   1. Landmark preset (Burj, Eiffel, etc.) — fires regardless of toggle
-    //   2. Plain block extrusion (with hole support for courtyards)
-    // The collectDetailedBuilding / collectGenericTallTower paths are no
-    // longer reached.  Detail toggle has no effect.
-    const tierResult = landmarkRegistry.selectGenerator(bf.tags, bf.osmId || '', heightM, bf.polygon);
-    const isLandmarkRep = tierResult.tier === 'landmark' && tierResult.presetName
-                          && landmarkRepIdx.get(tierResult.presetName) === _bfIdx;
-    const isLandmarkOther = tierResult.tier === 'landmark' && tierResult.presetName && !isLandmarkRep;
+    if (detailedBuildings) {
+      // ── 3-tier building generation system ──────────────────────────────
+      // Tier 1: Landmark preset (identity-based, NOT height-based)
+      // Tier 2: Generic tall-tower (≥100m real, no preset)
+      // Tier 3: Standard class-based (everything else)
+      const tierResult = landmarkRegistry.selectGenerator(bf.tags, bf.osmId || '', heightM, bf.polygon);
 
-    if (isLandmarkOther) { buildingCount++; continue; } // dedup non-rep landmarks
-
-    if (isLandmarkRep) {
-      // Iconic landmark preset
-      landmarkCtx.acc = buildingAcc;
-      const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
-      if (applied) landmarkCount++;
-      else {
-        // Preset function missing — fall back to plain extrusion
-        collectExtrudedPolygon(buildingAcc, bf.polygon, bf.holes || [], baseY, heightMM);
+      if (tierResult.tier === 'landmark' && tierResult.presetName) {
+        // ── Tier 1: Landmark with preset geometry ────────────────────
+        // Only render the representative (largest polygon for this preset);
+        // skip other landmark-tagged polygons.  Without this, OSM's
+        // multiple polygons per landmark (or Overture's duplicates) would
+        // each fire the preset, stacking iconic shapes on top of each other.
+        if (landmarkRepIdx.get(tierResult.presetName) !== _bfIdx) {
+          continue;
+        }
+        landmarkCtx.acc = buildingAcc;
+        const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
+        if (!applied) {
+          collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+          standardCount++;
+        } else {
+          landmarkCount++;
+        }
+      } else if (tierResult.tier === 'tall-tower') {
+        // ── Tier 2: Generic tall-tower (≥100m, no preset) ───────────
+        collectGenericTallTower(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+        tallTowerCount++;
+      } else {
+        // ── Tier 3: Standard class-based generation ─────────────────
+        collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
         standardCount++;
       }
     } else {
-      // Plain block extrusion with hole support (courtyards render as cutouts)
-      collectExtrudedPolygon(buildingAcc, bf.polygon, bf.holes || [], baseY, heightMM);
-      standardCount++;
+      // Plain block extrusion — no bevel, no empty space
+      collectExtrudedPolygon(buildingAcc, bf.polygon, [], baseY, heightMM);
     }
     buildingCount++;
   }

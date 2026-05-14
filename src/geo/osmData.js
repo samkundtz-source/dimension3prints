@@ -8,38 +8,6 @@
 
 import { deduplicateRing, ensureCCW, ensureCW } from '../utils/helpers.js';
 import { clipToHex } from './clipper.js';
-import landmarkData from '../geometry/landmarks.json';
-
-// Quick landmark check — used by dropEnvelopeBuildings to PROTECT main
-// polygons of known landmarks (Eiffel, Burj, etc.) from being dropped.
-// The landmark preset needs to fire on the full main outline, but the main
-// is often the ONLY polygon carrying the identifying name/wikidata tag —
-// dropping it leaves Phase 7 with zero matching polygons → preset never
-// fires → generic extrusion of building:parts → "fat slab" rendering.
-function isKnownLandmark(b) {
-  if (!b || !b.tags) return false;
-  const t = b.tags;
-  if (b.osmId && landmarkData.osmWayIds?.[b.osmId])         return true;
-  if (b.osmId && landmarkData.osmRelationIds?.[b.osmId])    return true;
-  if (t.wikidata && landmarkData.wikidataIds?.[t.wikidata]) return true;
-
-  // Try all known name fields (name, name:en, name:fr, name:zh, official_name, etc.)
-  // OSM contributors use various name keys depending on locale.
-  const namesToCheck = [
-    t.name, t['name:en'], t['name:fr'], t['name:de'], t['name:zh'],
-    t['name:ar'], t.official_name, t.alt_name, t.loc_name,
-  ].filter(Boolean).map(n => n.toLowerCase().trim());
-  const known = Object.keys(landmarkData.knownNames || {});
-  for (const candidate of namesToCheck) {
-    if (landmarkData.knownNames[candidate]) return true;
-    // Substring match: OSM names sometimes include parentheses, dashes,
-    // or extra qualifiers ("Eiffel Tower (Tour Eiffel)", "Burj Khalifa Tower")
-    for (const k of known) {
-      if (candidate.includes(k) || k.includes(candidate)) return true;
-    }
-  }
-  return false;
-}
 
 // ─── Geocoding ────────────────────────────────────────────────────────────────
 
@@ -553,21 +521,7 @@ export function parseOvertureBuildings(geojsonFeatures, projection, hexVertices,
       if (ovrName) tags.name = ovrName;
       let inheritedOsmId = null;
       // Walk matches in order — for tags that carry over, the FIRST OSM
-      // building with the value wins — EXCEPT for landmark identifiers,
-      // where we prefer a match that's a known landmark.  Otherwise an
-      // arbitrary OSM building's metadata could win and silently hide a
-      // landmark identifier that another collapsed match was carrying.
-      // (Fix from review #7.)
-      // First pass: prefer landmark tags from any match that's a known landmark.
-      const landmarkMatch = osmMatches.find(m => isKnownLandmark(m.ref));
-      if (landmarkMatch) {
-        const lt = landmarkMatch.ref.tags || {};
-        if (lt.wikidata)  tags.wikidata  = lt.wikidata;
-        if (lt.wikipedia) tags.wikipedia = lt.wikipedia;
-        if (lt.name)      tags.name      = lt.name;
-        if (landmarkMatch.ref.osmId) inheritedOsmId = landmarkMatch.ref.osmId;
-      }
-      // Second pass: fill any remaining gaps with first-match-wins.
+      // building with the value wins.
       for (const m of osmMatches) {
         const t = m.ref.tags || {};
         if (!tags.height && !tags['building:levels']) {
@@ -850,58 +804,43 @@ function dropEnvelopeBuildings(buildings) {
     const M = meta1[i];
     if (M.ref.isBuildingPart) continue; // analyse only mains
 
-    // PROTECTION (fix #1, Hypothesis #3 from review):
-    // Never drop a known landmark's main.  The landmark preset needs to fire
-    // on this full outer polygon, and the main is often the ONLY polygon
-    // carrying the identifying name/wikidata tag (e.g. Eiffel's parts are
-    // anonymous building:part=column).  Dropping it leaves Phase 7 with
-    // zero polygons matching the preset → preset never fires → fat-slab.
-    if (isKnownLandmark(M.ref)) continue;
-
     const childIdx = [];
     for (let j = 0; j < buildings.length; j++) {
       if (j === i) continue;
       const N = meta1[j];
       if (!N.ref.isBuildingPart) continue; // only parts are children
-      // BBOX-CONTAINMENT (fix from review #1) — replaces centroid-in-polygon.
-      // Centroid test misses parts inside L-shaped/U-shaped/courtyard mains
-      // because the centroid can land in a concave hole of the main.  Using
-      // bbox-inside-bbox catches all such parts reliably.
-      if (N.minX < M.minX || N.maxX > M.maxX || N.minY < M.minY || N.maxY > M.maxY) continue;
+      if (N.cx < M.minX || N.cx > M.maxX || N.cy < M.minY || N.cy > M.maxY) continue;
       if (N.area >= M.area * 0.95) continue;
-      childIdx.push(j);
+      if (pointInPolygonGeneral({ x: N.cx, y: N.cy }, M.ref.polygon)) {
+        childIdx.push(j);
+      }
     }
 
     if (childIdx.length === 0) continue; // no children, render main normally
 
-    // Calculate ground-level part coverage.  Only ground-level parts
-    // (min_height ≈ 0) count for replacing the main — upper parts can
-    // sit on top of main without occluding anything important.
-    let groundPartArea = 0;
-    let lowestMinH = Infinity;
+    let partAreaSum = 0;
+    let lowestMinH  = Infinity;
+    let highestH    = 0;
     for (const j of childIdx) {
       const N = meta1[j];
-      if (N.minHeightM <= 1) groundPartArea += N.area;
+      partAreaSum += N.area;
       if (N.minHeightM < lowestMinH) lowestMinH = N.minHeightM;
+      if (N.heightM    > highestH)   highestH   = N.heightM;
     }
-    const groundCoverage = groundPartArea / M.area;
+    const coverage = partAreaSum / M.area;
+    const fullVerticalSpan = lowestMinH <= 1 && highestH >= M.heightM * 0.85;
 
-    // USER'S RULE: "if a building covers another, delete the outside,
-    // keep the inside" — i.e. drop the outer envelope when inner parts
-    // adequately cover the footprint.  But ONLY drop if ground coverage
-    // is high (≥70%) so we never leave empty ground space.
-    if (groundCoverage >= 0.70) {
+    if (coverage >= 0.5 && fullVerticalSpan) {
+      // Parts genuinely model the building — drop main, all parts render
       dropMain.add(i);
     } else {
-      // Inner parts don't fully cover ground → keep the main as the
-      // visible footprint.  Skip ground-level parts to avoid Z-fighting
-      // overlap; upper-level parts (rooftop antennas etc.) still render
-      // on top of main.
+      // Keep main.  Skip ground-level parts (would overlap with main's
+      // ground extrusion).  Upper-level parts still render on top.
       for (const j of childIdx) {
         if (meta1[j].minHeightM <= 1) dropPart.add(j);
       }
-      // If ALL parts are upper-level (no ground children at all), cap
-      // main height to where parts begin → main becomes a clean base.
+      // If we have ONLY upper-level children, cap main height to lowest
+      // upper min_h so it forms a clean base for them.
       const allUpper = childIdx.every(j => meta1[j].minHeightM > 1);
       if (allUpper && lowestMinH > 1 && lowestMinH < M.heightM) {
         capMainTo.set(i, lowestMinH);
@@ -939,25 +878,15 @@ function dropEnvelopeBuildings(buildings) {
     }
 
     let hasSupport = false;
-    const myArea = (M.maxX - M.minX) * (M.maxY - M.minY);
     for (let j = 0; j < afterPass1.length; j++) {
       if (j === i) continue;
       const N = meta2[j];
       // Other building must reach at least within 5 m below my min_height
       if (N.heightM < M.minHeightM - 5) continue;
-      // Bbox overlap area as fraction of MY bbox.  Previous "any intersection"
-      // was too lenient — a neighbour barely touching my edge counted as
-      // support, even when nothing was actually under most of me.  Require
-      // ≥50 % of MY footprint to be covered before considering it support.
-      const oxL = Math.max(M.minX, N.minX);
-      const oxR = Math.min(M.maxX, N.maxX);
-      const oyB = Math.max(M.minY, N.minY);
-      const oyT = Math.min(M.maxY, N.maxY);
-      if (oxR <= oxL || oyT <= oyB) continue;
-      const ovArea = (oxR - oxL) * (oyT - oyB);
-      if (myArea > 0 && ovArea / myArea < 0.5) continue;
-      hasSupport = true;
-      break;
+      if (pointInPolygonGeneral({ x: M.cx, y: M.cy }, N.ref.polygon)) {
+        hasSupport = true;
+        break;
+      }
     }
 
     if (hasSupport) {

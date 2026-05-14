@@ -56,23 +56,11 @@ export class LandmarkRegistry {
       return { tier: 'landmark', presetName: preset, confidence: 'preset' };
     }
 
-    // 3. Name match — try multiple name fields, and substring matching
-    const namesToCheck = [
-      tags?.name, tags?.['name:en'], tags?.['name:fr'], tags?.['name:de'],
-      tags?.['name:zh'], tags?.['name:ar'], tags?.official_name,
-      tags?.alt_name, tags?.loc_name,
-    ].filter(Boolean).map(n => n.toLowerCase().trim());
-    for (const candidate of namesToCheck) {
-      // Exact match first
-      if (this._knownNames[candidate]) {
-        return { tier: 'landmark', presetName: this._knownNames[candidate], confidence: 'name-match' };
-      }
-      // Substring match: handles "Eiffel Tower (Tour Eiffel)" etc.
-      for (const k of Object.keys(this._knownNames)) {
-        if (candidate.includes(k) || k.includes(candidate)) {
-          return { tier: 'landmark', presetName: this._knownNames[k], confidence: 'name-substring' };
-        }
-      }
+    // 3. Name match (case-insensitive)
+    const name = (tags?.name || '').toLowerCase().trim();
+    if (name && this._knownNames[name]) {
+      const preset = this._knownNames[name];
+      return { tier: 'landmark', presetName: preset, confidence: 'name-match' };
     }
 
     // 4. Wikidata match
