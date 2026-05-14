@@ -951,18 +951,23 @@ function dropEnvelopeBuildings(buildings) {
     }
 
     let hasSupport = false;
+    const myArea = (M.maxX - M.minX) * (M.maxY - M.minY);
     for (let j = 0; j < afterPass1.length; j++) {
       if (j === i) continue;
       const N = meta2[j];
       // Other building must reach at least within 5 m below my min_height
       if (N.heightM < M.minHeightM - 5) continue;
-      // BBOX-INTERSECTION (fix from review #2) — replaces centroid-only test.
-      // A canopy / overhang / balcony hangs off its parent — the part's
-      // centroid may sit in the air past the parent's footprint, but the
-      // part still rests on top of the parent at its inner edge.  Bbox
-      // intersection catches these "support exists at bbox overlap" cases.
-      if (M.maxX <= N.minX || N.maxX <= M.minX) continue;
-      if (M.maxY <= N.minY || N.maxY <= M.minY) continue;
+      // Bbox overlap area as fraction of MY bbox.  Previous "any intersection"
+      // was too lenient — a neighbour barely touching my edge counted as
+      // support, even when nothing was actually under most of me.  Require
+      // ≥50 % of MY footprint to be covered before considering it support.
+      const oxL = Math.max(M.minX, N.minX);
+      const oxR = Math.min(M.maxX, N.maxX);
+      const oyB = Math.max(M.minY, N.minY);
+      const oyT = Math.min(M.maxY, N.maxY);
+      if (oxR <= oxL || oyT <= oyB) continue;
+      const ovArea = (oxR - oxL) * (oyT - oyB);
+      if (myArea > 0 && ovArea / myArea < 0.5) continue;
       hasSupport = true;
       break;
     }
