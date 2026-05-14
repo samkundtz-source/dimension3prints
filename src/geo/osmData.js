@@ -875,6 +875,7 @@ function dropEnvelopeBuildings(buildings) {
     if (childIdx.length === 0) continue; // no children, render main normally
 
     let partAreaSum = 0;
+    let groundPartArea = 0;
     let lowestMinH  = Infinity;
     let highestH    = 0;
     let hasGroundChild = false;
@@ -884,15 +885,18 @@ function dropEnvelopeBuildings(buildings) {
       partAreaSum += N.area;
       if (N.minHeightM < lowestMinH) lowestMinH = N.minHeightM;
       if (N.heightM    > highestH)   highestH   = N.heightM;
-      if (N.minHeightM <= 1) hasGroundChild = true;
+      if (N.minHeightM <= 1) {
+        hasGroundChild = true;
+        groundPartArea += N.area;
+      }
       if (N.heightM >= M.heightM * 0.85) hasNearTopChild = true;
     }
-    const coverage = partAreaSum / M.area;
-    // STRICTER vertical-span check (fix from review #6):
-    // Require BOTH a child reaching ground AND a child reaching near top —
-    // not just lowest-and-highest from possibly-different children. Prevents
-    // dropping mains whose parts are e.g. fat podium + skinny tower (both
-    // appear to satisfy the old check but together don't cover the volume).
+    const coverage       = partAreaSum / M.area;
+    // GROUND-coverage matters for drop-decisions: the ground level must be
+    // properly covered before we drop the main, otherwise upper parts become
+    // floating boxes with nothing supporting them visually.
+    const groundCoverage = groundPartArea / M.area;
+
     const fullVerticalSpan = hasGroundChild && hasNearTopChild;
 
     // Also require at least one child to contain the main's centroid —
@@ -903,7 +907,11 @@ function dropEnvelopeBuildings(buildings) {
       return pointInPolygonGeneral({ x: M.cx, y: M.cy }, partPoly);
     });
 
-    if (coverage >= 0.5 && fullVerticalSpan && partCoversCenter) {
+    // Drop only if GROUND-LEVEL parts cover ≥50 % of the main's area
+    // (using groundCoverage instead of total coverage).  Upper-only parts
+    // can satisfy the old "coverage" threshold while leaving the ground
+    // empty — that's what produced floating tops with no visible base.
+    if (groundCoverage >= 0.5 && fullVerticalSpan && partCoversCenter) {
       // Parts genuinely model the building — drop main, all parts render
       dropMain.add(i);
     } else {
