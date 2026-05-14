@@ -396,45 +396,32 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
       heightMM = baseHeightMM + (minH - baseY); // keep roof at minH + baseHeightMM
     }
 
-    // CRITICAL: landmark detection must happen REGARDLESS of detailedBuildings
-    // toggle.  Famous landmarks (Eiffel, Burj, Empire State, etc.) should
-    // ALWAYS render their iconic preset.  Without this, when the "Detailed
-    // buildings" toggle is OFF (default state), Burj just becomes a plain
-    // extruded polygon — the "extruded up bases" the user kept reporting.
+    // Per user request: detailedBuildings system removed.  Only TWO paths now:
+    //   1. Landmark preset (Burj, Eiffel, etc.) — fires regardless of toggle
+    //   2. Plain block extrusion (with hole support for courtyards)
+    // The collectDetailedBuilding / collectGenericTallTower paths are no
+    // longer reached.  Detail toggle has no effect.
     const tierResult = landmarkRegistry.selectGenerator(bf.tags, bf.osmId || '', heightM, bf.polygon);
     const isLandmarkRep = tierResult.tier === 'landmark' && tierResult.presetName
                           && landmarkRepIdx.get(tierResult.presetName) === _bfIdx;
     const isLandmarkOther = tierResult.tier === 'landmark' && tierResult.presetName && !isLandmarkRep;
 
-    // Skip non-representative landmark polygons (preset already fires on rep)
-    if (isLandmarkOther) { buildingCount++; continue; }
+    if (isLandmarkOther) { buildingCount++; continue; } // dedup non-rep landmarks
 
     if (isLandmarkRep) {
-      // ── Tier 1: Landmark preset — fires regardless of detailedBuildings ──
+      // Iconic landmark preset
       landmarkCtx.acc = buildingAcc;
       const applied = generateLandmarkBuilding(landmarkCtx, tierResult.presetName, bf.polygon, baseY, heightMM, heightM);
-      if (!applied) {
-        collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
-        standardCount++;
-      } else {
-        landmarkCount++;
-      }
-    } else if (detailedBuildings) {
-      // ── Tier 2: Generic tall-tower (≥100m, no preset) ───────────
-      // ── Tier 3: Standard class-based generation ─────────────────
-      if (tierResult.tier === 'tall-tower') {
-        collectGenericTallTower(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
-        tallTowerCount++;
-      } else {
-        collectDetailedBuilding(buildingAcc, bf.polygon, bf.tags, baseY, heightMM, heightM);
+      if (applied) landmarkCount++;
+      else {
+        // Preset function missing — fall back to plain extrusion
+        collectExtrudedPolygon(buildingAcc, bf.polygon, bf.holes || [], baseY, heightMM);
         standardCount++;
       }
     } else {
-      // Plain block extrusion — no bevel, no empty space
-      // Pass bf.holes so courtyards (OSM inner rings) render as actual cutouts
-      // rather than the previous "empty core" effect where outer walls extruded
-      // but the courtyard interior was lost.  earcut handles holes correctly.
+      // Plain block extrusion with hole support (courtyards render as cutouts)
       collectExtrudedPolygon(buildingAcc, bf.polygon, bf.holes || [], baseY, heightMM);
+      standardCount++;
     }
     buildingCount++;
   }

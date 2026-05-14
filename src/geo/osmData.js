@@ -874,54 +874,34 @@ function dropEnvelopeBuildings(buildings) {
 
     if (childIdx.length === 0) continue; // no children, render main normally
 
-    let partAreaSum = 0;
+    // Calculate ground-level part coverage.  Only ground-level parts
+    // (min_height ≈ 0) count for replacing the main — upper parts can
+    // sit on top of main without occluding anything important.
     let groundPartArea = 0;
-    let lowestMinH  = Infinity;
-    let highestH    = 0;
-    let hasGroundChild = false;
-    let hasNearTopChild = false;
+    let lowestMinH = Infinity;
     for (const j of childIdx) {
       const N = meta1[j];
-      partAreaSum += N.area;
+      if (N.minHeightM <= 1) groundPartArea += N.area;
       if (N.minHeightM < lowestMinH) lowestMinH = N.minHeightM;
-      if (N.heightM    > highestH)   highestH   = N.heightM;
-      if (N.minHeightM <= 1) {
-        hasGroundChild = true;
-        groundPartArea += N.area;
-      }
-      if (N.heightM >= M.heightM * 0.85) hasNearTopChild = true;
     }
-    const coverage       = partAreaSum / M.area;
-    // GROUND-coverage matters for drop-decisions: the ground level must be
-    // properly covered before we drop the main, otherwise upper parts become
-    // floating boxes with nothing supporting them visually.
     const groundCoverage = groundPartArea / M.area;
 
-    const fullVerticalSpan = hasGroundChild && hasNearTopChild;
-
-    // Also require at least one child to contain the main's centroid —
-    // otherwise parts only at edges/corners (no central polygon) drop the
-    // main and leave the building's center as a visible empty hole.
-    const partCoversCenter = childIdx.some(j => {
-      const partPoly = meta1[j].ref.polygon;
-      return pointInPolygonGeneral({ x: M.cx, y: M.cy }, partPoly);
-    });
-
-    // Drop only if GROUND-LEVEL parts cover ≥50 % of the main's area
-    // (using groundCoverage instead of total coverage).  Upper-only parts
-    // can satisfy the old "coverage" threshold while leaving the ground
-    // empty — that's what produced floating tops with no visible base.
-    if (groundCoverage >= 0.5 && fullVerticalSpan && partCoversCenter) {
-      // Parts genuinely model the building — drop main, all parts render
+    // USER'S RULE: "if a building covers another, delete the outside,
+    // keep the inside" — i.e. drop the outer envelope when inner parts
+    // adequately cover the footprint.  But ONLY drop if ground coverage
+    // is high (≥70%) so we never leave empty ground space.
+    if (groundCoverage >= 0.70) {
       dropMain.add(i);
     } else {
-      // Keep main.  Skip ground-level parts (would overlap with main's
-      // ground extrusion).  Upper-level parts still render on top.
+      // Inner parts don't fully cover ground → keep the main as the
+      // visible footprint.  Skip ground-level parts to avoid Z-fighting
+      // overlap; upper-level parts (rooftop antennas etc.) still render
+      // on top of main.
       for (const j of childIdx) {
         if (meta1[j].minHeightM <= 1) dropPart.add(j);
       }
-      // If we have ONLY upper-level children, cap main height to lowest
-      // upper min_h so it forms a clean base for them.
+      // If ALL parts are upper-level (no ground children at all), cap
+      // main height to where parts begin → main becomes a clean base.
       const allUpper = childIdx.every(j => meta1[j].minHeightM > 1);
       if (allUpper && lowestMinH > 1 && lowestMinH < M.heightM) {
         capMainTo.set(i, lowestMinH);
