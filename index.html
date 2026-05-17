@@ -54,9 +54,9 @@
       border-bottom: 1px solid var(--border);
     }
     .topnav-inner {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 24px;
+      width: 100%;
+      margin: 0;
+      padding: 0 40px;
       height: 48px;
       display: flex;
       align-items: center;
@@ -110,19 +110,35 @@
       border-bottom: 1px solid var(--border);
     }
     .subnav-inner {
-      max-width: 1200px;
-      margin: 0 auto;
-      padding: 0 24px;
+      width: 100%;
+      margin: 0;
+      padding: 0 40px;
       height: 52px;
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      gap: 24px;
+    }
+    .subnav-left  { justify-self: start; }
+    .subnav-right { justify-self: end; }
+    .subnav-product {
       display: flex;
       align-items: center;
-      justify-content: space-between;
-    }
-    .subnav-product {
+      gap: 12px;
       font-size: 19px;
       font-weight: 600;
       letter-spacing: -0.02em;
+      justify-self: center;
     }
+    .subnav-product-img {
+      height: 36px;
+      width: auto;
+      max-width: 80px;
+      object-fit: contain;
+      display: block;
+    }
+    .subnav-product-img:not([src]),
+    .subnav-product-img[src=""] { display: none; }
     .subnav-actions {
       display: flex;
       align-items: center;
@@ -405,9 +421,10 @@
     @media (max-width: 768px) {
       .topnav-links { display: none; }
       .topnav-logo { display: block; }
-      .topnav-inner { justify-content: space-between; }
-      .subnav-inner { padding: 0 16px; }
+      .topnav-inner { justify-content: space-between; padding: 0 16px; }
+      .subnav-inner { padding: 0 16px; grid-template-columns: auto 1fr auto; }
       .subnav-actions { gap: 14px; }
+      .subnav-product-img { height: 28px; max-width: 60px; }
       .subnav-actions a:not(.btn-buy) { display: none; }
       .hero { padding: 60px 20px 100px; }
       .hero-actions { flex-direction: column; gap: 20px; }
@@ -449,8 +466,13 @@
   <!-- ── Product subnav (Apple-style) ─────────────────────────────── -->
   <nav class="subnav">
     <div class="subnav-inner">
-      <div class="subnav-product">Cities3ds</div>
-      <div class="subnav-actions">
+      <div class="subnav-left"></div>
+      <div class="subnav-product">
+        <!-- Drop a product image src here (e.g. /lamp.png) — hidden when src is empty -->
+        <img class="subnav-product-img" id="subnav-product-img" src="" alt="" />
+        <span>Cities3ds</span>
+      </div>
+      <div class="subnav-actions subnav-right">
         <a href="#how">Overview</a>
         <a href="#features">Tech specs</a>
         <a href="/app.html" class="btn-buy">Start Making</a>
