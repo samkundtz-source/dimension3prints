@@ -878,21 +878,34 @@ function dropEnvelopeBuildings(buildings) {
     }
 
     let hasSupport = false;
+    const myArea = (M.maxX - M.minX) * (M.maxY - M.minY);
     for (let j = 0; j < afterPass1.length; j++) {
       if (j === i) continue;
       const N = meta2[j];
-      // Other building must reach at least within 5 m below my min_height
-      if (N.heightM < M.minHeightM - 5) continue;
-      if (pointInPolygonGeneral({ x: M.cx, y: M.cy }, N.ref.polygon)) {
-        hasSupport = true;
-        break;
-      }
+      // Other building must reach close to my min_height (1 m tolerance,
+      // tightened from 5 m to catch more floating cases).
+      if (N.heightM < M.minHeightM - 1) continue;
+      // STRICTER: require BOTH bbox overlap ≥50% of my footprint AND
+      // either centroid-in-polygon or full bbox containment.  Just centroid
+      // missed many floats; just bbox overlap was too lenient (a neighbour
+      // touching my edge falsely counted as support).
+      const oxL = Math.max(M.minX, N.minX);
+      const oxR = Math.min(M.maxX, N.maxX);
+      const oyB = Math.max(M.minY, N.minY);
+      const oyT = Math.min(M.maxY, N.maxY);
+      if (oxR <= oxL || oyT <= oyB) continue;
+      const ovArea = (oxR - oxL) * (oyT - oyB);
+      if (myArea > 0 && ovArea / myArea < 0.5) continue;
+      hasSupport = true;
+      break;
     }
 
     if (hasSupport) {
       final.push(M.ref);
     } else {
-      // Floating — ground it
+      // Floating — extrude DOWN: set min_height to 0 so the part renders
+      // from the base plate up to its tagged height (instead of floating
+      // mid-air at min_height with nothing beneath it).
       const newTags = { ...M.ref.tags, min_height: '0' };
       final.push({ ...M.ref, tags: newTags });
     }
