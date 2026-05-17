@@ -8,7 +8,7 @@
   <title>Cities3ds</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap" rel="stylesheet" />
 </head>
 <body>
   <div id="app">
@@ -137,7 +137,7 @@
               <div class="setting-row" style="margin-top:10px">
                 <span class="setting-name" style="font-size:12px">Print width (mm)</span>
                 <input type="number" id="test-print-width" value="100" min="50" max="300" step="10"
-                  style="width:60px;background:#1a1a1a;border:1px solid #333;color:#fff;border-radius:4px;padding:2px 6px;font-size:12px;text-align:right" />
+                  style="width:60px;background:var(--bg-input);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:3px 8px;font-size:12px;text-align:right;font-family:inherit" />
               </div>
             </div>
 
@@ -152,7 +152,7 @@
 
             <!-- Data source switch — admin only.  Default: OSM only (existing setup).
                  Overture toggle requires the corresponding R2 bucket to be populated. -->
-            <div style="margin-top:14px;padding-top:12px;border-top:1px dashed #2a2a2a">
+            <div style="margin-top:14px;padding-top:12px;border-top:1px dashed var(--border)">
               <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">Map data source</div>
               <label class="toggle-row" style="margin-bottom:6px">
                 <input type="radio" name="data-source" id="data-source-osm" value="osm" checked />
@@ -166,7 +166,7 @@
           </div>
 
           <!-- Admin-only radius control — hidden until admin mode is unlocked -->
-          <div id="admin-radius-section" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid #2a2a2a">
+          <div id="admin-radius-section" style="display:none;margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
             <div class="setting-row">
               <span class="setting-name" style="color:#f59e0b">⚙ Capture Radius</span>
               <span class="setting-val" id="admin-radius-display">1.0 km</span>
