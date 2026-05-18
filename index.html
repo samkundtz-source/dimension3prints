@@ -176,7 +176,30 @@
       text-align: center;
       padding: 80px 24px 120px;
       position: relative;
+      overflow: hidden;
     }
+    /* Lamp photo sitting behind the giant headline (AirPods-style hero product shot) */
+    .hero-bg {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: min(900px, 92vw);
+      max-height: 78vh;
+      object-fit: contain;
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0;
+      animation: heroBgIn 1.4s var(--ease) 0.05s forwards;
+    }
+    .hero-bg:not([src]),
+    .hero-bg[src=""] { display: none; }
+    @keyframes heroBgIn {
+      from { opacity: 0; transform: translate(-50%, -50%) scale(1.06); }
+      to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    }
+    /* Everything above the photo */
+    .hero-eyebrow, .hero-title, .hero-sub, .hero-actions { position: relative; z-index: 1; }
     .hero-eyebrow {
       font-size: 13px;
       font-weight: 500;
@@ -467,13 +490,7 @@
   <nav class="subnav">
     <div class="subnav-inner">
       <div class="subnav-left"></div>
-      <div class="subnav-product">
-        <!-- Drop your lamp photo at /public/images/lamp.png — img is hidden if the file 404s -->
-        <img class="subnav-product-img" id="subnav-product-img"
-             src="/images/lamp.png" alt="Cities3ds lamp"
-             onerror="this.style.display='none'" />
-        <span>Cities3ds</span>
-      </div>
+      <div class="subnav-product"><span>Cities3ds</span></div>
       <div class="subnav-actions subnav-right">
         <a href="#how">Overview</a>
         <a href="#features">Tech specs</a>
@@ -484,6 +501,10 @@
 
   <!-- ── HERO — big bold AirPods-Pro style ────────────────────────── -->
   <section class="hero">
+    <!-- Lamp product photo behind the headline. Drop file at public/images/lamp.png -->
+    <img class="hero-bg" id="hero-bg-img"
+         src="/images/lamp.png" alt=""
+         onerror="this.style.display='none'" />
     <div class="hero-eyebrow">New</div>
     <h1 class="hero-title">Cities<br>in 3D.</h1>
     <p class="hero-sub">Pick any place on Earth. We turn it into a 3D-printed model — buildings, roads, terrain. Yours, delivered.</p>
