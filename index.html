@@ -177,6 +177,7 @@
       padding: 80px 24px 120px;
       position: relative;
       overflow: hidden;
+      isolation: isolate; /* scopes mix-blend-mode to the hero only */
     }
     /* Lamp photo sitting behind the giant headline (AirPods-style hero product shot) */
     .hero-bg {
@@ -215,19 +216,29 @@
       letter-spacing: -0.04em;
       line-height: 0.92;
       margin-bottom: 28px;
-      color: var(--text);
+      color: #fff;
+      /* Inverts against whatever's behind it — always readable over the lamp photo */
+      mix-blend-mode: difference;
       animation: fadeUp 1s var(--ease) 0.2s both;
     }
     .hero-sub {
       font-size: clamp(18px, 2.4vw, 28px);
       font-weight: 400;
       color: var(--text);
-      opacity: 0.92;
+      opacity: 0.95;
       max-width: 720px;
       line-height: 1.3;
       letter-spacing: -0.015em;
       margin-bottom: 48px;
+      /* Soft dark halo so it reads cleanly over the busy bg */
+      text-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.85),
+        0 4px 16px rgba(0, 0, 0, 0.75),
+        0 0 40px rgba(0, 0, 0, 0.55);
       animation: fadeUp 1s var(--ease) 0.35s both;
+    }
+    .hero-eyebrow {
+      text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
     }
     .hero-actions {
       display: flex;
@@ -244,6 +255,7 @@
       color: var(--text);
       transition: opacity 0.2s var(--ease);
       letter-spacing: -0.01em;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 0, 0, 0.5);
     }
     .hero-link:hover { opacity: 0.78; }
     .hero-link .arrow {
