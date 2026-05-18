@@ -468,8 +468,10 @@
     <div class="subnav-inner">
       <div class="subnav-left"></div>
       <div class="subnav-product">
-        <!-- Drop a product image src here (e.g. /lamp.png) — hidden when src is empty -->
-        <img class="subnav-product-img" id="subnav-product-img" src="" alt="" />
+        <!-- Drop your lamp photo at /public/images/lamp.png — img is hidden if the file 404s -->
+        <img class="subnav-product-img" id="subnav-product-img"
+             src="/images/lamp.png" alt="Cities3ds lamp"
+             onerror="this.style.display='none'" />
         <span>Cities3ds</span>
       </div>
       <div class="subnav-actions subnav-right">
