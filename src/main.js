@@ -22,7 +22,7 @@ const PIN_ICON = L.divIcon({
 });
 
 import { createProjection, getHexVerticesGeo, getHexVertices, getShapeVertices, getShapeVerticesGeo } from './geo/geoMath.js';
-import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, parseOvertureWater, parseOvertureBuildings } from './geo/osmData.js';
+import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, parseOvertureWater, parseOvertureBuildings, resolveOverlaps } from './geo/osmData.js';
 import { buildMapModel } from './geometry/buildMap.js';
 import { SceneManager }  from './preview/scene.js';
 import { exportSTL, export3MF } from './export/exporters.js';
@@ -332,6 +332,16 @@ async function generate() {
       } catch (err) {
         setStatus(`Terrain fetch failed (${err.message}) — using flat base`, 58);
       }
+    }
+
+    // 4c. Resolve overlapping footprints across ALL sources (OSM + Overture +
+    //     MS) — removes the stacked/duplicate buildings that z-fight in the
+    //     preview. Runs once on the fully-merged list, just before meshing.
+    if (Array.isArray(features.buildings) && features.buildings.length > 1) {
+      const before = features.buildings.length;
+      features.buildings = resolveOverlaps(features.buildings);
+      const dropped = before - features.buildings.length;
+      if (dropped > 0) setStatus(`Resolved ${dropped} overlapping building${dropped === 1 ? '' : 's'}…`, 59);
     }
 
     // 5. Build 3D model

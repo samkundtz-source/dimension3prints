@@ -914,6 +914,117 @@ function dropEnvelopeBuildings(buildings) {
   return final;
 }
 
+// ── Overlap resolution — eliminate z-fighting from stacked footprints ────────
+//
+// dropEnvelopeBuildings() handles a main building vs. its OWN building:part
+// children. This pass handles the RESIDUAL conflicts that cause the white/black
+// flicker in dense areas: two footprints occupying the same XY *and* the same
+// vertical (Z) range. Causes: true OSM duplicates, Overture-vs-OSM dupes,
+// main-vs-main overlaps, MS-buildings overlapping OSM.
+//
+// Crucially it checks BOTH axes. A rooftop part (min_height 50, on a 50 m
+// building) overlaps in XY but NOT in Z, so it is left alone — only genuine
+// volume-on-volume collisions are resolved. The taller (then larger, then
+// richer-tagged) footprint wins the contested ground; the redundant one is
+// dropped. Run this on the FULLY MERGED building list (all sources combined).
+//
+// @param {Array} buildings  [{ polygon:[{x,y}], tags, isBuildingPart? }]
+// @returns {Array}          survivors (same objects, redundant ones removed)
+export function resolveOverlaps(buildings) {
+  if (!buildings || buildings.length < 2) return buildings;
+
+  const qHeight = t => {
+    if (t?.height) { const v = parseFloat(t.height); if (!isNaN(v) && v > 0) return v; }
+    if (t?.['building:levels']) { const v = parseFloat(t['building:levels']); if (!isNaN(v) && v > 0) return v * 3.2; }
+    return 10;
+  };
+  const qMinHeight = t => {
+    if (t?.min_height) { const v = parseFloat(t.min_height); if (!isNaN(v) && v >= 0) return v; }
+    return 0;
+  };
+  const shoelaceArea = poly => {
+    let a = 0;
+    for (let i = 0, n = poly.length; i < n; i++) {
+      const p = poly[i], q = poly[(i + 1) % n];
+      a += p.x * q.y - q.x * p.y;
+    }
+    return Math.abs(a) / 2;
+  };
+
+  const meta = buildings.map((b, i) => {
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of b.polygon) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    return {
+      i, ref: b, minX, maxX, minY, maxY,
+      area: shoelaceArea(b.polygon),
+      zLow: qMinHeight(b.tags), zHigh: qHeight(b.tags),
+      tagCount: b.tags ? Object.keys(b.tags).length : 0,
+    };
+  });
+
+  // Fraction of the SMALLER footprint that lies inside the larger, by sampling.
+  // Robust to concave polygons; no external clipping library needed.
+  const SAMPLES = 12;
+  function overlapFracOfSmaller(A, B) {
+    const small = A.area <= B.area ? A : B;
+    const large = small === A ? B : A;
+    const stepX = (small.maxX - small.minX) / SAMPLES;
+    const stepY = (small.maxY - small.minY) / SAMPLES;
+    if (stepX <= 0 || stepY <= 0) return 0;
+    let inSmall = 0, inBoth = 0;
+    for (let sy = 0; sy < SAMPLES; sy++) {
+      for (let sx = 0; sx < SAMPLES; sx++) {
+        const pt = { x: small.minX + (sx + 0.5) * stepX, y: small.minY + (sy + 0.5) * stepY };
+        if (!pointInPolygonGeneral(pt, small.ref.polygon)) continue;
+        inSmall++;
+        if (pointInPolygonGeneral(pt, large.ref.polygon)) inBoth++;
+      }
+    }
+    return inSmall === 0 ? 0 : inBoth / inSmall;
+  }
+
+  const OVERLAP_THRESH = 0.6; // ≥60% of the smaller footprint buried in the larger
+  const Z_EPS = 1.0;          // metres of vertical overlap needed to count as a collision
+  const removed = new Set();
+
+  // Sweep-line on X: sort by minX, compare each building only to later ones
+  // whose minX is still inside this building's X-extent. Keeps it near-linear
+  // for spatially-spread data instead of O(n²).
+  const order = meta.slice().sort((a, b) => a.minX - b.minX);
+  for (let a = 0; a < order.length; a++) {
+    const A = order[a];
+    if (removed.has(A.i)) continue;
+    for (let b = a + 1; b < order.length; b++) {
+      const B = order[b];
+      if (B.minX > A.maxX) break;                  // no later building can overlap A in X
+      if (removed.has(B.i)) continue;
+      if (B.minY > A.maxY || B.maxY < A.minY) continue;            // bbox Y miss
+      const zOverlap = Math.min(A.zHigh, B.zHigh) - Math.max(A.zLow, B.zLow);
+      if (zOverlap <= Z_EPS) continue;                              // different heights — not a collision
+      if (overlapFracOfSmaller(A, B) < OVERLAP_THRESH) continue;    // only partial → keep both
+
+      // Collision: drop the redundant one. Keep taller → larger → richer-tagged.
+      let loser;
+      const tallRef = Math.max(A.zHigh, B.zHigh);
+      if (Math.abs(A.zHigh - B.zHigh) > tallRef * 0.05) {
+        loser = A.zHigh > B.zHigh ? B : A;
+      } else if (Math.abs(A.area - B.area) > Math.max(A.area, B.area) * 0.05) {
+        loser = A.area >= B.area ? B : A;
+      } else {
+        loser = A.tagCount >= B.tagCount ? B : A;
+      }
+      removed.add(loser.i);
+      if (loser.i === A.i) break; // A itself was dropped — stop comparing against it
+    }
+  }
+
+  if (removed.size === 0) return buildings;
+  return buildings.filter((_, i) => !removed.has(i));
+}
+
 // ─── Coastline → sea-polygon construction ─────────────────────────────────────
 //
 // OSM coastlines are open polylines: LAND on LEFT, SEA on RIGHT relative to
