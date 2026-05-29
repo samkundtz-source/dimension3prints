@@ -965,6 +965,18 @@ export function resolveOverlaps(buildings) {
     };
   });
 
+  // Point-in-building that respects courtyards: a point sitting in one of the
+  // building's holes is NOT inside it. Without this, a building standing inside
+  // another's courtyard would be falsely detected as "covered" and deleted.
+  function insideBuilding(pt, m) {
+    if (!pointInPolygonGeneral(pt, m.ref.polygon)) return false;
+    const holes = m.ref.holes;
+    if (holes) for (const h of holes) {
+      if (h.length >= 3 && pointInPolygonGeneral(pt, h)) return false;
+    }
+    return true;
+  }
+
   // Fraction of the SMALLER footprint that lies inside the larger, by sampling.
   // Robust to concave polygons; no external clipping library needed.
   const SAMPLES = 12;
@@ -978,16 +990,17 @@ export function resolveOverlaps(buildings) {
     for (let sy = 0; sy < SAMPLES; sy++) {
       for (let sx = 0; sx < SAMPLES; sx++) {
         const pt = { x: small.minX + (sx + 0.5) * stepX, y: small.minY + (sy + 0.5) * stepY };
-        if (!pointInPolygonGeneral(pt, small.ref.polygon)) continue;
+        if (!insideBuilding(pt, small)) continue;
         inSmall++;
-        if (pointInPolygonGeneral(pt, large.ref.polygon)) inBoth++;
+        if (insideBuilding(pt, large)) inBoth++;
       }
     }
     return inSmall === 0 ? 0 : inBoth / inSmall;
   }
 
-  const OVERLAP_THRESH = 0.6; // ≥60% of the smaller footprint buried in the larger
-  const Z_EPS = 1.0;          // metres of vertical overlap needed to count as a collision
+  const OVERLAP_THRESH = 0.6;  // ≥60% of the smaller footprint buried in the larger
+  const AREA_RATIO_MIN = 0.5;  // footprints must be within ~2× in size to count as duplicates
+  const Z_EPS = 1.0;           // metres of vertical overlap needed to count as a collision
   const removed = new Set();
 
   // Sweep-line on X: sort by minX, compare each building only to later ones
@@ -1004,6 +1017,14 @@ export function resolveOverlaps(buildings) {
       if (B.minY > A.maxY || B.maxY < A.minY) continue;            // bbox Y miss
       const zOverlap = Math.min(A.zHigh, B.zHigh) - Math.max(A.zLow, B.zLow);
       if (zOverlap <= Z_EPS) continue;                              // different heights — not a collision
+
+      // Only a DUPLICATE if the footprints are similar in size. A small
+      // building inside a much larger footprint (courtyard infill, block
+      // outline, podium) is NOT a duplicate — deleting it makes real buildings
+      // vanish. True dupes (double-mapped, Overture-vs-OSM) are near-identical.
+      const areaRatio = Math.min(A.area, B.area) / Math.max(A.area, B.area);
+      if (areaRatio < AREA_RATIO_MIN) continue;                     // nested, not duplicate → keep both
+
       if (overlapFracOfSmaller(A, B) < OVERLAP_THRESH) continue;    // only partial → keep both
 
       // Collision: drop the redundant one. Keep taller → larger → richer-tagged.
