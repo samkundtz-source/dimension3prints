@@ -570,12 +570,21 @@ function doExport3MF() {
 // ─── Controls wiring ──────────────────────────────────────────────────────────
 
 function initControls() {
-  // Search (debounced to respect Nominatim 1 req/sec policy)
+  // Search — type-ahead, debounced. Fires ~350 ms after typing stops so you
+  // get live results without pressing Enter; Enter still searches immediately.
+  // (/api/geocode is rate-limited 30/min server-side, so this is safe.)
   const searchInput = el('search-input');
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchDebounceTimer);
+    const q = searchInput.value.trim();
+    if (q.length < 2) { el('search-results').innerHTML = ''; return; }
+    searchDebounceTimer = setTimeout(doSearch, 350);
+  });
   searchInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
+      e.preventDefault();
       clearTimeout(searchDebounceTimer);
-      searchDebounceTimer = setTimeout(doSearch, 400);
+      doSearch();
     }
   });
 
