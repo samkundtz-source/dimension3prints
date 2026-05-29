@@ -28,6 +28,7 @@ import { SceneManager }  from './preview/scene.js';
 import { exportSTL, export3MF } from './export/exporters.js';
 import { MODEL_RADIUS_MM } from './utils/helpers.js';
 import { fetchElevationForModel } from './terrain/terrain.js';
+import { fetchHiResElevationForModel, checkSuperDetailCoverage } from './geo/elevationData.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -285,7 +286,36 @@ async function generate() {
 
     // 4. Optionally fetch real terrain elevation (test mode or Mountain View)
     let terrainOptions = null;
-    if (testTerrainMode || mountainViewMode) {
+    const superDetailMode = el('super-detail')?.checked || false;
+
+    // 4a. Super Detail — LiDAR-grade terrain from USGS 3DEP (admin, US coverage).
+    //     Falls back to the Terrarium path below if there's no 3DEP coverage.
+    if (superDetailMode) {
+      try {
+        setStatus('Checking LiDAR coverage…', 50);
+        const cov = await checkSuperDetailCoverage(lat, lng);
+        if (!cov.covered) {
+          setStatus('No LiDAR coverage here — falling back to standard terrain', 52);
+        } else {
+          const GRID_SIZE = parseInt(el('super-detail-res')?.value, 10) || 192;
+          const elevGrid = await fetchHiResElevationForModel(
+            lat, lng, radiusMeters, MODEL_RADIUS_MM, GRID_SIZE,
+            msg => setStatus(msg, 55),
+          );
+          terrainOptions = {
+            elevGrid, gridSize: GRID_SIZE, terrainExag: 0,
+            mountainView: mountainViewMode, superDetail: true,
+          };
+          setStatus('LiDAR terrain loaded — super detail…', 58);
+        }
+      } catch (err) {
+        setStatus(`Super Detail failed (${err.message}) — trying standard terrain`, 54);
+      }
+    }
+
+    // 4b. Standard terrain (Terrarium tiles) — used directly, or as the
+    //     graceful fallback when Super Detail has no coverage / fails.
+    if (!terrainOptions && (testTerrainMode || mountainViewMode || superDetailMode)) {
       try {
         setStatus('Fetching terrain elevation…', 52);
         // Higher grid → more elevation samples → smoother, more detailed terrain.
@@ -630,6 +660,27 @@ function initControls() {
         })
         .catch(() => setStatus('Admin verification failed', 0));
     }
+  });
+
+  // Super Detail (LiDAR terrain) toggle + resolution slider + live coverage check
+  el('super-detail')?.addEventListener('change', async e => {
+    const on = e.target.checked;
+    el('super-detail-options').style.display = on ? '' : 'none';
+    const covEl = el('super-detail-coverage');
+    if (on && covEl && selectedCenter) {
+      covEl.textContent = 'Checking LiDAR coverage…';
+      const cov = await checkSuperDetailCoverage(selectedCenter.lat, selectedCenter.lng);
+      covEl.textContent = cov.covered
+        ? `✓ LiDAR available here (ground ≈ ${Math.round(cov.value)} m)`
+        : '✕ No LiDAR coverage — will use standard terrain';
+      covEl.style.color = cov.covered ? '#34d399' : 'var(--text-dim)';
+    } else if (on && covEl) {
+      covEl.textContent = 'Pick a location to check coverage.';
+      covEl.style.color = 'var(--text-dim)';
+    }
+  });
+  el('super-detail-res')?.addEventListener('input', () => {
+    el('super-detail-res-val').textContent = el('super-detail-res').value;
   });
 
   // Test mode terrain toggle + exaggeration slider

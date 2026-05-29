@@ -579,6 +579,82 @@ async function handleMsBuildings(request, env) {
   return jsonResponse({ features: allFeatures });
 }
 
+// ── Super-Detail elevation (USGS 3DEP — bare-earth DTM, 1 m where flown) ────
+// Keyless, CORS-enabled ImageServer. We proxy it so the browser stays
+// same-origin (no CSP change), responses cache on Cloudflare's edge, and we can
+// swap in additional sources later without touching the client.
+const ELEV_SERVICE =
+  'https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer';
+
+async function handleElevation(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+
+  const ip = getClientIP(request);
+  const rl = await checkPublicRateLimit(env, ip, 'elevation', 30, 60);
+  if (rl.blocked) return jsonResponse({ error: 'Too many requests.' }, 429, { 'Retry-After': String(rl.retryAfter) });
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+
+  // ── Coverage probe: is there 3DEP data at this point? ───────────────────
+  if (body.probe && isFiniteNum(body.probe.lat) && isFiniteNum(body.probe.lng)) {
+    const { lat, lng } = body.probe;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return jsonResponse({ error: 'bad probe' }, 400);
+    const geom = encodeURIComponent(JSON.stringify({ x: lng, y: lat, spatialReference: { wkid: 4326 } }));
+    const u = `${ELEV_SERVICE}/identify?geometry=${geom}&geometryType=esriGeometryPoint&returnGeometry=false&f=json`;
+    try {
+      const r = await fetch(u, { cf: { cacheTtl: 86400, cacheEverything: true } });
+      const j = await r.json();
+      const v = parseFloat(j?.value);
+      const covered = j?.value != null && j.value !== 'NoData' && Number.isFinite(v);
+      return jsonResponse({ covered, value: covered ? v : null });
+    } catch {
+      return jsonResponse({ covered: false, value: null });
+    }
+  }
+
+  // ── Raster request: return a single-band F32 GeoTIFF for the bbox ───────
+  const bboxError = validateBbox(body);
+  if (bboxError) return jsonResponse({ error: bboxError }, 400);
+  const sizeError = validateBboxSize(body.south, body.north, body.west, body.east);
+  if (sizeError) return jsonResponse({ error: sizeError }, 400);
+
+  let size = Math.floor(Number(body.size)) || 256;
+  size = Math.max(16, Math.min(512, size)); // payload guard
+
+  const bbox = `${body.west},${body.south},${body.east},${body.north}`;
+  const upstreamUrl =
+    `${ELEV_SERVICE}/exportImage?bbox=${bbox}&bboxSR=4326&imageSR=4326` +
+    `&size=${size},${size}&format=tiff&pixelType=F32` +
+    `&interpolation=RSP_BilinearInterpolation&f=image`;
+
+  // Edge cache keyed by normalized bbox+size (3DEP data is static)
+  const cache = caches.default;
+  const cacheKey = new Request(`https://elev.cache/v1/${size}/${bbox}`);
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  let upstream;
+  try {
+    upstream = await fetch(upstreamUrl, { cf: { cacheTtl: 86400, cacheEverything: true } });
+  } catch {
+    return jsonResponse({ error: 'elevation source unreachable' }, 502);
+  }
+  if (!upstream.ok) return jsonResponse({ error: `elevation source returned ${upstream.status}` }, 502);
+
+  const bytes = await upstream.arrayBuffer();
+  const resp = new Response(bytes, {
+    status: 200,
+    headers: {
+      'Content-Type': 'image/tiff',
+      'Cache-Control': 'public, max-age=86400',
+      ...securityHeaders(),
+    },
+  });
+  try { await cache.put(cacheKey, resp.clone()); } catch {}
+  return resp;
+}
+
 async function handleGetContent(request, env) {
   const ip = getClientIP(request);
   const rl = await checkPublicRateLimit(env, ip, 'content', 60, 60);
@@ -1006,6 +1082,7 @@ export default {
       case '/api/overture-buildings':    return handleOvertureBuildings(request, env);
       case '/api/content':               return handleGetContent(request, env);
       case '/api/osm-data':              return handleOSMData(request, env);
+      case '/api/elevation':             return handleElevation(request, env);
       case '/api/geocode':               return handleGeocode(request, env);
       case '/api/admin-verify':          return handleAdminVerify(request, env);
       case '/api/admin-orders':          return handleAdminOrders(request, env);

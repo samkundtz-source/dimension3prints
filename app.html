@@ -119,6 +119,26 @@
           <!-- Test Mode — admin only -->
           <div id="test-mode-section" style="display:none;margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
             <div style="font-size:10px;font-weight:600;letter-spacing:0.1em;color:var(--text);margin-bottom:12px;text-transform:uppercase;display:flex;align-items:center;gap:6px"><span style="display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--text);animation:pulse-dot 2s infinite"></span>Test Mode</div>
+
+            <!-- Super Detail — LiDAR-grade terrain (USGS 3DEP, US coverage) -->
+            <label class="toggle-row" style="margin-bottom:6px">
+              <input type="checkbox" id="super-detail" />
+              <span class="toggle-switch"></span>
+              <span class="toggle-label">⚡ Super Detail <span style="color:var(--text-dim);font-weight:400">(real LiDAR terrain · 1 m · US)</span></span>
+            </label>
+            <div id="super-detail-options" style="display:none;margin:0 0 12px 0;padding:8px 0 0">
+              <div class="setting-row" style="margin-top:4px">
+                <span class="setting-name" style="font-size:12px">Detail resolution</span>
+                <span class="setting-val" id="super-detail-res-val">192</span>
+              </div>
+              <input type="range" id="super-detail-res" class="slider" min="128" max="320" step="32" value="192" />
+              <div style="display:flex;justify-content:space-between;margin-top:2px">
+                <span style="font-size:10px;color:var(--text-dim)">faster</span>
+                <span style="font-size:10px;color:var(--text-dim)">finer</span>
+              </div>
+              <div id="super-detail-coverage" style="font-size:11px;color:var(--text-dim);margin-top:8px"></div>
+            </div>
+
             <label class="toggle-row">
               <input type="checkbox" id="test-terrain-enabled" />
               <span class="toggle-switch"></span>
