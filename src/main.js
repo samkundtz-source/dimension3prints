@@ -29,6 +29,7 @@ import { exportSTL, export3MF } from './export/exporters.js';
 import { MODEL_RADIUS_MM } from './utils/helpers.js';
 import { fetchElevationForModel } from './terrain/terrain.js';
 import { fetchHiResElevationForModel, checkSuperDetailCoverage } from './geo/elevationData.js';
+import { fetchSubway } from './geo/subwayData.js';
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -331,6 +332,32 @@ async function generate() {
         setStatus(mountainViewMode ? 'Terrain loaded — Mountain View mode…' : 'Terrain loaded — auto-scaling relief…', 58);
       } catch (err) {
         setStatus(`Terrain fetch failed (${err.message}) — using flat base`, 58);
+      }
+    }
+
+    // 4d. Subway / transit network (admin) — fetch railway=subway + stations
+    //     directly from Overpass (worker egress is blocked), project onto the
+    //     model, and optionally drop the city so only the network shows.
+    const subwayMode = el('subway-mode')?.checked || false;
+    if (subwayMode) {
+      try {
+        const sub = await fetchSubway(bbox, msg => setStatus(msg, 56));
+        features.subway = sub.lines.map(l => ({
+          points: l.pts.map(([la, lo]) => projection.project(la, lo)),
+          colour: l.colour,
+        }));
+        features.subwayStations = sub.stations.map(s => {
+          const p = projection.project(s.lat, s.lng);
+          return { x: p.x, y: p.y, name: s.name };
+        });
+        if (!(el('subway-include-city')?.checked)) {
+          features.buildings = []; features.roads = []; features.paths = [];
+          features.water = []; features.waterways = []; features.parks = [];
+          features.landuse = []; features.trees = [];
+        }
+        setStatus(`Subway: ${features.subway.length} segments · ${features.subwayStations.length} stations`, 58);
+      } catch (err) {
+        setStatus(`Subway fetch failed (${err.message})`, 58);
       }
     }
 
@@ -700,6 +727,12 @@ function initControls() {
   });
   el('super-detail-res')?.addEventListener('input', () => {
     el('super-detail-res-val').textContent = el('super-detail-res').value;
+  });
+
+  // Subway / Transit mode toggle — reveal the "include city" sub-option
+  el('subway-mode')?.addEventListener('change', e => {
+    const row = el('subway-city-row');
+    if (row) row.style.display = e.target.checked ? '' : 'none';
   });
 
   // Test mode terrain toggle + exaggeration slider

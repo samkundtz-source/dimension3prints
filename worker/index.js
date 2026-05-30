@@ -655,6 +655,66 @@ async function handleElevation(request, env) {
   return resp;
 }
 
+// ── Subway / transit network (admin) — railway=subway lines + stations ──────
+// Fetches the underground rail network for a bbox and returns a compact
+// { lines:[{pts:[[lat,lng]], colour, ref}], stations:[{lat,lng,name}] }.
+// Reuses the same Overpass mirror-race as map data; edge-cached (static data).
+function buildSubwayQuery(south, west, north, east) {
+  const bb = `${south},${west},${north},${east}`;
+  return `[out:json][timeout:25];(` +
+    `way["railway"="subway"](${bb});` +
+    `node["station"="subway"](${bb});` +
+    `);out geom;`;
+}
+
+async function handleSubwayData(request, env) {
+  if (request.method !== 'POST') return jsonResponse({ error: 'Method not allowed' }, 405);
+
+  const ip = getClientIP(request);
+  if (await checkIPBlocked(env, ip)) return jsonResponse({ error: 'Access temporarily blocked.' }, 429);
+  const rl = await checkPublicRateLimit(env, ip, 'subway', 15, 60);
+  if (rl.blocked) return jsonResponse({ error: 'Too many requests.' }, 429, { 'Retry-After': String(rl.retryAfter) });
+
+  let body;
+  try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
+
+  const bboxError = validateBbox(body);
+  if (bboxError) return jsonResponse({ error: bboxError }, 400);
+  const sizeError = validateBboxSize(body.south, body.north, body.west, body.east);
+  if (sizeError) return jsonResponse({ error: sizeError }, 400);
+
+  const cache = caches.default;
+  const cacheKey = new Request(`https://subway.cache/v1/${body.south},${body.west},${body.north},${body.east}`);
+  const hit = await cache.match(cacheKey);
+  if (hit) return hit;
+
+  const queryBody = `data=${encodeURIComponent(buildSubwayQuery(body.south, body.west, body.north, body.east))}`;
+
+  let data;
+  try {
+    data = await Promise.any(OVERPASS_SERVERS_WORKER.map(s => fetchOverpassServer(s, queryBody)));
+  } catch {
+    return jsonResponse({ error: 'Transit data servers are temporarily unavailable. Please try again.' }, 503);
+  }
+
+  const lines = [];
+  const stations = [];
+  for (const el of (data.elements || [])) {
+    if (el.type === 'way' && Array.isArray(el.geometry)) {
+      const pts = el.geometry.filter(Boolean).map(g => [g.lat, g.lon]);
+      if (pts.length >= 2) {
+        lines.push({ pts, colour: el.tags?.colour || el.tags?.color || null, ref: el.tags?.ref || null });
+      }
+    } else if (el.type === 'node' && el.lat != null) {
+      stations.push({ lat: el.lat, lng: el.lon, name: el.tags?.name || null });
+    }
+  }
+
+  const resp = jsonResponse({ lines, stations }, 200, { 'Cache-Control': 'public, max-age=86400' });
+  try { await cache.put(cacheKey, resp.clone()); } catch {}
+  return resp;
+}
+
 async function handleGetContent(request, env) {
   const ip = getClientIP(request);
   const rl = await checkPublicRateLimit(env, ip, 'content', 60, 60);
@@ -1083,6 +1143,7 @@ export default {
       case '/api/content':               return handleGetContent(request, env);
       case '/api/osm-data':              return handleOSMData(request, env);
       case '/api/elevation':             return handleElevation(request, env);
+      case '/api/subway-data':           return handleSubwayData(request, env);
       case '/api/geocode':               return handleGeocode(request, env);
       case '/api/admin-verify':          return handleAdminVerify(request, env);
       case '/api/admin-orders':          return handleAdminOrders(request, env);
