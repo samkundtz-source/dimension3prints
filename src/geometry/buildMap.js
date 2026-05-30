@@ -706,6 +706,12 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
     (features.waterways?.length || 0);
   const isAllWater = totalLandFeatures === 0 && totalWaterFeatures <= 2;
 
+  // Subway / transit network — raised tubes + station markers (admin mode).
+  // Collected into the white building accumulator before it is built.
+  if (features.subway?.length || features.subwayStations?.length) {
+    collectSubway(buildingAcc, features.subway, features.subwayStations, BASE, hexFull);
+  }
+
   const baseMesh = baseAcc.build(isAllWater ? 'water' : 'base');
   const bldgMesh = buildingAcc.build('building');
   const roadMesh = blackAcc.build('road');
@@ -1417,6 +1423,59 @@ function collectBeveledBuilding(acc, polygon, baseY, heightMM) {
   }
 
   acc.add(pos, idx);
+}
+
+// Subway / transit network → raised tubes + station markers on the base plate.
+// `lines`    = [{ points:[{x,y}], colour }]  (model-space, already projected)
+// `stations` = [{ x, y, name }]
+// Rendered into the white building accumulator as raised ridges. Uses the same
+// extrude primitive as buildings (axis: 2D (x,y) → 3D (x, height, -y)).
+function collectSubway(acc, lines, stations, baseTop, shapeVerts) {
+  const HALF_W = 0.9;          // tube half-width (mm)
+  const RISE   = 2.4;          // tube height above base (mm)
+  const STN_R  = 1.7;          // station marker half-size (mm)
+  const STN_H  = RISE + 1.6;   // stations stand slightly taller than the lines
+
+  const inShape = (px, py) => {
+    let inside = false;
+    for (let i = 0, j = shapeVerts.length - 1; i < shapeVerts.length; j = i++) {
+      const xi = shapeVerts[i].x, yi = shapeVerts[i].y;
+      const xj = shapeVerts[j].x, yj = shapeVerts[j].y;
+      if (((yi > py) !== (yj > py)) &&
+          (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    return inside;
+  };
+
+  for (const line of (lines || [])) {
+    const pts = line.points || [];
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      if (!inShape(a.x, a.y) && !inShape(b.x, b.y)) continue;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-3) continue;
+      const nx = -dy / len * HALF_W, ny = dx / len * HALF_W;
+      const rect = [
+        { x: a.x + nx, y: a.y + ny },
+        { x: b.x + nx, y: b.y + ny },
+        { x: b.x - nx, y: b.y - ny },
+        { x: a.x - nx, y: a.y - ny },
+      ];
+      collectExtrudedPolygon(acc, rect, [], baseTop, RISE);
+    }
+  }
+
+  for (const s of (stations || [])) {
+    if (!inShape(s.x, s.y)) continue;
+    const sq = [
+      { x: s.x - STN_R, y: s.y - STN_R },
+      { x: s.x + STN_R, y: s.y - STN_R },
+      { x: s.x + STN_R, y: s.y + STN_R },
+      { x: s.x - STN_R, y: s.y + STN_R },
+    ];
+    collectExtrudedPolygon(acc, sq, [], baseTop, STN_H);
+  }
 }
 
 function collectExtrudedPolygon(acc, polygon, holes, baseY, heightMM) {
