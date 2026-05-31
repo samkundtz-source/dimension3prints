@@ -50,31 +50,51 @@ PLAN (keep square behaviour identical; add hex/circle as the same code path):
   circle. Screenshot each.
 
 ═══════════════════════════════════════════════════════════════════════════
-## PHASE 3 — Multi-structure shop + 3D previews (UI feature)
+## PHASE 3 — Grid tile system (CONFIRMED SPEC) + 3D previews
 ═══════════════════════════════════════════════════════════════════════════
-User wants: a feature to print MULTIPLE connected structures OR buy separate
-structures, each with a 3D preview; nice UI; functions well.
+USER'S EXACT INTENT (confirmed): think of a GRID. You select a square (one map
+capture), then you can pick a square NEXT TO it and build off it — extending up
+to a 9×9 grid — so it becomes ONE uniform, bigger map. Each NEW square added
+costs +$35 (base model + $35 per extra tile). Each with 3D previews.
 
-Open question to confirm with user before building (ask via AskUserQuestion):
-  • "Connected" = physically tiling adjacent map areas into one continuous model
-    (grid of neighboring captures that align at edges), vs. "separate" = a cart
-    of independent models each bought on its own?  Build whichever they confirm;
-    likely BOTH: a cart that holds N saved models, with a "connect adjacent"
-    option when their capture areas are neighbors.
+So this is NOT a cart of unrelated models. It's contiguous map TILING:
+  • A tile = one capture area of fixed real-world size (= current radius/shape).
+  • Tiles are grid-adjacent (share an edge). Selecting builds a bigger uniform map.
+  • Grid max 9×9. Pricing: BASE_PRICE (existing $29.99) + $35 × (tileCount − 1).
 
-SUGGESTED BUILD:
-- A "cart"/collection: each entry = saved generation params (lat,lng,radius,
-  shape,rotation,elevation) + a thumbnail. Persist in localStorage.
-- Per-entry 3D preview: reuse SceneManager (src/preview/scene.js) to render each
-  saved model in a small canvas, or render one at a time in the main viewport.
-- "Connected" mode: detect when saved capture bboxes are edge-adjacent; offer to
-  generate them on one shared base plate (the thin uniform base from the engine
-  already supports tiling — MAX_RELIEF_MM keeps it flat/connectable).
-- Checkout: extend the existing Stripe flow (worker /api/create-checkout +
-  netlify removed already) to accept multiple line items (one per structure, or
-  one bundle for a connected set). Price = per-structure × count, or bundle price.
-- UI: clean cart panel, thumbnails, qty, total, "Order all" / "Order separately".
-  Match the AirPods-Pro black/white aesthetic already in index.html / style.css.
+BUILD PLAN:
+1. Tile grid model:
+   - Anchor tile = the user's chosen center. Define a tile step = 2×radius in
+     real-world metres so neighbours abut exactly (no gap/overlap). Use geoMath:
+     metresPerDegLat/Lng to convert the step to lat/lng offsets.
+   - Track selected cells as integer (col,row) offsets from the anchor; enforce
+     adjacency (a new cell must touch an existing one) and the 9×9 bound.
+2. Selection UI (on the Leaflet map):
+   - Draw the grid of candidate tiles around the selection as rectangles; clicked
+     = selected (filled), neighbours of selected = "addable" (outline). Click to
+     add/remove. Show live count + price ("3 tiles · $99.99").
+   - Keep it on the AirPods-Pro black/white aesthetic.
+3. Generation:
+   - For each selected tile, fetch OSM (+ terrain) for that tile's bbox and build
+     with buildMapModelV2, then OFFSET the resulting group in model space by the
+     tile's (col,row) × tileSizeMM so they sit edge-to-edge as one uniform map.
+   - The engine's thin uniform base (MAX_RELIEF_MM, flat floor at y=0) already
+     makes tiles line up flush — good. Verify seams: adjacent tiles must share
+     the same base height and border inset so they connect cleanly.
+   - Performance: N tiles = N fetches/builds; cap at 9×9=81 but warn for big sets.
+3D PREVIEW: reuse SceneManager; render the combined multi-tile group in the main
+   viewport (and optionally a small per-tile thumbnail in the grid UI).
+PRICING + CHECKOUT:
+   - Price label updates live: 29.99 + 35×(n−1).
+   - Extend worker /api/create-checkout to take tileCount and compute the total
+     (server-side authoritative price — don't trust client). One Stripe line item
+     "Custom 3D map — N tiles" at the computed total, or N line items. Confirm
+     exact line-item shape with user before wiring. (Card entry stays on Stripe.)
 
-NOTE: confirm payment/line-item details with the user before wiring Stripe.
-Prohibited to enter card data; the existing checkout already redirects to Stripe.
+WHY A FRESH SESSION IS RECOMMENDED FOR THIS:
+   This is a large multi-file feature (Leaflet grid UI + multi-bbox generation +
+   mesh offaset/stitch + Stripe pricing). The current session is very long and
+   the bash channel has been intermittently hanging, which makes big edits risky.
+   A fresh session with a clean channel is the safe place to build it. Phases 1,
+   2 and the water/shape fixes are all DONE, verified, and deployed — stable
+   baseline to start from.
