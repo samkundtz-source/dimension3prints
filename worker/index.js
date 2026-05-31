@@ -281,7 +281,13 @@ async function handleCreateCheckout(request, env) {
     detailedBuildings = false,
     roadElevation   = false,
     shape           = 'hexagon',
+    tileCount: rawTileCount = 1,
   } = body;
+
+  // Connected-tile count, clamped 1..9 (3×3) — used for authoritative pricing.
+  let tileCount = parseInt(rawTileCount, 10);
+  if (!Number.isFinite(tileCount) || tileCount < 1) tileCount = 1;
+  if (tileCount > 9) tileCount = 9;
 
   const settings = await getSettings(env);
   let paidCount = 0;
@@ -332,8 +338,13 @@ async function handleCreateCheckout(request, env) {
     line_items: [{
       price_data: {
         currency:     'usd',
-        product_data: { name: 'Cities3ds — Custom 3D Map', description: modelDesc, images: ['https://cities3ds.com/preview.png'] },
-        unit_amount:  2999,
+        product_data: {
+          name: tileCount > 1 ? `Cities3ds — Custom 3D Map (${tileCount} connected tiles)` : 'Cities3ds — Custom 3D Map',
+          description: modelDesc,
+          images: ['https://cities3ds.com/preview.png'],
+        },
+        // SERVER-SIDE authoritative price: $29.99 base + $35 per extra tile.
+        unit_amount:  2999 + 3500 * (tileCount - 1),
       },
       quantity: 1,
     }],
