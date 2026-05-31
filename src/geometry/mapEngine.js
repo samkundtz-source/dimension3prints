@@ -246,18 +246,24 @@ function buildWaterMask(GN, waterPolys, landMask) {
 // collectTerrain CARVES the surface down to `carveY` at any vertex flagged in
 // waterMask, so flat water fills the depression and detailed terrain can't poke
 // through. Land/building cells keep their normal height.
-function collectTerrain(acc, hf, GN, waterMask, carveY) {
+// `seaRings` (optional): clamp terrain height DOWN to `clampY` wherever a grid
+// vertex falls inside a SEA polygon, so coastal humps don't poke through the
+// flat sea. Uses point-in-polygon against the real (smooth) sea polygon, so the
+// clamp boundary matches the water exactly. Clamp = min(h, clampY): natural
+// low seabed is kept, only humps are lowered. When seaRings is empty (inland
+// cities), the terrain is completely untouched.
+function collectTerrain(acc, hf, GN, seaRings, clampY) {
   const step = (2 * R) / GN;
   const xy = (i) => -R + i * step;
-  const W = GN + 1;
+  const hasSea = seaRings && seaRings.length > 0;
 
-  // Top surface vertices (carved down inside water cells)
+  // Top surface vertices (clamped down inside sea polygons)
   const topIdx = [];
   for (let j = 0; j <= GN; j++) {
     for (let i = 0; i <= GN; i++) {
       const x = xy(i), y = xy(j);
       let h = hf.heightAt(x, y);
-      if (waterMask && waterMask[j * W + i]) h = carveY;
+      if (hasSea && h > clampY && pointInPolys(x, y, seaRings)) h = clampY;
       topIdx.push(acc.n);
       acc.pos.push(x, h, -y);
       acc.n++;
@@ -662,10 +668,11 @@ function collectRoads(acc, roads, hf) {
 // real OSM water polygon as a FLAT slab at a fixed `surfaceY`, and (in
 // collectTerrain) FLATTEN the terrain under water cells to just below that.
 // Smooth real-polygon shape on flattened ground = clean flat water, no humps.
-function collectWaterPolys(acc, polys, hf) {
+function collectWaterPolys(acc, polys, hf, seaLevelY) {
   const THK = 0.5;            // slab thickness
   let count = 0;
-  for (const ring of (polys || [])) {
+  for (const wp of (polys || [])) {
+    const ring = wp.ring;
     if (!ring || ring.length < 3) continue;
     const nV = ring.length;
     const flat = [];
@@ -674,13 +681,14 @@ function collectWaterPolys(acc, polys, hf) {
     try { tris = earcut(flat, [], 2); } catch { continue; }
     if (!tris.length) continue;
 
-    // Per-polygon FLAT level: sample terrain across the polygon, take a LOW
-    // percentile so the slab sits at the water's natural low point (in the
-    // channel/valley) — never floating, never on a hump. Flat = no bumps poke
-    // through; real polygon = smooth shoreline; terrain mesh untouched = no
-    // blocky edges.
+    // Level: SEA polygons use one fixed low sea level (terrain under them is
+    // clamped to match → no poke-through, big polygon stays flat). INLAND water
+    // keeps the natural per-polygon low-percentile level that already looks
+    // good — this branch is unchanged for the cities that work.
     let topY;
-    if (hf) {
+    if (wp.isSea) {
+      topY = seaLevelY;
+    } else if (hf) {
       const hs = [];
       for (const p of ring) hs.push(hf.heightAt(p.x, p.y));
       let cx = 0, cy = 0; for (const p of ring) { cx += p.x; cy += p.y; }
@@ -742,15 +750,25 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   //    for BOTH carving the terrain and filling it with flat water, so they
   //    always match.
   const PLATE_AREA = (2 * R) * (2 * R);
-  const waterPolys = [];
+  const waterPolys = [];   // [{ ring, isSea }]
+  const seaRings = [];     // sea rings only, for terrain clamp
   for (const w of (features.water || [])) {
     let poly = w.polygon;
     if (!poly || poly.length < 3) continue;
     poly = clipPolyToSquare(poly);
     if (!poly || poly.length < 3) continue;
     if (!w.isSea && polyArea(poly) > PLATE_AREA * 0.92) continue;
-    waterPolys.push(ensureCCW(poly));
+    const ring = ensureCCW(poly);
+    waterPolys.push({ ring, isSea: !!w.isSea });
+    if (w.isSea) seaRings.push(ring);
   }
+
+  // Coastal SEA sits at one fixed low level (true sea level); inland water
+  // keeps its natural per-polygon level. Terrain under sea is clamped just
+  // below this so no humps poke through — scoped to sea only, so inland cities
+  // are completely untouched.
+  const SEA_LEVEL_Y  = BASE + 0.2;
+  const SEA_CLAMP_Y  = BASE - 0.3;
 
   // Water levels — the key to "smooth + no land coverage + no poke-through":
   //   • WATER_SURFACE_Y sits just BELOW land level (BASE). On land/city the
@@ -773,7 +791,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   let hf = null;
   if (terrainOptions?.elevGrid && terrainOptions.gridSize) {
     hf = makeHeightField(terrainOptions.elevGrid, terrainOptions.gridSize, mmPerM);
-    collectTerrain(whiteAcc, hf, GN, null, 0);   // terrain untouched — no mask/carve/flatten
+    collectTerrain(whiteAcc, hf, GN, seaRings, SEA_CLAMP_Y);   // clamp terrain under SEA only
     onProgress?.(`New engine: terrain relief ${(hf.hi - hf.lo).toFixed(0)} m`, 68);
   } else {
     collectFlatBase(whiteAcc);
@@ -788,7 +806,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   // Render the REAL water polygons (smooth OSM shorelines) draped on the
   // terrain surface so they're always visible and follow the ground — the
   // natural-looking system. Size/isSea filter keeps oceans from blanketing land.
-  const nW = collectWaterPolys(blackAcc, waterPolys, hf);
+  const nW = collectWaterPolys(blackAcc, waterPolys, hf, SEA_LEVEL_Y);
   onProgress?.('New engine: finalising…', 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
