@@ -132,6 +132,13 @@ function clipSegmentToSquare(a, b, clipMargin) {
 // ─── Terrain height field ───────────────────────────────────────────────────
 // Maps model (x,y) ∈ [-R,R]² → surface height (mm). elevGrid is the raw metres
 // field (N×N, row-major). We normalise so the lowest point sits at `baseTop`.
+// MAX_RELIEF_MM caps how tall the terrain RELIEF can get, independent of the
+// raw elevation × vScale product. Without this, a city on a plateau (NYC) or a
+// big vertExag balloons the surface — and since the printed base hangs below
+// it, the whole model becomes a giant solid block wasting filament. We scale
+// the real relief into this budget instead.
+const MAX_RELIEF_MM = 12;   // tallest terrain bump above the lowest point
+
 function makeHeightField(elevGrid, N, vScaleMMperM) {
   let lo = Infinity, hi = -Infinity;
   for (let k = 0; k < elevGrid.length; k++) {
@@ -139,17 +146,20 @@ function makeHeightField(elevGrid, N, vScaleMMperM) {
     if (e < lo) lo = e; if (e > hi) hi = e;
   }
   if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 0; }
-  const baseTop = BASE;
+  const span = hi - lo;
+  // Relief scale: use vScale, but clamp so total relief never exceeds the
+  // budget. Flat cities (NYC ≈ a few m of span) get ~0 relief → thin base.
+  let relief = span * vScaleMMperM;
+  const reliefScale = relief > MAX_RELIEF_MM ? (MAX_RELIEF_MM / relief) : 1;
+  const effScale = vScaleMMperM * reliefScale;
+  const baseTop = BASE;   // terrain low point sits exactly at the base-plate top
   return {
     lo, hi,
+    reliefMM: Math.min(relief, MAX_RELIEF_MM),
     heightAt(x, y) {
-      // bilinearInterp expects MODEL-space x,y in [-R,R] plus the radius R; it
-      // normalises internally. The previous call pre-normalised to [0,1] AND
-      // omitted the radius arg → x/undefined = NaN → every vertex NaN → Three
-      // dropped the whole mesh → black screen.
       const e = bilinearInterp(elevGrid, N, x, y, R);
-      const h = baseTop + (e - lo) * vScaleMMperM;
-      return Number.isFinite(h) ? h : baseTop;   // never emit NaN into geometry
+      const h = baseTop + (e - lo) * effScale;
+      return Number.isFinite(h) ? h : baseTop;
     },
   };
 }
@@ -179,13 +189,18 @@ function collectTerrain(acc, hf, GN) {
     }
   }
 
-  // Floor (flat at y=0), reversed winding to face down
+  // Floor: a THIN slab — sits just below the terrain low point, NOT at y=0.
+  // Terrain low point is at BASE (1.5mm); floor at 0 → only ~1.5mm of solid
+  // base under the lowest terrain, instead of a tens-of-mm block. This is the
+  // filament-saving fix: base thickness is now constant regardless of how high
+  // the city's elevation reads.
+  const FLOOR_Y = 0;   // base-plate bottom (terrain low point is at BASE above it)
   const floorIdx = [];
   for (let j = 0; j <= GN; j++) {
     for (let i = 0; i <= GN; i++) {
       const x = xy(i), y = xy(j);
       floorIdx.push(acc.n);
-      acc.pos.push(x, 0, -y);
+      acc.pos.push(x, FLOOR_Y, -y);
       acc.n++;
     }
   }
