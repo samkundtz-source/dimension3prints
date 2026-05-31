@@ -254,21 +254,139 @@ function collectPrism(acc, poly, baseY, h) {
   }
 }
 
+// ─── Building shape classification (DATA-DRIVEN, never random) ───────────────
+// Decides each building's form from its real OSM tags + footprint geometry.
+// A building only gets a non-box shape when the data actually supports it.
+
+function bboxOf(poly) {
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (const p of poly) {
+    if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+  }
+  return { minX, maxX, minY, maxY, w: maxX - minX, h: maxY - minY };
+}
+function polyArea(poly) { return Math.abs(signedArea(poly)); }
+
+// Is this footprint genuinely round? True circle area / bbox area ≈ π/4 (0.785),
+// the bbox is near-square, AND OSM gave us many vertices (circles are digitised
+// with lots of points). All three must hold → no false positives on rectangles.
+function isRoundFootprint(poly) {
+  const bb = bboxOf(poly);
+  if (bb.w < 1e-3 || bb.h < 1e-3) return false;
+  const aspect = Math.min(bb.w, bb.h) / Math.max(bb.w, bb.h);
+  if (aspect < 0.8) return false;                       // must be near-square
+  if (poly.length < 8) return false;                    // circles are many-sided
+  const fill = polyArea(poly) / (bb.w * bb.h);
+  return fill > 0.7 && fill < 0.88;                     // ≈ π/4 → a disc
+}
+
+// Read an explicit roof shape from tags. Returns 'dome'|'pyramid'|'flat'|null.
+function roofShapeFromTags(tags) {
+  const rs = (tags?.['roof:shape'] || '').toLowerCase();
+  if (!rs) return null;
+  if (rs === 'dome' || rs === 'onion') return 'dome';
+  if (rs === 'pyramidal' || rs === 'conical' || rs === 'cone') return 'pyramid';
+  if (rs === 'flat') return 'flat';
+  return null; // gabled/hipped/etc handled later in the roof phase
+}
+
+// Regular N-gon footprint centred on (cx,cy) with radius r (for cylinders).
+function ngon(cx, cy, r, n) {
+  const out = [];
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * Math.PI * 2;
+    out.push({ x: cx + Math.cos(a) * r, y: cy + Math.sin(a) * r });
+  }
+  return out;
+}
+
+// Dome cap: stacked shrinking rings from (cx,cy) radius r0 at y0 up to a point.
+function collectDome(acc, cx, cy, y0, r0, height, sides = 16, layers = 5) {
+  let prevRing = null, prevY = y0;
+  for (let L = 1; L <= layers; L++) {
+    const t = L / layers;                 // 0..1
+    const ringR = r0 * Math.cos(t * Math.PI / 2);   // shrink toward apex
+    const ringY = y0 + height * Math.sin(t * Math.PI / 2);
+    const ring = ngon(cx, cy, Math.max(ringR, 0.05), sides);
+    if (prevRing) {
+      for (let i = 0; i < sides; i++) {
+        const ni = (i + 1) % sides;
+        const s = acc.n;
+        acc.pos.push(prevRing[i].x, prevY, -prevRing[i].y);
+        acc.pos.push(prevRing[ni].x, prevY, -prevRing[ni].y);
+        acc.pos.push(ring[ni].x, ringY, -ring[ni].y);
+        acc.pos.push(ring[i].x, ringY, -ring[i].y);
+        acc.n += 4;
+        acc.idx.push(s, s + 1, s + 2,  s, s + 2, s + 3);
+      }
+    }
+    prevRing = ring; prevY = ringY;
+  }
+}
+
+// Pyramid / cone cap: single ring at y0 → apex point.
+function collectPyramidCap(acc, ring, y0, height) {
+  const c = centroidOf(ring);
+  const apexY = y0 + height;
+  for (let i = 0; i < ring.length; i++) {
+    const a = ring[i], b = ring[(i + 1) % ring.length];
+    const s = acc.n;
+    acc.pos.push(a.x, y0, -a.y);
+    acc.pos.push(b.x, y0, -b.y);
+    acc.pos.push(c.x, apexY, -c.y);
+    acc.n += 3;
+    acc.idx.push(s, s + 1, s + 2);
+  }
+}
+
 // ─── Buildings draped on terrain ────────────────────────────────────────────
 function collectBuildings(acc, buildings, hf, vExag) {
-  let count = 0;
+  let count = 0, cyl = 0, dome = 0, pyr = 0;
   for (const bld of (buildings || [])) {
     let poly = bld.polygon;
     if (!poly || poly.length < 3) continue;
     // Clip footprint to the border so nothing hangs off the terrain edge.
     poly = clipPolyToSquare(poly);
     if (!poly || poly.length < 3) continue;
+
     const c = centroidOf(poly);
     const ground = hf ? hf.heightAt(c.x, c.y) : BASE;
     const hM = parseHeightM(bld.tags);
     const hMM = Math.max(0.6, hM * vExag);
-    // sink the foot below terrain so it stays grounded on slopes
-    collectPrism(acc, poly, ground - 1.0, hMM + 1.0);
+    const footY = ground - 1.0;          // sink foot below terrain on slopes
+    const bodyH = hMM + 1.0;
+    const topY = footY + bodyH;
+
+    const tags = bld.tags || {};
+    const roof = roofShapeFromTags(tags);
+    const round = isRoundFootprint(poly);
+
+    // ── Round footprint → real cylinder (smooth tower/rotunda) ──────────────
+    if (round) {
+      const bb = bboxOf(poly);
+      const r = Math.min(bb.w, bb.h) / 2;
+      const cylPoly = ngon(c.x, c.y, r, 28);   // 28-gon ≈ smooth circle
+      collectPrism(acc, cylPoly, footY, bodyH);
+      // domed top if tagged, else flat
+      if (roof === 'dome')        { collectDome(acc, c.x, c.y, topY, r, r * 0.8); dome++; }
+      else if (roof === 'pyramid'){ collectPyramidCap(acc, cylPoly, topY, r * 1.2); pyr++; }
+      cyl++; count++;
+      continue;
+    }
+
+    // ── Explicit roof tags on a normal footprint ────────────────────────────
+    collectPrism(acc, poly, footY, bodyH);
+    if (roof === 'dome') {
+      const bb = bboxOf(poly);
+      const r = Math.min(bb.w, bb.h) / 2;
+      collectDome(acc, c.x, c.y, topY, r, r * 0.7);
+      dome++;
+    } else if (roof === 'pyramid') {
+      const bb = bboxOf(poly);
+      collectPyramidCap(acc, ensureCCW(poly), topY, Math.min(bb.w, bb.h) * 0.5);
+      pyr++;
+    }
     count++;
   }
   return count;
