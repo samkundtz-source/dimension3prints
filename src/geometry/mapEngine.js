@@ -157,6 +157,8 @@ function collectFlatBase(acc) {
 }
 
 // ─── Generic prism extrusion (footprint from baseY up by h) ─────────────────
+// Walls use INDEPENDENT vertices (not shared with the top/bottom caps) so
+// computeVertexNormals produces flat, crisp edges instead of a melted look.
 function collectPrism(acc, poly, baseY, h) {
   const ring = ensureCCW(poly);
   if (ring.length < 3) return;
@@ -170,21 +172,29 @@ function collectPrism(acc, poly, baseY, h) {
   const top = baseY + h;
   const nV = ring.length;
 
-  const start = acc.n;
-  // top ring
+  // ── Top cap (own verts) ──
+  const topStart = acc.n;
   for (const p of ring) { acc.pos.push(p.x, top, -p.y); acc.n++; }
-  // bottom ring
+  for (let t = 0; t < tris.length; t += 3) {
+    acc.idx.push(topStart + tris[t], topStart + tris[t + 1], topStart + tris[t + 2]);
+  }
+  // ── Bottom cap (own verts, reversed winding) ──
+  const botStart = acc.n;
   for (const p of ring) { acc.pos.push(p.x, baseY, -p.y); acc.n++; }
-  // top face
-  for (let t = 0; t < tris.length; t += 3) acc.idx.push(start + tris[t], start + tris[t + 1], start + tris[t + 2]);
-  // bottom face (reversed)
-  const b = start + nV;
-  for (let t = 0; t < tris.length; t += 3) acc.idx.push(b + tris[t + 2], b + tris[t + 1], b + tris[t]);
-  // walls
+  for (let t = 0; t < tris.length; t += 3) {
+    acc.idx.push(botStart + tris[t + 2], botStart + tris[t + 1], botStart + tris[t]);
+  }
+  // ── Walls: each quad gets its own 4 verts → flat-shaded crisp faces.
+  // Buildings render DoubleSide, so winding can't cause see-through walls. ──
   for (let i = 0; i < nV; i++) {
-    const ni = (i + 1) % nV;
-    const tl = start + i, tr = start + ni, bl = b + i, br = b + ni;
-    acc.idx.push(tl, tr, bl,  bl, tr, br);
+    const a = ring[i], c = ring[(i + 1) % nV];
+    const s = acc.n;
+    acc.pos.push(a.x, top,   -a.y);   // 0 top-a
+    acc.pos.push(c.x, top,   -c.y);   // 1 top-c
+    acc.pos.push(c.x, baseY, -c.y);   // 2 bot-c
+    acc.pos.push(a.x, baseY, -a.y);   // 3 bot-a
+    acc.n += 4;
+    acc.idx.push(s, s + 1, s + 2,  s, s + 2, s + 3);
   }
 }
 
@@ -285,16 +295,21 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
     collectFlatBase(whiteAcc);
   }
 
-  const nB = collectBuildings(whiteAcc, features.buildings, hf, mmPerM);
+  // Buildings get their OWN accumulator/mesh so they receive the crisp
+  // 'building' material instead of terrain's smooth shading.
+  const bldgAcc = new Acc();
+  const nB = collectBuildings(bldgAcc, features.buildings, hf, mmPerM);
   onProgress?.(`New engine: ${nB} buildings draped`, 78);
   const nR = collectRoads(blackAcc, features.roads, hf);
   const nW = collectWater(blackAcc, features.water, hf);
   onProgress?.('New engine: finalising…', 90);
 
-  const terrainMesh = whiteAcc.build('terrain');
-  const blackMesh   = blackAcc.build('road');
-  if (terrainMesh) group.add(terrainMesh);
-  if (blackMesh) group.add(blackMesh);
+  const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
+  const buildingMesh = bldgAcc.build('building');
+  const blackMesh    = blackAcc.build('road');
+  if (terrainMesh)  group.add(terrainMesh);
+  if (buildingMesh) group.add(buildingMesh);
+  if (blackMesh)    group.add(blackMesh);
 
   return {
     group,

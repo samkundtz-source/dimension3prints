@@ -141,7 +141,10 @@ export class SceneManager {
         polygonOffset:       true,
         polygonOffsetFactor: off,
         polygonOffsetUnits:  off,
-        side: THREE.FrontSide,
+        // Buildings render double-sided so a wall can never be culled away
+        // (the new engine's prism winding is not guaranteed); other features
+        // stay single-sided for correct depth/perf.
+        side: type === 'building' ? THREE.DoubleSide : THREE.FrontSide,
       });
 
       this.wfMaterials[type] = new THREE.MeshBasicMaterial({
