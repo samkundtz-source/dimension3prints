@@ -656,16 +656,16 @@ function collectRoads(acc, roads, hf) {
   return count;
 }
 
-// ─── Water from REAL OSM polygons, DRAPED on the terrain ────────────────────
-// The natural-looking system: render each real OSM water polygon (smooth,
-// accurate shoreline) as a thin slab draped ON the terrain surface — each
-// vertex sits at terrain height + RISE, so it's always visible (never hidden by
-// uncarved terrain) and follows the ground. No grid mask, no carve → smooth.
-// Building footprints rise above this thin slab, so the city is never covered.
-function collectWaterPolys(acc, polys, hf) {
-  const RISE = 0.45;   // water surface above terrain (mm)
-  const THK  = 0.4;    // slab thickness
-  const g = (x, y) => (hf ? hf.heightAt(x, y) : BASE);
+// ─── Water from REAL OSM polygons, rendered FLAT (smooth shorelines) ─────────
+// User insight: NYC's elevation data has humps where water should be flat, so
+// draping water on the terrain made it ride up over the bumps. Fix: render the
+// real OSM water polygon as a FLAT slab at a fixed `surfaceY`, and (in
+// collectTerrain) FLATTEN the terrain under water cells to just below that.
+// Smooth real-polygon shape on flattened ground = clean flat water, no humps.
+function collectWaterPolys(acc, polys, surfaceY) {
+  const THK = 0.5;            // slab thickness
+  const topY = surfaceY;
+  const botY = surfaceY - THK;
   let count = 0;
   for (const ring of (polys || [])) {
     if (!ring || ring.length < 3) continue;
@@ -676,27 +676,24 @@ function collectWaterPolys(acc, polys, hf) {
     try { tris = earcut(flat, [], 2); } catch { continue; }
     if (!tris.length) continue;
 
-    const topY = ring.map(p => g(p.x, p.y) + RISE);
-    const botY = topY.map(y => y - THK);
-
-    // top face (smooth real shoreline)
+    // top face (smooth real shoreline, FLAT)
     const s = acc.n;
-    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, topY[i], -ring[i].y);
+    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, topY, -ring[i].y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(s + tris[t], s + tris[t + 1], s + tris[t + 2]);
     // floor (reversed)
     const b = acc.n;
-    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, botY[i], -ring[i].y);
+    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, botY, -ring[i].y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(b + tris[t + 2], b + tris[t + 1], b + tris[t]);
     // edge walls (smooth bank along the real polygon)
     for (let i = 0; i < nV; i++) {
       const ni = (i + 1) % nV;
       const k = acc.n;
-      acc.pos.push(ring[i].x, topY[i], -ring[i].y);
-      acc.pos.push(ring[ni].x, topY[ni], -ring[ni].y);
-      acc.pos.push(ring[ni].x, botY[ni], -ring[ni].y);
-      acc.pos.push(ring[i].x, botY[i], -ring[i].y);
+      acc.pos.push(ring[i].x, topY, -ring[i].y);
+      acc.pos.push(ring[ni].x, topY, -ring[ni].y);
+      acc.pos.push(ring[ni].x, botY, -ring[ni].y);
+      acc.pos.push(ring[i].x, botY, -ring[i].y);
       acc.n += 4;
       acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
     }
@@ -747,8 +744,12 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   //     the terrain is carved down, so the water surface shows in the channel.
   // Result: real OSM polygons → smooth realistic shorelines; physics hides
   // water on land and reveals it only in carved channels.
-  const WATER_SURFACE_Y = BASE - 0.25;
-  const CARVE_Y = BASE - 1.1;
+  // Water surface sits a hair above the flattened bed; FLATTEN_Y is where the
+  // terrain humps under water get levelled to. The water slab's floor (surface
+  // - thickness) lands at FLATTEN_Y, so terrain and water meet flush — no humps
+  // poke through, no gap.
+  const WATER_SURFACE_Y = BASE + 0.2;
+  const FLATTEN_Y = WATER_SURFACE_Y - 0.5;   // = water slab floor
   const GN = 96;
 
   // Land mask from buildings → water is forbidden on the city. Water mask =
@@ -760,7 +761,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   let hf = null;
   if (terrainOptions?.elevGrid && terrainOptions.gridSize) {
     hf = makeHeightField(terrainOptions.elevGrid, terrainOptions.gridSize, mmPerM);
-    collectTerrain(whiteAcc, hf, GN, null, CARVE_Y);   // no carve — water drapes on top
+    collectTerrain(whiteAcc, hf, GN, waterMask, FLATTEN_Y);   // flatten humps under water
     onProgress?.(`New engine: terrain relief ${(hf.hi - hf.lo).toFixed(0)} m`, 68);
   } else {
     collectFlatBase(whiteAcc);
@@ -775,7 +776,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   // Render the REAL water polygons (smooth OSM shorelines) draped on the
   // terrain surface so they're always visible and follow the ground — the
   // natural-looking system. Size/isSea filter keeps oceans from blanketing land.
-  const nW = collectWaterPolys(blackAcc, waterPolys, hf);
+  const nW = collectWaterPolys(blackAcc, waterPolys, WATER_SURFACE_Y);
   onProgress?.('New engine: finalising…', 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
