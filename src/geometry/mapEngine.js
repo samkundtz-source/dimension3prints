@@ -191,21 +191,73 @@ function pointInPolys(x, y, polys) {
   return false;
 }
 
-// collectTerrain now CARVES the surface down to `carveY` wherever a grid vertex
-// falls inside a water polygon, so flat water fills the depression and the
-// detailed terrain can never poke up through the water (the buried-water bug).
-function collectTerrain(acc, hf, GN, waterPolys, carveY) {
+// Build a LAND mask from building footprints: grid vertices on/near a building
+// are land → water is forbidden there. Dilated so dense city blocks read as
+// solid land, not flooded between buildings. idx = j*(GN+1)+i.
+function buildLandMask(buildings, GN) {
+  const W = GN + 1;
+  const mask = new Uint8Array(W * W);
+  const toI = (v) => Math.round((v + R) / (2 * R) * GN);
+  for (const b of (buildings || [])) {
+    const poly = b.polygon;
+    if (!poly || poly.length < 3) continue;
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (const p of poly) {
+      if (p.x < minX) minX = p.x; if (p.x > maxX) maxX = p.x;
+      if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y;
+    }
+    const i0 = Math.max(0, toI(minX) - 1), i1 = Math.min(GN, toI(maxX) + 1);
+    const j0 = Math.max(0, toI(minY) - 1), j1 = Math.min(GN, toI(maxY) + 1);
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) mask[j * W + i] = 1;
+  }
+  // Dilate by 1 cell so water keeps a margin from the city.
+  const out = mask.slice();
+  for (let j = 0; j <= GN; j++)
+    for (let i = 0; i <= GN; i++) {
+      if (!mask[j * W + i]) continue;
+      for (let dj = -1; dj <= 1; dj++)
+        for (let di = -1; di <= 1; di++) {
+          const ni = i + di, nj = j + dj;
+          if (ni >= 0 && ni <= GN && nj >= 0 && nj <= GN) out[nj * W + ni] = 1;
+        }
+    }
+  return out;
+}
+
+// Compute a WATER mask: a grid vertex is water iff it's inside a water polygon
+// AND not land (buildings). idx = j*(GN+1)+i.
+function buildWaterMask(GN, waterPolys, landMask) {
+  const W = GN + 1;
+  const mask = new Uint8Array(W * W);
+  if (!waterPolys || !waterPolys.length) return mask;
+  const step = (2 * R) / GN;
+  for (let j = 0; j <= GN; j++) {
+    for (let i = 0; i <= GN; i++) {
+      const idx = j * W + i;
+      if (landMask[idx]) continue;                       // city/land → never water
+      const x = -R + i * step, y = -R + j * step;
+      if (pointInPolys(x, y, waterPolys)) mask[idx] = 1;
+    }
+  }
+  return mask;
+}
+
+// collectTerrain CARVES the surface down to `carveY` at any vertex flagged in
+// waterMask, so flat water fills the depression and detailed terrain can't poke
+// through. Land/building cells keep their normal height.
+function collectTerrain(acc, hf, GN, waterMask, carveY) {
   const step = (2 * R) / GN;
   const xy = (i) => -R + i * step;
-  const carve = waterPolys && waterPolys.length > 0;
+  const W = GN + 1;
 
-  // Top surface vertices (carved down inside water areas)
+  // Top surface vertices (carved down inside water cells)
   const topIdx = [];
   for (let j = 0; j <= GN; j++) {
     for (let i = 0; i <= GN; i++) {
       const x = xy(i), y = xy(j);
       let h = hf.heightAt(x, y);
-      if (carve && pointInPolys(x, y, waterPolys)) h = carveY;
+      if (waterMask && waterMask[j * W + i]) h = carveY;
       topIdx.push(acc.n);
       acc.pos.push(x, h, -y);
       acc.n++;
@@ -604,46 +656,50 @@ function collectRoads(acc, roads, hf) {
   return count;
 }
 
-// ─── Water fills the carved terrain channel (flat surface + floor) ──────────
-// The terrain is carved DOWN to `botY` inside these polygons (see collectTerrain),
-// so a FLAT water surface at `topY` sits in a real channel below the land. The
-// detailed terrain can't poke through because under water it's been lowered.
-// `polys` are already clipped + filtered + CCW.
-function collectWater(acc, polys, topY, botY) {
-  let count = 0;
-  for (const ring of (polys || [])) {
-    if (!ring || ring.length < 3) continue;
-    const nV = ring.length;
-    const flat = [];
-    for (const p of ring) flat.push(p.x, p.y);
-    const tris = earcut(flat, [], 2);
-    if (!tris.length) continue;
+// ─── Water rendered from the WATER MASK (grid cells), not raw polygons ──────
+// A flat water top at `topY` is emitted for every grid cell whose 4 corners are
+// all water (matching the carved terrain). Because the mask already excludes
+// building/land cells, water can NEVER cover the city. Emits a top + outer
+// skirt down to botY so it reads as a solid body with banks.
+function collectWaterGrid(acc, GN, waterMask, topY, botY) {
+  if (!waterMask) return 0;
+  const W = GN + 1;
+  const step = (2 * R) / GN;
+  const xy = (i) => -R + i * step;
+  const isW = (i, j) => (i >= 0 && i <= GN && j >= 0 && j <= GN) ? waterMask[j * W + i] : 0;
+  let cells = 0;
 
-    // top surface (flat)
-    const ts = acc.n;
-    for (const p of ring) acc.pos.push(p.x, topY, -p.y);
-    acc.n += nV;
-    for (let t = 0; t < tris.length; t += 3) acc.idx.push(ts + tris[t], ts + tris[t + 1], ts + tris[t + 2]);
-    // floor (flat, reversed)
-    const bs = acc.n;
-    for (const p of ring) acc.pos.push(p.x, botY, -p.y);
-    acc.n += nV;
-    for (let t = 0; t < tris.length; t += 3) acc.idx.push(bs + tris[t + 2], bs + tris[t + 1], bs + tris[t]);
-    // edge walls (the bank where water meets the carved channel side)
-    for (let i = 0; i < nV; i++) {
-      const ni = (i + 1) % nV;
-      const a = ring[i], b = ring[ni];
-      const k = acc.n;
-      acc.pos.push(a.x, topY, -a.y);
-      acc.pos.push(b.x, topY, -b.y);
-      acc.pos.push(b.x, botY, -b.y);
-      acc.pos.push(a.x, botY, -a.y);
+  for (let j = 0; j < GN; j++) {
+    for (let i = 0; i < GN; i++) {
+      // A water cell needs all 4 corners flagged water.
+      if (!(isW(i, j) && isW(i + 1, j) && isW(i + 1, j + 1) && isW(i, j + 1))) continue;
+      const x0 = xy(i), x1 = xy(i + 1), y0 = xy(j), y1 = xy(j + 1);
+      // top quad
+      const s = acc.n;
+      acc.pos.push(x0, topY, -y0);
+      acc.pos.push(x1, topY, -y0);
+      acc.pos.push(x1, topY, -y1);
+      acc.pos.push(x0, topY, -y1);
       acc.n += 4;
-      acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
+      acc.idx.push(s, s + 2, s + 1,  s, s + 3, s + 2);
+      // skirt walls only on edges bordering a NON-water cell (the visible banks)
+      const edge = (cax, cay, cbx, cby) => {
+        const k = acc.n;
+        acc.pos.push(cax, topY, -cay);
+        acc.pos.push(cbx, topY, -cby);
+        acc.pos.push(cbx, botY, -cby);
+        acc.pos.push(cax, botY, -cay);
+        acc.n += 4;
+        acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
+      };
+      if (!isW(i, j - 1))     edge(x0, y0, x1, y0); // south
+      if (!isW(i, j + 1))     edge(x1, y1, x0, y1); // north
+      if (!isW(i - 1, j))     edge(x0, y1, x0, y0); // west
+      if (!isW(i + 1, j))     edge(x1, y0, x1, y1); // east
+      cells++;
     }
-    count++;
   }
-  return count;
+  return cells;
 }
 
 // ─── Public entry point ─────────────────────────────────────────────────────
@@ -684,11 +740,18 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   // CARVE_Y (below the surface) so water fills a real channel.
   const WATER_SURFACE_Y = BASE + 0.3;
   const CARVE_Y = BASE - 0.8;
+  const GN = 96;
+
+  // Land mask from buildings → water is forbidden on the city. Water mask =
+  // inside a water polygon AND not land. Both carve and fill use this mask, so
+  // water and city are mutually exclusive — water can never cover buildings.
+  const landMask  = buildLandMask(features.buildings, GN);
+  const waterMask = buildWaterMask(GN, waterPolys, landMask);
 
   let hf = null;
   if (terrainOptions?.elevGrid && terrainOptions.gridSize) {
     hf = makeHeightField(terrainOptions.elevGrid, terrainOptions.gridSize, mmPerM);
-    collectTerrain(whiteAcc, hf, 96, waterPolys, CARVE_Y);   // carve under water
+    collectTerrain(whiteAcc, hf, GN, waterMask, CARVE_Y);   // carve under water
     onProgress?.(`New engine: terrain relief ${(hf.hi - hf.lo).toFixed(0)} m`, 68);
   } else {
     collectFlatBase(whiteAcc);
@@ -700,7 +763,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   const nB = collectBuildings(bldgAcc, features.buildings, hf, mmPerM);
   onProgress?.(`New engine: ${nB} buildings draped`, 78);
   const nR = collectRoads(blackAcc, features.roads, hf);
-  const nW = collectWater(blackAcc, waterPolys, WATER_SURFACE_Y, CARVE_Y);
+  const nW = collectWaterGrid(blackAcc, GN, hf ? waterMask : null, WATER_SURFACE_Y, CARVE_Y);
   onProgress?.('New engine: finalising…', 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
