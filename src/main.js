@@ -38,6 +38,9 @@ import { isTileable, neighborsOf, cellToModelOffset, cellToGeoCenter, validateSe
 // selectedTiles holds integer cells {a,b}; {0,0} = the anchor (search/click
 // location). Empty/[{0,0}] = a normal single-tile model.
 let selectedTiles = [{ a: 0, b: 0 }];
+// Per-tile groups from the last generation: [{ cell, group }], each group at the
+// origin so it exports as its own printable plate. Anchor is index 0.
+let lastTiles = [];
 
 // ─── State ────────────────────────────────────────────────────────────────────
 

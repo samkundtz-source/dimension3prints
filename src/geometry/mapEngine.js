@@ -74,7 +74,10 @@ function ensureCCW(poly) { return signedArea(poly) < 0 ? poly.slice().reverse() 
 // ── Clip boundary (inset a hair so features never poke past the terrain wall) ──
 // Phase 1 = square; swapping this polygon to a hexagon/circle is all that's
 // needed for those shapes later.
-const CLIP = R - 0.5;
+// Feature clip inset. Was R−0.5, which left an empty ring of plate around the
+// generation (ugly border bigger than the city). ~R so features fill the plate
+// edge-to-edge; a hair of inset keeps cut walls from z-fighting the plate wall.
+const CLIP = R - 0.05;
 
 // Active board boundary (CCW convex polygon in model mm). null = square (the
 // fast axis-aligned path below). Set per-build by buildMapModelV2 for hex/circle.
@@ -217,11 +220,16 @@ function makeHeightField(elevGrid, N, vScaleMMperM) {
   // Use ROBUST low/high (5th/95th percentile) instead of absolute min/max so a
   // patch of sea (elevation 0) or a single spike doesn't drag the whole land
   // onto a plateau / flatten the relief. This keeps coastal cities thin.
+  // Normalise against the 2nd/98th percentile — wide enough to keep the FULL
+  // gradual relief (so hills flow continuously, no squash), but trims only
+  // extreme single-cell spikes. We do NOT hard-clamp per vertex (that caused
+  // the "hill then a sudden cliff/jump"); instead the whole range is scaled
+  // smoothly and capped only in total height by MAX_RELIEF_MM.
   const sorted = Array.from(elevGrid).filter(Number.isFinite).sort((a, b) => a - b);
   let lo, hi;
   if (sorted.length) {
-    lo = sorted[Math.floor(sorted.length * 0.05)];
-    hi = sorted[Math.floor(sorted.length * 0.95)];
+    lo = sorted[Math.floor(sorted.length * 0.02)];
+    hi = sorted[Math.floor(sorted.length * 0.98)];
   } else { lo = 0; hi = 0; }
   if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 0; }
   if (hi < lo) hi = lo;
@@ -237,10 +245,11 @@ function makeHeightField(elevGrid, N, vScaleMMperM) {
     reliefMM: Math.min(relief, MAX_RELIEF_MM),
     heightAt(x, y) {
       const e = bilinearInterp(elevGrid, N, x, y, R);
-      // Clamp the elevation into the robust [lo,hi] band so sea/spikes outside
-      // the percentile range can't push a vertex below the base or sky-high.
-      const ec = e < lo ? lo : (e > hi ? hi : e);
-      const h = baseTop + (ec - lo) * effScale;
+      // Continuous mapping (no hard clamp → no cliffs). Only clamp the FLOOR at
+      // the base so terrain never dips below the plate; the top is free to vary
+      // smoothly (total height already bounded by effScale/MAX_RELIEF_MM).
+      let h = baseTop + (e - lo) * effScale;
+      if (h < baseTop) h = baseTop;
       return Number.isFinite(h) ? h : baseTop;
     },
   };
@@ -865,7 +874,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   // circle use a CCW convex polygon that every clipper + the terrain follow, so
   // edges come out smooth. Inset a hair so nothing pokes past the wall.
   if (shape === 'hexagon' || shape === 'circle') {
-    BOUNDARY = ensureCCW(getShapeVertices(R - 0.5, shape, 0));
+    BOUNDARY = ensureCCW(getShapeVertices(R - 0.05, shape, 0));
   } else {
     BOUNDARY = null;
   }
