@@ -601,9 +601,13 @@ function collectWater(acc, water, hf, waterLevelY) {
     if (!poly || poly.length < 3) continue;
     poly = clipPolyToSquare(poly);
     if (!poly || poly.length < 3) continue;
-    // Reject oversized harbour/bay/ocean polygons that clip to a land-blanketing
-    // rectangle. A real in-frame river rarely exceeds ~half the plate.
-    if (polyArea(poly) > PLATE_AREA * 0.55) continue;
+    // Size filter only applies to RAW OSM natural=water polygons (harbour/bay
+    // relations that clip to a land-blanketing rectangle). Coastline-derived
+    // sea polys (w.isSea) are real rivers/harbours and are always kept — they
+    // legitimately cover large areas (Hudson + East River around Manhattan).
+    // Threshold raised to 0.92 so genuine wide rivers come through; the flat
+    // water level (not terrain-following) is what now prevents land coverage.
+    if (!w.isSea && polyArea(poly) > PLATE_AREA * 0.92) continue;
     const ring = ensureCCW(poly);
     const nV = ring.length;
     const flat = [];
