@@ -142,9 +142,24 @@ function updateShapeOverlay() {
   const drawCell = (cell, filled, addable) => {
     // Pass rotRad so the whole grid rotates around the anchor as one block —
     // tiles stay edge-to-edge instead of scattering into separate diamonds.
-    const geo = cellToGeoCenter(currentShape, cell, selectedCenter.lat, selectedCenter.lng, R, rotRad);
-    const cproj = createProjection(geo.lat, geo.lng, R, rotRad);
-    const cv = getShapeVerticesGeo(cproj, currentShape).map(v => [v.lat, v.lng]);
+    // RIGID-BODY rotation around the ANCHOR origin: rotate EVERY corner of the
+    // tile (gridOffset + localCorner) by the same angle about the same pivot,
+    // then map model->geo exactly like cellToGeoCenter does for the centre.
+    // Previously the centre rotated +rotRad but the outline rotated -rotRad
+    // (cproj.unproject), so tiles drifted/overlapped. Now the whole grid turns
+    // as one connected block; adjacent tiles share an edge at every angle.
+    const off    = cellToModelOffset(currentShape, cell);
+    const local  = getShapeVertices(MODEL_RADIUS_MM, currentShape, 0); // axis-aligned tile
+    const mPerMM = R / MODEL_RADIUS_MM;                                 // R = radiusMeters here
+    const cosLat = Math.cos(selectedCenter.lat * Math.PI / 180);
+    const cR = Math.cos(rotRad), sR = Math.sin(rotRad);
+    const cv = local.map(p => {
+      const mx = off.x + p.x, my = off.y + p.y;             // corner in combined grid space
+      const rx = mx * cR - my * sR, ry = mx * sR + my * cR; // rotate about anchor (+rotRad)
+      const dLat = (ry * mPerMM) / 111320;
+      const dLng = (rx * mPerMM) / (111320 * cosLat);
+      return [selectedCenter.lat + dLat, selectedCenter.lng + dLng];
+    });
     const poly = L.polygon(cv, {
       color:       '#000000',
       fillColor:   '#000000',
