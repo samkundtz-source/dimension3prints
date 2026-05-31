@@ -275,7 +275,9 @@ export function parseOSMData(json, projection, hexVertices) {
   let seaPolyCount = 0;
   if (features._coastlines && features._coastlines.length > 0) {
     const seaPolys = buildSeaPolysFromCoastlines(features._coastlines, hexVertices);
-    for (const p of seaPolys) features.water.push(p);
+    // Flag sea polys so downstream size-filters never reject them — they are
+    // legitimately large (rivers/harbours) and represent real water.
+    for (const p of seaPolys) { p.isSea = true; features.water.push(p); }
     seaPolyCount = seaPolys.length;
   }
   delete features._coastlines;
