@@ -585,27 +585,24 @@ function collectRoads(acc, roads, hf) {
   return count;
 }
 
-// ─── Water as a SOLID recessed body (surface + banks + bottom) ──────────────
-// A flat membrane reads as a floating sheet. Instead we build a real volume:
-// a water surface RECESSED below the terrain, vertical bank walls down to it,
-// and a closed bottom — so the river looks carved into the land with edges.
-function collectWater(acc, water, hf) {
-  // Water sits ABOVE the terrain as a thin solid slab (like roads) so it's
-  // always visible — a recessed-below-terrain surface was hidden under the
-  // opaque terrain mesh. SURF = top of water above terrain; the slab has a
-  // small thickness down to the terrain so it reads as a solid body, not a sheet.
-  const SURF = 0.5;     // water top above terrain (mm) — flatter than roads
-  const THK  = 0.5;     // slab thickness down toward terrain
+// ─── Water as a flat LEVEL slab at a fixed low height ───────────────────────
+// Physically correct & self-resolving: water is a flat plane at one low level
+// (WATER_Y), a thin solid slab. Where land terrain rises above that level the
+// opaque terrain naturally hides the water; only genuine low/at-water-level
+// areas show it. This removes the "water draped over land/cities" bug because
+// the slab no longer follows the terrain up onto high ground.
+function collectWater(acc, water, hf, waterLevelY) {
+  const TOP = waterLevelY;        // flat water surface height (mm)
+  const BOT = Math.max(0, waterLevelY - 0.6);
   const PLATE_AREA = (2 * R) * (2 * R);
   let count = 0;
   for (const w of (water || [])) {
     let poly = w.polygon;
     if (!poly || poly.length < 3) continue;
-    poly = clipPolyToSquare(poly);            // clip to border
+    poly = clipPolyToSquare(poly);
     if (!poly || poly.length < 3) continue;
-    // Reject OVERSIZED water: OSM tags whole harbours/bays/oceans as huge
-    // polygons that clip to a rectangle blanketing the land (the "water covers
-    // NYC" bug). A genuine in-frame river rarely exceeds ~half the plate.
+    // Reject oversized harbour/bay/ocean polygons that clip to a land-blanketing
+    // rectangle. A real in-frame river rarely exceeds ~half the plate.
     if (polyArea(poly) > PLATE_AREA * 0.55) continue;
     const ring = ensureCCW(poly);
     const nV = ring.length;
@@ -614,28 +611,25 @@ function collectWater(acc, water, hf) {
     const tris = earcut(flat, [], 2);
     if (!tris.length) continue;
 
-    const topY = ring.map(p => (hf ? hf.heightAt(p.x, p.y) : BASE) + SURF);
-    const botY = topY.map(y => y - THK);
-
-    // top surface
+    // top (flat, at water level)
     const ts = acc.n;
-    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, topY[i], -ring[i].y);
+    for (const p of ring) acc.pos.push(p.x, TOP, -p.y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(ts + tris[t], ts + tris[t + 1], ts + tris[t + 2]);
-    // bottom (reversed)
+    // bottom (flat, reversed)
     const bs = acc.n;
-    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, botY[i], -ring[i].y);
+    for (const p of ring) acc.pos.push(p.x, BOT, -p.y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(bs + tris[t + 2], bs + tris[t + 1], bs + tris[t]);
-    // edge walls (the visible borders of the river)
+    // edge walls
     for (let i = 0; i < nV; i++) {
       const ni = (i + 1) % nV;
       const a = ring[i], b = ring[ni];
       const k = acc.n;
-      acc.pos.push(a.x, topY[i], -a.y);
-      acc.pos.push(b.x, topY[ni], -b.y);
-      acc.pos.push(b.x, botY[ni], -b.y);
-      acc.pos.push(a.x, botY[i], -a.y);
+      acc.pos.push(a.x, TOP, -a.y);
+      acc.pos.push(b.x, TOP, -b.y);
+      acc.pos.push(b.x, BOT, -b.y);
+      acc.pos.push(a.x, BOT, -a.y);
       acc.n += 4;
       acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
     }
@@ -679,7 +673,11 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   const nB = collectBuildings(bldgAcc, features.buildings, hf, mmPerM);
   onProgress?.(`New engine: ${nB} buildings draped`, 78);
   const nR = collectRoads(blackAcc, features.roads, hf);
-  const nW = collectWater(blackAcc, features.water, hf);
+  // Water level: just above the terrain low point (BASE) so it reads as water
+  // at ground/sea level. Land that rises above this hides the water → no more
+  // water draped over the city. Flat-base mode uses BASE too.
+  const waterLevelY = BASE + 0.4;
+  const nW = collectWater(blackAcc, features.water, hf, waterLevelY);
   onProgress?.('New engine: finalising…', 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
