@@ -140,7 +140,9 @@ function updateShapeOverlay() {
   const sel = new Set(cells.map(c => `${c.a},${c.b}`));
 
   const drawCell = (cell, filled, addable) => {
-    const geo = cellToGeoCenter(currentShape, cell, selectedCenter.lat, selectedCenter.lng, R);
+    // Pass rotRad so the whole grid rotates around the anchor as one block —
+    // tiles stay edge-to-edge instead of scattering into separate diamonds.
+    const geo = cellToGeoCenter(currentShape, cell, selectedCenter.lat, selectedCenter.lng, R, rotRad);
     const cproj = createProjection(geo.lat, geo.lng, R, rotRad);
     const cv = getShapeVerticesGeo(cproj, currentShape).map(v => [v.lat, v.lng]);
     const poly = L.polygon(cv, {
@@ -512,25 +514,24 @@ async function generate() {
       combined.add(group); // anchor at origin
       let tileNum = 1;
       // Rotate the WHOLE grid around the ANCHOR origin (not each tile around its
-      // own centre) so the set turns as one piece. Rotate each tile's grid
-      // offset by rotRad, and fetch the matching rotated geo area.
+      // own centre) so the set turns as one rigid piece. The grid offset is
+      // rotated by rotRad, and the geo fetch uses the SAME rotation (via
+      // cellToGeoCenter's rotRad arg) so preview position and captured area match.
       const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
-      const mPerMM = radiusMeters / MODEL_RADIUS_MM;
-      const cosLat = Math.cos(lat * Math.PI / 180);
       for (const cell of extraCells) {
         if (thisRunId !== generateId) break; // a newer run started — bail
         tileNum++;
         setStatus(`Connected map: building tile ${tileNum}/${extraCells.length + 1}…`, 60 + Math.round(35 * tileNum / (extraCells.length + 1)));
         try {
-          const o  = cellToModelOffset(currentShape, cell);
-          const rx = o.x * cosR - o.y * sinR;   // grid offset rotated about anchor
-          const ry = o.x * sinR + o.y * cosR;
-          const dLat = (ry * mPerMM) / 111320;
-          const dLng = (rx * mPerMM) / (111320 * cosLat);
-          const tileGroup = await buildOneTileGroup(lat + dLat, lng + dLng, radiusMeters, vertExag, rotRad);
-          // Keep the tile at origin for export (its own printable plate); use an
-          // offset CLONE at the rotated grid position for the combined preview.
+          const geo = cellToGeoCenter(currentShape, cell, lat, lng, radiusMeters, rotRad);
+          const tileGroup = await buildOneTileGroup(geo.lat, geo.lng, radiusMeters, vertExag, rotRad);
+          // Tile group is built with rotRad (content rotated) and placed at the
+          // rotated grid offset → the whole set reads as one rotated block.
+          // Kept at origin in lastTiles for per-tile printable export.
           lastTiles.push({ cell, group: tileGroup });
+          const o  = cellToModelOffset(currentShape, cell);
+          const rx = o.x * cosR - o.y * sinR;
+          const ry = o.x * sinR + o.y * cosR;
           const previewClone = tileGroup.clone();
           previewClone.position.set(rx, 0, -ry); // model→scene: y stays, x→x, y→-z
           combined.add(previewClone);

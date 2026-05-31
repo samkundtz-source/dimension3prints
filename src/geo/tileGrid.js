@@ -87,8 +87,14 @@ export function cellToModelOffset(shape, cell) {
  * Converts the model-mm offset back to metres (× radiusMeters / R) then to
  * lat/lng around the anchor.
  */
-export function cellToGeoCenter(shape, cell, anchorLat, anchorLng, radiusMeters) {
-  const off = cellToModelOffset(shape, cell);
+export function cellToGeoCenter(shape, cell, anchorLat, anchorLng, radiusMeters, rotRad = 0) {
+  let off = cellToModelOffset(shape, cell);
+  // Rotate the grid offset around the ANCHOR so the whole tile grid turns as
+  // one rigid block (not each tile around its own centre).
+  if (rotRad) {
+    const c = Math.cos(rotRad), s = Math.sin(rotRad);
+    off = { x: off.x * c - off.y * s, y: off.x * s + off.y * c };
+  }
   const mPerMM = radiusMeters / R;
   const dxM = off.x * mPerMM;
   const dyM = off.y * mPerMM;
