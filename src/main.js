@@ -26,7 +26,7 @@ import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, parseOvertureWat
 import { buildMapModel } from './geometry/buildMap.js';
 import { buildMapModelV2 } from './geometry/mapEngine.js';
 import { SceneManager }  from './preview/scene.js';
-import { exportSTL, export3MF } from './export/exporters.js';
+import { exportSTL, export3MF, exportTilesSTLZip } from './export/exporters.js';
 import { MODEL_RADIUS_MM } from './utils/helpers.js';
 import { fetchElevationForModel } from './terrain/terrain.js';
 import { fetchHiResElevationForModel, checkSuperDetailCoverage } from './geo/elevationData.js';
@@ -505,6 +505,8 @@ async function generate() {
     const extraCells = (isTileable(currentShape) ? selectedTiles : [])
       .filter(c => !(c.a === 0 && c.b === 0))
       .slice(0, MAX_TILES - 1);
+    // Track each tile's OWN group at the origin for per-tile printable export.
+    lastTiles = [{ cell: { a: 0, b: 0 }, group: result.group }];
     if (extraCells.length > 0) {
       const combined = new THREE.Group();
       combined.add(group); // anchor at origin
@@ -516,9 +518,13 @@ async function generate() {
         try {
           const geo = cellToGeoCenter(currentShape, cell, lat, lng, radiusMeters);
           const tileGroup = await buildOneTileGroup(geo.lat, geo.lng, radiusMeters, vertExag, rotRad);
+          // Keep the tile at origin for export (its own printable plate); use an
+          // offset CLONE for the combined preview so tiles abut as one map.
+          lastTiles.push({ cell, group: tileGroup });
+          const previewClone = tileGroup.clone();
           const off = cellToModelOffset(currentShape, cell);
-          tileGroup.position.set(off.x, 0, -off.y); // model→scene: y stays, x→x, y→-z
-          combined.add(tileGroup);
+          previewClone.position.set(off.x, 0, -off.y); // model→scene: y stays, x→x, y→-z
+          combined.add(previewClone);
         } catch (e) {
           console.error('tile build failed', cell, e);
         }
@@ -730,6 +736,14 @@ async function doOrderPrint() {
 
 function doExportSTL() {
   if (!scene?.group) return;
+  // Multiple connected tiles → one printable STL per tile, bundled as a ZIP
+  // (a combined 3×3 won't fit on a printer; each tile is its own plate).
+  if (lastTiles.length > 1) {
+    setStatus(`Writing ${lastTiles.length} tile STLs…`, 99);
+    exportTilesSTLZip(lastTiles, 'map-tiles.zip');
+    setStatus(`${lastTiles.length} tile STLs downloaded (ZIP).`, 100);
+    return;
+  }
   setStatus('Writing STL...', 99);
   exportSTL(scene.group, 'map-model.stl');
   setStatus('STL downloaded.', 100);

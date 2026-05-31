@@ -38,8 +38,8 @@ function transformVertex(mat, x, y, z) {
 
 // ─── Binary STL ───────────────────────────────────────────────────────────────
 
-export function exportSTL(modelGroup, filename = 'map-model.stl') {
-  if (!modelGroup) return;
+function buildSTLBytes(modelGroup) {
+  if (!modelGroup) return null;
 
   const allPos = [];
   const allIdx = [];
@@ -95,7 +95,26 @@ export function exportSTL(modelGroup, filename = 'map-model.stl') {
     view.setUint16(off, 0, true); off+=2;
   }
 
-  triggerDownload(new Uint8Array(buf), filename, 'application/octet-stream');
+  return new Uint8Array(buf);
+}
+
+// Single-model STL download (unchanged public API).
+export function exportSTL(modelGroup, filename = 'map-model.stl') {
+  const bytes = buildSTLBytes(modelGroup);
+  if (bytes) triggerDownload(bytes, filename, 'application/octet-stream');
+}
+
+// Per-tile printable export: one STL per tile (each group already at origin =
+// its own printable plate), bundled into a ZIP. tiles = [{ cell:{a,b}, group }].
+export function exportTilesSTLZip(tiles, filename = 'map-tiles.zip') {
+  const parts = {};
+  for (const t of (tiles || [])) {
+    const bytes = buildSTLBytes(t.group);
+    if (bytes) parts[`tile_r${t.cell.b}_c${t.cell.a}.stl`] = bytes;
+  }
+  if (!Object.keys(parts).length) return;
+  const zip = fflate.zipSync(parts, { level: 6 });
+  triggerDownload(zip, filename, 'application/zip');
 }
 
 // ─── Coloured 3MF (Bambu Studio compatible) ─────────────────────────────────
