@@ -24,11 +24,13 @@ Two separate bugs:
    `src/geometry/buildMap.js` ~line 380: `if (detailedBuildings) { ...3-tier system... }
    else { collectExtrudedPolygon(...) }`. The user had it OFF, so the Eiffel's small OSM
    platform footprint was extruded straight to 324 m → the tall cylinder/pillar they saw.
-   FIX OPTIONS: (a) make landmark presets ALWAYS fire regardless of the toggle (the toggle
-   should only gate the *procedural house detailing*, not landmarks); OR (b) default the
-   toggle ON. Recommend (a): in the loop, always run `landmarkRegistry.selectGenerator`
-   and fire Tier-1 presets + Tier-2 tall-tower even when detailedBuildings is false; only
-   gate Tier-3 procedural detailing behind the toggle.
+   **USER DECISION (do this):** keep landmarks GATED behind the "Detailed buildings"
+   toggle — the user explicitly chose this over always-on. So the fix is: DEFAULT THE
+   TOGGLE ON (and/or auto-enable it the first time a known landmark like the Eiffel is in
+   view), and make sure the user understands landmarks need that toggle. Do NOT make
+   landmarks fire unconditionally. Implementation: set the `#detailed-buildings` checkbox
+   `checked` by default in app.html, and ensure `detailedBuildings` reads true on first
+   generate. Optionally show a hint when a landmark is detected but the toggle is off.
 
 2. **The Eiffel preset itself is crude** — 4 stacked flat squares + a thin spire
    (`landmarkPresets.js` ~line 651, `eiffelTower.generate`). No legs, no arch, no lattice.
