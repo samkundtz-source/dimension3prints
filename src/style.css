@@ -237,8 +237,8 @@ html, body {
 /* Search results dropdown */
 .search-results {
   position: absolute;
-  left: 22px; right: 22px;
-  z-index: 1000;
+  top: 100%; left: 0; right: 0;
+  z-index: 4000;
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius);

@@ -707,12 +707,15 @@ export function buildMapModel(features, terrainOptions, projection, vertExag, on
   const isAllWater = totalLandFeatures === 0 && totalWaterFeatures <= 2;
 
   // Subway / transit network — raised tubes + station markers (admin mode).
-  // Collected into the white building accumulator before it is built.
-  if (features.subway?.length || features.subwayStations?.length) {
-    collectSubway(buildingAcc, features.subway, features.subwayStations, BASE, hexFull);
+  // Rails go into the BLACK accumulator → black rails on a white base.
+  const hasSubway = !!(features.subway?.length || features.subwayStations?.length);
+  if (hasSubway) {
+    collectSubway(blackAcc, features.subway, features.subwayStations, BASE, hexFull);
   }
 
-  const baseMesh = baseAcc.build(isAllWater ? 'water' : 'base');
+  // Base plate is white. (An all-water scene normally renders black, but a
+  // subway network needs a clean white plate, so never treat it as water then.)
+  const baseMesh = baseAcc.build(isAllWater && !hasSubway ? 'water' : 'base');
   const bldgMesh = buildingAcc.build('building');
   const roadMesh = blackAcc.build('road');
 
@@ -1431,11 +1434,11 @@ function collectBeveledBuilding(acc, polygon, baseY, heightMM) {
 // Rendered into the white building accumulator as raised ridges. Uses the same
 // extrude primitive as buildings (axis: 2D (x,y) → 3D (x, height, -y)).
 function collectSubway(acc, lines, stations, baseTop, shapeVerts) {
-  const HALF_W = 0.55;          // tube half-width (mm) — thin, clean lines
-  const RISE   = 1.5;           // tube height above base (mm)
-  const STN_R  = 1.25;          // station marker radius (mm)
-  const STN_H  = RISE + 1.2;    // stations stand slightly taller than the lines
-  const INSET  = 3.0;           // keep lines this far inside the plate edge
+  const HALF_W = 0.7;           // tube half-width (mm) — clean continuous lines
+  const RISE   = 1.6;           // tube height above base (mm)
+  const STN_R  = 0.85;          // station dot radius (mm) — small, avoids clumping
+  const STN_H  = RISE + 0.8;    // stations stand slightly taller than the lines
+  const INSET  = 2.0;           // keep lines this far inside the plate edge
 
   // ── Inset clip boundary: move each shape vertex toward the centroid ──────
   let cx = 0, cy = 0;
@@ -1507,7 +1510,7 @@ function collectSubway(acc, lines, stations, baseTop, shapeVerts) {
   for (const line of (lines || [])) {
     let pts = line.points || [];
     if (pts.length < 2) continue;
-    pts = simplify(pts, HALF_W * 0.8);
+    pts = simplify(pts, 0.3);  // gentle — preserves curve detail, avoids gaps
     for (let i = 0; i < pts.length - 1; i++) {
       const seg = clipSeg(pts[i], pts[i + 1]);
       if (!seg) continue;
