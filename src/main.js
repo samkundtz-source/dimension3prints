@@ -511,19 +511,28 @@ async function generate() {
       const combined = new THREE.Group();
       combined.add(group); // anchor at origin
       let tileNum = 1;
+      // Rotate the WHOLE grid around the ANCHOR origin (not each tile around its
+      // own centre) so the set turns as one piece. Rotate each tile's grid
+      // offset by rotRad, and fetch the matching rotated geo area.
+      const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
+      const mPerMM = radiusMeters / MODEL_RADIUS_MM;
+      const cosLat = Math.cos(lat * Math.PI / 180);
       for (const cell of extraCells) {
         if (thisRunId !== generateId) break; // a newer run started — bail
         tileNum++;
         setStatus(`Connected map: building tile ${tileNum}/${extraCells.length + 1}…`, 60 + Math.round(35 * tileNum / (extraCells.length + 1)));
         try {
-          const geo = cellToGeoCenter(currentShape, cell, lat, lng, radiusMeters);
-          const tileGroup = await buildOneTileGroup(geo.lat, geo.lng, radiusMeters, vertExag, rotRad);
+          const o  = cellToModelOffset(currentShape, cell);
+          const rx = o.x * cosR - o.y * sinR;   // grid offset rotated about anchor
+          const ry = o.x * sinR + o.y * cosR;
+          const dLat = (ry * mPerMM) / 111320;
+          const dLng = (rx * mPerMM) / (111320 * cosLat);
+          const tileGroup = await buildOneTileGroup(lat + dLat, lng + dLng, radiusMeters, vertExag, rotRad);
           // Keep the tile at origin for export (its own printable plate); use an
-          // offset CLONE for the combined preview so tiles abut as one map.
+          // offset CLONE at the rotated grid position for the combined preview.
           lastTiles.push({ cell, group: tileGroup });
           const previewClone = tileGroup.clone();
-          const off = cellToModelOffset(currentShape, cell);
-          previewClone.position.set(off.x, 0, -off.y); // model→scene: y stays, x→x, y→-z
+          previewClone.position.set(rx, 0, -ry); // model→scene: y stays, x→x, y→-z
           combined.add(previewClone);
         } catch (e) {
           console.error('tile build failed', cell, e);
