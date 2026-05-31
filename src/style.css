@@ -202,6 +202,14 @@ html, body {
 
 /* ── Search input ──────────────────────────────────────────────────────── */
 
+/* The search section must paint ABOVE the map section so the results dropdown
+   isn't hidden behind Leaflet. The .sidebar-section entry animation ends on a
+   transform, which creates a stacking context that would otherwise trap the
+   dropdown's z-index below the later-in-DOM map. Raising the whole section
+   (and pinning the map lower) guarantees the dropdown wins. */
+.sidebar-section.mob-loc-panel { position: relative; z-index: 50; }
+.sidebar-map { z-index: 1; }
+
 .search-row { position: relative; }
 .search-input-wrap { position: relative; display: flex; align-items: center; }
 .search-icon {
