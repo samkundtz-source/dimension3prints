@@ -280,8 +280,8 @@ function collectBuildings(acc, buildings, hf, vExag) {
 // reads clearly and never culls. RISE is well above the building foot-sink so
 // roads always sit on top of the surface.
 function collectRoads(acc, roads, hf) {
-  const HW = 0.55;       // half-width (mm)
-  const RISE = 0.8;      // height of road top above terrain (mm)
+  const HW = 0.85;       // half-width (mm) — wider so roads read as solid ribbons
+  const RISE = 1.0;      // height of road top above terrain (mm)
   let count = 0, drawn = 0;
   for (const road of (roads || [])) {
     const pts = road.points;

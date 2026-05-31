@@ -141,10 +141,13 @@ export class SceneManager {
         polygonOffset:       true,
         polygonOffsetFactor: off,
         polygonOffsetUnits:  off,
-        // Buildings render double-sided so a wall can never be culled away
-        // (the new engine's prism winding is not guaranteed); other features
-        // stay single-sided for correct depth/perf.
-        side: type === 'building' ? THREE.DoubleSide : THREE.FrontSide,
+        // DoubleSide everywhere: the new engine's wall/road/terrain winding is
+        // not guaranteed, and with FrontSide any inward-wound face is culled →
+        // invisible road tops (paper-thin "ticks") and hollow border walls.
+        // For solid closed meshes DoubleSide is visually identical from outside,
+        // so this is safe for the old engine too; it just guarantees nothing
+        // gets culled away. polygonOffset still handles depth ordering.
+        side: THREE.DoubleSide,
       });
 
       this.wfMaterials[type] = new THREE.MeshBasicMaterial({
