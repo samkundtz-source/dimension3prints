@@ -656,12 +656,14 @@ function collectRoads(acc, roads, hf) {
   return count;
 }
 
-// ─── Water rendered from the WATER MASK (grid cells), not raw polygons ──────
-// A flat water top at `topY` is emitted for every grid cell whose 4 corners are
-// all water (matching the carved terrain). Because the mask already excludes
-// building/land cells, water can NEVER cover the city. Emits a top + outer
-// skirt down to botY so it reads as a solid body with banks.
-function collectWaterGrid(acc, GN, waterMask, topY, botY) {
+// ─── Water via MARCHING SQUARES → SMOOTH shorelines (not blocky) ────────────
+// Per cell, clip the water region at edge MIDPOINTS so boundary cells get 45°
+// diagonal cuts instead of axis-aligned blocks. Walk corners c0..c3: include a
+// corner if water, and an edge midpoint wherever the water state flips. Fan-
+// triangulate the in-cell water polygon for the top; add a skirt wall on each
+// midpoint→midpoint edge (the real shoreline) down to botY. Mask already
+// excludes city/land cells, so water can never cover buildings.
+function collectWaterMarching(acc, GN, waterMask, topY, botY) {
   if (!waterMask) return 0;
   const W = GN + 1;
   const step = (2 * R) / GN;
@@ -671,31 +673,39 @@ function collectWaterGrid(acc, GN, waterMask, topY, botY) {
 
   for (let j = 0; j < GN; j++) {
     for (let i = 0; i < GN; i++) {
-      // A water cell needs all 4 corners flagged water.
-      if (!(isW(i, j) && isW(i + 1, j) && isW(i + 1, j + 1) && isW(i, j + 1))) continue;
+      const w0 = isW(i, j), w1 = isW(i + 1, j), w2 = isW(i + 1, j + 1), w3 = isW(i, j + 1);
+      if (!(w0 || w1 || w2 || w3)) continue;          // no water in this cell
       const x0 = xy(i), x1 = xy(i + 1), y0 = xy(j), y1 = xy(j + 1);
-      // top quad
+      const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+      const corners = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+      const wts     = [w0, w1, w2, w3];
+      const mids    = [{ x: mx, y: y0 }, { x: x1, y: my }, { x: mx, y: y1 }, { x: x0, y: my }];
+      const poly = [], isMid = [];
+      for (let c = 0; c < 4; c++) {
+        if (wts[c]) { poly.push(corners[c]); isMid.push(false); }
+        if (wts[c] !== wts[(c + 1) % 4]) { poly.push(mids[c]); isMid.push(true); }
+      }
+      if (poly.length < 3) continue;
+
+      // top face (fan) — CCW seen from above
       const s = acc.n;
-      acc.pos.push(x0, topY, -y0);
-      acc.pos.push(x1, topY, -y0);
-      acc.pos.push(x1, topY, -y1);
-      acc.pos.push(x0, topY, -y1);
-      acc.n += 4;
-      acc.idx.push(s, s + 2, s + 1,  s, s + 3, s + 2);
-      // skirt walls only on edges bordering a NON-water cell (the visible banks)
-      const edge = (cax, cay, cbx, cby) => {
+      for (const p of poly) acc.pos.push(p.x, topY, -p.y);
+      acc.n += poly.length;
+      for (let t = 1; t < poly.length - 1; t++) acc.idx.push(s, s + t + 1, s + t);
+
+      // skirt walls on shoreline edges (midpoint→midpoint) down to botY
+      for (let e = 0; e < poly.length; e++) {
+        const ne = (e + 1) % poly.length;
+        if (!(isMid[e] && isMid[ne])) continue;
+        const a = poly[e], b = poly[ne];
         const k = acc.n;
-        acc.pos.push(cax, topY, -cay);
-        acc.pos.push(cbx, topY, -cby);
-        acc.pos.push(cbx, botY, -cby);
-        acc.pos.push(cax, botY, -cay);
+        acc.pos.push(a.x, topY, -a.y);
+        acc.pos.push(b.x, topY, -b.y);
+        acc.pos.push(b.x, botY, -b.y);
+        acc.pos.push(a.x, botY, -a.y);
         acc.n += 4;
         acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
-      };
-      if (!isW(i, j - 1))     edge(x0, y0, x1, y0); // south
-      if (!isW(i, j + 1))     edge(x1, y1, x0, y1); // north
-      if (!isW(i - 1, j))     edge(x0, y1, x0, y0); // west
-      if (!isW(i + 1, j))     edge(x1, y0, x1, y1); // east
+      }
       cells++;
     }
   }
