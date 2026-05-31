@@ -18,6 +18,7 @@ export async function geocode(query) {
     body:    JSON.stringify({ query }),
   });
   if (!resp.ok) {
+    if (resp.status === 429) throw new Error('searching too fast — wait a few seconds');
     const err = await resp.json().catch(() => ({}));
     throw new Error(err.error || `Geocoding failed (${resp.status})`);
   }

@@ -597,21 +597,34 @@ function doExport3MF() {
 // ─── Controls wiring ──────────────────────────────────────────────────────────
 
 function initControls() {
-  // Search — type-ahead, debounced. Fires ~350 ms after typing stops so you
-  // get live results without pressing Enter; Enter still searches immediately.
-  // (/api/geocode is rate-limited 30/min server-side, so this is safe.)
+  // Search. Enter jumps straight to the best match (so it "goes to the place").
+  // Typing also shows a debounced dropdown of options — but only after a 600 ms
+  // pause and ≥3 chars, which keeps requests well under the geocode rate limit
+  // (the previous 350 ms / 2-char setting hammered it and caused 429s).
   const searchInput = el('search-input');
   searchInput.addEventListener('input', () => {
     clearTimeout(searchDebounceTimer);
     const q = searchInput.value.trim();
-    if (q.length < 2) { el('search-results').innerHTML = ''; return; }
-    searchDebounceTimer = setTimeout(doSearch, 350);
+    if (q.length < 3) { el('search-results').innerHTML = ''; return; }
+    searchDebounceTimer = setTimeout(doSearch, 600);
   });
-  searchInput.addEventListener('keydown', e => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      clearTimeout(searchDebounceTimer);
-      doSearch();
+  searchInput.addEventListener('keydown', async e => {
+    if (e.key !== 'Enter') return;
+    e.preventDefault();
+    clearTimeout(searchDebounceTimer);
+    const q = searchInput.value.trim();
+    if (!q) return;
+    setStatus('Searching…', 2);
+    try {
+      const places = await geocode(q);
+      if (!places.length) { setStatus('No results found', 0); return; }
+      const p = places[0];                              // jump to the top match
+      const label = p.displayName.split(',')[0].trim();
+      searchInput.value = label;
+      el('search-results').innerHTML = '';
+      selectLocation(p.lat, p.lng, label);
+    } catch (err) {
+      setStatus('Search failed: ' + err.message, 0);
     }
   });
 
