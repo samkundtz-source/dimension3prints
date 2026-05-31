@@ -656,60 +656,48 @@ function collectRoads(acc, roads, hf) {
   return count;
 }
 
-// ─── Water via MARCHING SQUARES → SMOOTH shorelines (not blocky) ────────────
-// Per cell, clip the water region at edge MIDPOINTS so boundary cells get 45°
-// diagonal cuts instead of axis-aligned blocks. Walk corners c0..c3: include a
-// corner if water, and an edge midpoint wherever the water state flips. Fan-
-// triangulate the in-cell water polygon for the top; add a skirt wall on each
-// midpoint→midpoint edge (the real shoreline) down to botY. Mask already
-// excludes city/land cells, so water can never cover buildings.
-function collectWaterMarching(acc, GN, waterMask, topY, botY) {
-  if (!waterMask) return 0;
-  const W = GN + 1;
-  const step = (2 * R) / GN;
-  const xy = (i) => -R + i * step;
-  const isW = (i, j) => (i >= 0 && i <= GN && j >= 0 && j <= GN) ? waterMask[j * W + i] : 0;
-  let cells = 0;
+// ─── Water from REAL OSM polygons → smooth accurate shorelines ──────────────
+// Renders each (already clipped + filtered + CCW) water polygon as a flat slab:
+// a top face at `topY` and a floor at `botY`, joined by edge walls. The OSM
+// polygon edges are the real shoreline, so coasts are smooth and accurate —
+// not blocky. `topY` sits just below land level and the terrain is carved to
+// `botY` underneath (see collectTerrain), so water shows only in real water
+// areas and the opaque land hides it everywhere else (never covers the city).
+function collectWaterPolys(acc, polys, topY, botY) {
+  let count = 0;
+  for (const ring of (polys || [])) {
+    if (!ring || ring.length < 3) continue;
+    const nV = ring.length;
+    const flat = [];
+    for (const p of ring) flat.push(p.x, p.y);
+    let tris;
+    try { tris = earcut(flat, [], 2); } catch { continue; }
+    if (!tris.length) continue;
 
-  for (let j = 0; j < GN; j++) {
-    for (let i = 0; i < GN; i++) {
-      const w0 = isW(i, j), w1 = isW(i + 1, j), w2 = isW(i + 1, j + 1), w3 = isW(i, j + 1);
-      if (!(w0 || w1 || w2 || w3)) continue;          // no water in this cell
-      const x0 = xy(i), x1 = xy(i + 1), y0 = xy(j), y1 = xy(j + 1);
-      const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
-      const corners = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
-      const wts     = [w0, w1, w2, w3];
-      const mids    = [{ x: mx, y: y0 }, { x: x1, y: my }, { x: mx, y: y1 }, { x: x0, y: my }];
-      const poly = [], isMid = [];
-      for (let c = 0; c < 4; c++) {
-        if (wts[c]) { poly.push(corners[c]); isMid.push(false); }
-        if (wts[c] !== wts[(c + 1) % 4]) { poly.push(mids[c]); isMid.push(true); }
-      }
-      if (poly.length < 3) continue;
-
-      // top face (fan) — CCW seen from above
-      const s = acc.n;
-      for (const p of poly) acc.pos.push(p.x, topY, -p.y);
-      acc.n += poly.length;
-      for (let t = 1; t < poly.length - 1; t++) acc.idx.push(s, s + t + 1, s + t);
-
-      // skirt walls on shoreline edges (midpoint→midpoint) down to botY
-      for (let e = 0; e < poly.length; e++) {
-        const ne = (e + 1) % poly.length;
-        if (!(isMid[e] && isMid[ne])) continue;
-        const a = poly[e], b = poly[ne];
-        const k = acc.n;
-        acc.pos.push(a.x, topY, -a.y);
-        acc.pos.push(b.x, topY, -b.y);
-        acc.pos.push(b.x, botY, -b.y);
-        acc.pos.push(a.x, botY, -a.y);
-        acc.n += 4;
-        acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
-      }
-      cells++;
+    // top face
+    const s = acc.n;
+    for (const p of ring) acc.pos.push(p.x, topY, -p.y);
+    acc.n += nV;
+    for (let t = 0; t < tris.length; t += 3) acc.idx.push(s + tris[t], s + tris[t + 1], s + tris[t + 2]);
+    // floor (reversed)
+    const b = acc.n;
+    for (const p of ring) acc.pos.push(p.x, botY, -p.y);
+    acc.n += nV;
+    for (let t = 0; t < tris.length; t += 3) acc.idx.push(b + tris[t + 2], b + tris[t + 1], b + tris[t]);
+    // edge walls (the shoreline bank, smooth along the real polygon)
+    for (let i = 0; i < nV; i++) {
+      const ni = (i + 1) % nV;
+      const k = acc.n;
+      acc.pos.push(ring[i].x, topY, -ring[i].y);
+      acc.pos.push(ring[ni].x, topY, -ring[ni].y);
+      acc.pos.push(ring[ni].x, botY, -ring[ni].y);
+      acc.pos.push(ring[i].x, botY, -ring[i].y);
+      acc.n += 4;
+      acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
     }
+    count++;
   }
-  return cells;
+  return count;
 }
 
 // ─── Public entry point ─────────────────────────────────────────────────────
@@ -746,10 +734,16 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
     waterPolys.push(ensureCCW(poly));
   }
 
-  // Water geometry levels: flat surface at WATER_SURFACE_Y, terrain carved to
-  // CARVE_Y (below the surface) so water fills a real channel.
-  const WATER_SURFACE_Y = BASE + 0.3;
-  const CARVE_Y = BASE - 0.8;
+  // Water levels — the key to "smooth + no land coverage + no poke-through":
+  //   • WATER_SURFACE_Y sits just BELOW land level (BASE). On land/city the
+  //     opaque terrain is higher, so it hides the water → water can never
+  //     appear on land, even though we render the full real polygon shape.
+  //   • CARVE_Y digs the riverbed BELOW the water surface. In real water areas
+  //     the terrain is carved down, so the water surface shows in the channel.
+  // Result: real OSM polygons → smooth realistic shorelines; physics hides
+  // water on land and reveals it only in carved channels.
+  const WATER_SURFACE_Y = BASE - 0.25;
+  const CARVE_Y = BASE - 1.1;
   const GN = 96;
 
   // Land mask from buildings → water is forbidden on the city. Water mask =
@@ -773,7 +767,10 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   const nB = collectBuildings(bldgAcc, features.buildings, hf, mmPerM);
   onProgress?.(`New engine: ${nB} buildings draped`, 78);
   const nR = collectRoads(blackAcc, features.roads, hf);
-  const nW = collectWaterMarching(blackAcc, GN, hf ? waterMask : null, WATER_SURFACE_Y, CARVE_Y);
+  // Render the REAL water polygons (smooth OSM shorelines) at the low water
+  // level. Terrain carve (above) + water-below-land level mean it only shows
+  // in genuine water areas and never on land/city.
+  const nW = collectWaterPolys(blackAcc, waterPolys, WATER_SURFACE_Y, CARVE_Y);
   onProgress?.('New engine: finalising…', 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
