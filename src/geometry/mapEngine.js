@@ -178,17 +178,36 @@ function makeHeightField(elevGrid, N, vScaleMMperM) {
 
 // ─── Terrain surface mesh (square) ──────────────────────────────────────────
 // Displaced grid top + perimeter walls + flat floor = solid printable block.
-function collectTerrain(acc, hf, GN) {
+// pointInPolys: true if (x,y) is inside ANY of the given polygons (ray cast).
+function pointInPolys(x, y, polys) {
+  for (const poly of polys) {
+    let inside = false;
+    for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+      const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y;
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+    if (inside) return true;
+  }
+  return false;
+}
+
+// collectTerrain now CARVES the surface down to `carveY` wherever a grid vertex
+// falls inside a water polygon, so flat water fills the depression and the
+// detailed terrain can never poke up through the water (the buried-water bug).
+function collectTerrain(acc, hf, GN, waterPolys, carveY) {
   const step = (2 * R) / GN;
   const xy = (i) => -R + i * step;
+  const carve = waterPolys && waterPolys.length > 0;
 
-  // Top surface vertices
+  // Top surface vertices (carved down inside water areas)
   const topIdx = [];
   for (let j = 0; j <= GN; j++) {
     for (let i = 0; i <= GN; i++) {
       const x = xy(i), y = xy(j);
+      let h = hf.heightAt(x, y);
+      if (carve && pointInPolys(x, y, waterPolys)) h = carveY;
       topIdx.push(acc.n);
-      acc.pos.push(x, hf.heightAt(x, y), -y);
+      acc.pos.push(x, h, -y);
       acc.n++;
     }
   }
@@ -585,55 +604,40 @@ function collectRoads(acc, roads, hf) {
   return count;
 }
 
-// ─── Water draped ON the terrain (like roads) so it's always visible ────────
-// A fixed flat level sat BELOW the terrain surface and was hidden. Instead we
-// drape water on the terrain surface (terrain height per vertex + a small rise)
-// exactly like roads — guaranteed visible. The "water over land" problem is
-// handled by the size/isSea filter, not by hiding water under terrain.
-function collectWater(acc, water, hf, _unused) {
-  const RISE = 0.6;   // water top above terrain (mm) — sits just over the surface
-  const THK  = 0.5;   // slab thickness so it reads as a solid body
-  const PLATE_AREA = (2 * R) * (2 * R);
+// ─── Water fills the carved terrain channel (flat surface + floor) ──────────
+// The terrain is carved DOWN to `botY` inside these polygons (see collectTerrain),
+// so a FLAT water surface at `topY` sits in a real channel below the land. The
+// detailed terrain can't poke through because under water it's been lowered.
+// `polys` are already clipped + filtered + CCW.
+function collectWater(acc, polys, topY, botY) {
   let count = 0;
-  for (const w of (water || [])) {
-    let poly = w.polygon;
-    if (!poly || poly.length < 3) continue;
-    poly = clipPolyToSquare(poly);
-    if (!poly || poly.length < 3) continue;
-    // Size filter only applies to RAW OSM natural=water polygons (harbour/bay
-    // relations that clip to a land-blanketing rectangle). Coastline-derived
-    // sea polys (w.isSea) are real rivers/harbours and are always kept.
-    if (!w.isSea && polyArea(poly) > PLATE_AREA * 0.92) continue;
-    const ring = ensureCCW(poly);
+  for (const ring of (polys || [])) {
+    if (!ring || ring.length < 3) continue;
     const nV = ring.length;
     const flat = [];
     for (const p of ring) flat.push(p.x, p.y);
     const tris = earcut(flat, [], 2);
     if (!tris.length) continue;
 
-    // Per-vertex heights follow the terrain surface (so water is never buried).
-    const topY = ring.map(p => (hf ? hf.heightAt(p.x, p.y) : BASE) + RISE);
-    const botY = topY.map(y => y - THK);
-
-    // top surface
+    // top surface (flat)
     const ts = acc.n;
-    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, topY[i], -ring[i].y);
+    for (const p of ring) acc.pos.push(p.x, topY, -p.y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(ts + tris[t], ts + tris[t + 1], ts + tris[t + 2]);
-    // bottom (reversed)
+    // floor (flat, reversed)
     const bs = acc.n;
-    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, botY[i], -ring[i].y);
+    for (const p of ring) acc.pos.push(p.x, botY, -p.y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(bs + tris[t + 2], bs + tris[t + 1], bs + tris[t]);
-    // edge walls
+    // edge walls (the bank where water meets the carved channel side)
     for (let i = 0; i < nV; i++) {
       const ni = (i + 1) % nV;
       const a = ring[i], b = ring[ni];
       const k = acc.n;
-      acc.pos.push(a.x, topY[i], -a.y);
-      acc.pos.push(b.x, topY[ni], -b.y);
-      acc.pos.push(b.x, botY[ni], -b.y);
-      acc.pos.push(a.x, botY[i], -a.y);
+      acc.pos.push(a.x, topY, -a.y);
+      acc.pos.push(b.x, topY, -b.y);
+      acc.pos.push(b.x, botY, -b.y);
+      acc.pos.push(a.x, botY, -a.y);
       acc.n += 4;
       acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
     }
@@ -662,10 +666,29 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   // multiply by vertExag so relief/buildings read clearly at model scale.
   const mmPerM = projection.horizontalScale * Math.max(1, vertExag);
 
+  // ── Prepare water polygons ONCE: clip to border + size/isSea filter. Used
+  //    for BOTH carving the terrain and filling it with flat water, so they
+  //    always match.
+  const PLATE_AREA = (2 * R) * (2 * R);
+  const waterPolys = [];
+  for (const w of (features.water || [])) {
+    let poly = w.polygon;
+    if (!poly || poly.length < 3) continue;
+    poly = clipPolyToSquare(poly);
+    if (!poly || poly.length < 3) continue;
+    if (!w.isSea && polyArea(poly) > PLATE_AREA * 0.92) continue;
+    waterPolys.push(ensureCCW(poly));
+  }
+
+  // Water geometry levels: flat surface at WATER_SURFACE_Y, terrain carved to
+  // CARVE_Y (below the surface) so water fills a real channel.
+  const WATER_SURFACE_Y = BASE + 0.3;
+  const CARVE_Y = BASE - 0.8;
+
   let hf = null;
   if (terrainOptions?.elevGrid && terrainOptions.gridSize) {
     hf = makeHeightField(terrainOptions.elevGrid, terrainOptions.gridSize, mmPerM);
-    collectTerrain(whiteAcc, hf, 96);   // 96×96 surface
+    collectTerrain(whiteAcc, hf, 96, waterPolys, CARVE_Y);   // carve under water
     onProgress?.(`New engine: terrain relief ${(hf.hi - hf.lo).toFixed(0)} m`, 68);
   } else {
     collectFlatBase(whiteAcc);
@@ -677,11 +700,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   const nB = collectBuildings(bldgAcc, features.buildings, hf, mmPerM);
   onProgress?.(`New engine: ${nB} buildings draped`, 78);
   const nR = collectRoads(blackAcc, features.roads, hf);
-  // Water level: just above the terrain low point (BASE) so it reads as water
-  // at ground/sea level. Land that rises above this hides the water → no more
-  // water draped over the city. Flat-base mode uses BASE too.
-  const waterLevelY = BASE + 0.4;
-  const nW = collectWater(blackAcc, features.water, hf, waterLevelY);
+  const nW = collectWater(blackAcc, waterPolys, WATER_SURFACE_Y, CARVE_Y);
   onProgress?.('New engine: finalising…', 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
