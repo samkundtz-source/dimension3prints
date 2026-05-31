@@ -585,15 +585,14 @@ function collectRoads(acc, roads, hf) {
   return count;
 }
 
-// ─── Water as a flat LEVEL slab at a fixed low height ───────────────────────
-// Physically correct & self-resolving: water is a flat plane at one low level
-// (WATER_Y), a thin solid slab. Where land terrain rises above that level the
-// opaque terrain naturally hides the water; only genuine low/at-water-level
-// areas show it. This removes the "water draped over land/cities" bug because
-// the slab no longer follows the terrain up onto high ground.
-function collectWater(acc, water, hf, waterLevelY) {
-  const TOP = waterLevelY;        // flat water surface height (mm)
-  const BOT = Math.max(0, waterLevelY - 0.6);
+// ─── Water draped ON the terrain (like roads) so it's always visible ────────
+// A fixed flat level sat BELOW the terrain surface and was hidden. Instead we
+// drape water on the terrain surface (terrain height per vertex + a small rise)
+// exactly like roads — guaranteed visible. The "water over land" problem is
+// handled by the size/isSea filter, not by hiding water under terrain.
+function collectWater(acc, water, hf, _unused) {
+  const RISE = 0.6;   // water top above terrain (mm) — sits just over the surface
+  const THK  = 0.5;   // slab thickness so it reads as a solid body
   const PLATE_AREA = (2 * R) * (2 * R);
   let count = 0;
   for (const w of (water || [])) {
@@ -603,10 +602,7 @@ function collectWater(acc, water, hf, waterLevelY) {
     if (!poly || poly.length < 3) continue;
     // Size filter only applies to RAW OSM natural=water polygons (harbour/bay
     // relations that clip to a land-blanketing rectangle). Coastline-derived
-    // sea polys (w.isSea) are real rivers/harbours and are always kept — they
-    // legitimately cover large areas (Hudson + East River around Manhattan).
-    // Threshold raised to 0.92 so genuine wide rivers come through; the flat
-    // water level (not terrain-following) is what now prevents land coverage.
+    // sea polys (w.isSea) are real rivers/harbours and are always kept.
     if (!w.isSea && polyArea(poly) > PLATE_AREA * 0.92) continue;
     const ring = ensureCCW(poly);
     const nV = ring.length;
@@ -615,14 +611,18 @@ function collectWater(acc, water, hf, waterLevelY) {
     const tris = earcut(flat, [], 2);
     if (!tris.length) continue;
 
-    // top (flat, at water level)
+    // Per-vertex heights follow the terrain surface (so water is never buried).
+    const topY = ring.map(p => (hf ? hf.heightAt(p.x, p.y) : BASE) + RISE);
+    const botY = topY.map(y => y - THK);
+
+    // top surface
     const ts = acc.n;
-    for (const p of ring) acc.pos.push(p.x, TOP, -p.y);
+    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, topY[i], -ring[i].y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(ts + tris[t], ts + tris[t + 1], ts + tris[t + 2]);
-    // bottom (flat, reversed)
+    // bottom (reversed)
     const bs = acc.n;
-    for (const p of ring) acc.pos.push(p.x, BOT, -p.y);
+    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, botY[i], -ring[i].y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(bs + tris[t + 2], bs + tris[t + 1], bs + tris[t]);
     // edge walls
@@ -630,10 +630,10 @@ function collectWater(acc, water, hf, waterLevelY) {
       const ni = (i + 1) % nV;
       const a = ring[i], b = ring[ni];
       const k = acc.n;
-      acc.pos.push(a.x, TOP, -a.y);
-      acc.pos.push(b.x, TOP, -b.y);
-      acc.pos.push(b.x, BOT, -b.y);
-      acc.pos.push(a.x, BOT, -a.y);
+      acc.pos.push(a.x, topY[i], -a.y);
+      acc.pos.push(b.x, topY[ni], -b.y);
+      acc.pos.push(b.x, botY[ni], -b.y);
+      acc.pos.push(a.x, botY[i], -a.y);
       acc.n += 4;
       acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
     }
