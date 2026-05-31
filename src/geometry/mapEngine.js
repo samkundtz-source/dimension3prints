@@ -764,15 +764,11 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   // terrain humps under water get levelled to. The water slab's floor (surface
   // - thickness) lands at FLATTEN_Y, so terrain and water meet flush — no humps
   // poke through, no gap.
-  const WATER_SURFACE_Y = BASE + 0.2;
-  const FLATTEN_Y = WATER_SURFACE_Y - 0.5;   // = water slab floor
   const GN = 96;
 
   // Land mask from buildings → water is forbidden on the city. Water mask =
   // inside a water polygon AND not land. Both carve and fill use this mask, so
   // water and city are mutually exclusive — water can never cover buildings.
-  const landMask  = buildLandMask(features.buildings, GN);
-  const waterMask = buildWaterMask(GN, waterPolys, landMask);
 
   let hf = null;
   if (terrainOptions?.elevGrid && terrainOptions.gridSize) {
