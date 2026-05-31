@@ -69,6 +69,62 @@ function signedArea(poly) {
 }
 function ensureCCW(poly) { return signedArea(poly) < 0 ? poly.slice().reverse() : poly; }
 
+// ── Clip boundary (inset a hair so features never poke past the terrain wall) ──
+// Phase 1 = square; swapping this polygon to a hexagon/circle is all that's
+// needed for those shapes later.
+const CLIP = R - 0.5;
+
+// Sutherland–Hodgman polygon clip against the axis-aligned square [-CLIP, CLIP].
+function clipPolyToSquare(poly) {
+  let out = poly;
+  const edges = [
+    (p) => p.x >= -CLIP, (a, b) => lerpAt(a, b, 'x', -CLIP),
+    (p) => p.x <=  CLIP, (a, b) => lerpAt(a, b, 'x',  CLIP),
+    (p) => p.y >= -CLIP, (a, b) => lerpAt(a, b, 'y', -CLIP),
+    (p) => p.y <=  CLIP, (a, b) => lerpAt(a, b, 'y',  CLIP),
+  ];
+  for (let e = 0; e < edges.length; e += 2) {
+    const inside = edges[e], isect = edges[e + 1];
+    const next = [];
+    for (let i = 0; i < out.length; i++) {
+      const A = out[i], B = out[(i + 1) % out.length];
+      const aIn = inside(A), bIn = inside(B);
+      if (aIn) next.push(A);
+      if (aIn !== bIn) next.push(isect(A, B));
+    }
+    out = next;
+    if (out.length < 3) return null;
+  }
+  return out;
+}
+function lerpAt(a, b, axis, val) {
+  const other = axis === 'x' ? 'y' : 'x';
+  const t = (val - a[axis]) / ((b[axis] - a[axis]) || 1e-9);
+  return { [axis]: val, [other]: a[other] + (b[other] - a[other]) * t };
+}
+
+// Clip a polyline to the square, returning an array of inside sub-segments
+// [{x,y},{x,y}] so roads stop cleanly at the border instead of shooting past.
+function clipSegmentToSquare(a, b) {
+  // Liang–Barsky against [-CLIP, CLIP]²
+  let t0 = 0, t1 = 1;
+  const dx = b.x - a.x, dy = b.y - a.y;
+  const p = [-dx, dx, -dy, dy];
+  const q = [a.x + CLIP, CLIP - a.x, a.y + CLIP, CLIP - a.y];
+  for (let i = 0; i < 4; i++) {
+    if (p[i] === 0) { if (q[i] < 0) return null; }
+    else {
+      const r = q[i] / p[i];
+      if (p[i] < 0) { if (r > t1) return null; if (r > t0) t0 = r; }
+      else          { if (r < t0) return null; if (r < t1) t1 = r; }
+    }
+  }
+  return [
+    { x: a.x + t0 * dx, y: a.y + t0 * dy },
+    { x: a.x + t1 * dx, y: a.y + t1 * dy },
+  ];
+}
+
 // ─── Terrain height field ───────────────────────────────────────────────────
 // Maps model (x,y) ∈ [-R,R]² → surface height (mm). elevGrid is the raw metres
 // field (N×N, row-major). We normalise so the lowest point sits at `baseTop`.
@@ -202,44 +258,69 @@ function collectPrism(acc, poly, baseY, h) {
 function collectBuildings(acc, buildings, hf, vExag) {
   let count = 0;
   for (const bld of (buildings || [])) {
-    const poly = bld.polygon;
+    let poly = bld.polygon;
+    if (!poly || poly.length < 3) continue;
+    // Clip footprint to the border so nothing hangs off the terrain edge.
+    poly = clipPolyToSquare(poly);
     if (!poly || poly.length < 3) continue;
     const c = centroidOf(poly);
     const ground = hf ? hf.heightAt(c.x, c.y) : BASE;
     const hM = parseHeightM(bld.tags);
-    // model mm height: scale metres the same way terrain vExag scales them, but
-    // buildings use the horizontal scale so they look right relative to footprint.
     const hMM = Math.max(0.6, hM * vExag);
-    // sink the foot slightly so it stays grounded on slopes
-    collectPrism(acc, poly, ground - 0.4, hMM + 0.4);
+    // sink the foot below terrain so it stays grounded on slopes
+    collectPrism(acc, poly, ground - 1.0, hMM + 1.0);
     count++;
   }
   return count;
 }
 
-// ─── Roads draped on terrain (thin ribbons that follow the surface) ─────────
+// ─── Roads draped on terrain ────────────────────────────────────────────────
+// Solid raised ribbons clipped to the border. Each segment is a thin BOX (top +
+// 2 sides) sitting ON the terrain — not a paper-thin double-sided quad — so it
+// reads clearly and never culls. RISE is well above the building foot-sink so
+// roads always sit on top of the surface.
 function collectRoads(acc, roads, hf) {
-  const HW = 0.45, RISE = 0.25;
-  let count = 0;
+  const HW = 0.55;       // half-width (mm)
+  const RISE = 0.8;      // height of road top above terrain (mm)
+  let count = 0, drawn = 0;
   for (const road of (roads || [])) {
     const pts = road.points;
     if (!pts || pts.length < 2) continue;
+    let any = false;
     for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i], b = pts[i + 1];
+      const seg = clipSegmentToSquare(pts[i], pts[i + 1]);  // ← stop at border
+      if (!seg) continue;
+      const [a, b] = seg;
       const dx = b.x - a.x, dy = b.y - a.y;
       const len = Math.hypot(dx, dy);
       if (len < 1e-3) continue;
       const nx = -dy / len * HW, ny = dx / len * HW;
-      const ga = (hf ? hf.heightAt(a.x, a.y) : BASE) + RISE;
-      const gb = (hf ? hf.heightAt(b.x, b.y) : BASE) + RISE;
+      const ga = (hf ? hf.heightAt(a.x, a.y) : BASE);
+      const gb = (hf ? hf.heightAt(b.x, b.y) : BASE);
+      // 8 verts: top quad (raised) + bottom quad (at terrain) → a solid slab
       const s = acc.n;
-      acc.pos.push(a.x + nx, ga, -(a.y + ny)); acc.n++;
-      acc.pos.push(b.x + nx, gb, -(b.y + ny)); acc.n++;
-      acc.pos.push(b.x - nx, gb, -(b.y - ny)); acc.n++;
-      acc.pos.push(a.x - nx, ga, -(a.y - ny)); acc.n++;
+      // top
+      acc.pos.push(a.x + nx, ga + RISE, -(a.y + ny));
+      acc.pos.push(b.x + nx, gb + RISE, -(b.y + ny));
+      acc.pos.push(b.x - nx, gb + RISE, -(b.y - ny));
+      acc.pos.push(a.x - nx, ga + RISE, -(a.y - ny));
+      // bottom (sits slightly into the terrain so no gap underneath)
+      acc.pos.push(a.x + nx, ga - 0.3, -(a.y + ny));
+      acc.pos.push(b.x + nx, gb - 0.3, -(b.y + ny));
+      acc.pos.push(b.x - nx, gb - 0.3, -(b.y - ny));
+      acc.pos.push(a.x - nx, ga - 0.3, -(a.y - ny));
+      acc.n += 8;
+      // top face
       acc.idx.push(s, s + 1, s + 2,  s, s + 2, s + 3);
+      // two side walls (left edge, right edge)
+      acc.idx.push(s, s + 4, s + 5,  s, s + 5, s + 1);   // +n side
+      acc.idx.push(s + 3, s + 2, s + 6,  s + 3, s + 6, s + 7); // -n side
+      // end caps
+      acc.idx.push(s, s + 3, s + 7,  s, s + 7, s + 4);
+      acc.idx.push(s + 1, s + 5, s + 6,  s + 1, s + 6, s + 2);
+      any = true;
     }
-    count++;
+    if (any) { count++; drawn++; }
   }
   return count;
 }
@@ -248,7 +329,9 @@ function collectRoads(acc, roads, hf) {
 function collectWater(acc, water, hf) {
   let count = 0;
   for (const w of (water || [])) {
-    const poly = w.polygon;
+    let poly = w.polygon;
+    if (!poly || poly.length < 3) continue;
+    poly = clipPolyToSquare(poly);            // ← clip to border
     if (!poly || poly.length < 3) continue;
     const ring = ensureCCW(poly);
     const flat = [];
@@ -257,7 +340,7 @@ function collectWater(acc, water, hf) {
     if (!tris.length) continue;
     const s = acc.n;
     for (const p of ring) {
-      const g = (hf ? hf.heightAt(p.x, p.y) : BASE) + 0.15;
+      const g = (hf ? hf.heightAt(p.x, p.y) : BASE) + 0.3;
       acc.pos.push(p.x, g, -p.y); acc.n++;
     }
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(s + tris[t], s + tris[t + 1], s + tris[t + 2]);
