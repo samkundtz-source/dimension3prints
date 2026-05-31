@@ -31,6 +31,13 @@ import { MODEL_RADIUS_MM } from './utils/helpers.js';
 import { fetchElevationForModel } from './terrain/terrain.js';
 import { fetchHiResElevationForModel, checkSuperDetailCoverage } from './geo/elevationData.js';
 import { fetchSubway } from './geo/subwayData.js';
+import * as THREE from 'three';
+import { isTileable, neighborsOf, cellToModelOffset, cellToGeoCenter, validateSelection, priceForTiles, MAX_TILES } from './geo/tileGrid.js';
+
+// ─── Connected-tile selection state ─────────────────────────────────────────
+// selectedTiles holds integer cells {a,b}; {0,0} = the anchor (search/click
+// location). Empty/[{0,0}] = a normal single-tile model.
+let selectedTiles = [{ a: 0, b: 0 }];
 
 // ─── State ────────────────────────────────────────────────────────────────────
 
@@ -91,6 +98,7 @@ function initMap() {
 
 function selectLocation(lat, lng, label) {
   selectedCenter = { lat, lng };
+  selectedTiles = [{ a: 0, b: 0 }];   // new location → reset to single anchor tile
 
   // Place marker
   markerLayerGroup.clearLayers();
@@ -99,8 +107,9 @@ function selectLocation(lat, lng, label) {
   // Pan map
   leafletMap.setView([lat, lng], Math.max(leafletMap.getZoom(), 13));
 
-  // Draw shape outline
+  // Draw shape outline + tile grid
   updateShapeOverlay();
+  updateTilePrice();
 
   // Always enable generate — even if a previous generation is still running.
   // Clicking Generate while one is in-flight will abort the old and start fresh.
@@ -121,16 +130,80 @@ function updateShapeOverlay() {
   // rotation, so getShapeVerticesGeo returns the correct rotated outline.
   const proj   = createProjection(selectedCenter.lat, selectedCenter.lng, R, rotRad);
 
-  const geoVerts = getShapeVerticesGeo(proj, currentShape); // no extra rotation arg
-  const verts = geoVerts.map(v => [v.lat, v.lng]);
+  // Draw every SELECTED tile (filled) + ADDABLE neighbours (dashed), so the
+  // user can build a bigger connected map. Circle is single-tile only.
+  const tileable = isTileable(currentShape);
+  const cells = tileable ? selectedTiles : [{ a: 0, b: 0 }];
+  const sel = new Set(cells.map(c => `${c.a},${c.b}`));
 
-  L.polygon(verts, {
-    color:       '#000000',
-    fillColor:   '#000000',
-    fillOpacity: 0.08,
-    weight:      2,
-    dashArray:   '6 4',
-  }).addTo(shapeLayerGroup);
+  const drawCell = (cell, filled, addable) => {
+    const geo = cellToGeoCenter(currentShape, cell, selectedCenter.lat, selectedCenter.lng, R);
+    const cproj = createProjection(geo.lat, geo.lng, R, rotRad);
+    const cv = getShapeVerticesGeo(cproj, currentShape).map(v => [v.lat, v.lng]);
+    const poly = L.polygon(cv, {
+      color:       '#000000',
+      fillColor:   '#000000',
+      fillOpacity: filled ? 0.16 : 0.0,
+      weight:      filled ? 2 : 1.5,
+      dashArray:   filled ? null : '4 5',
+      opacity:     addable ? 0.5 : 0.9,
+    }).addTo(shapeLayerGroup);
+    if (tileable) {
+      poly.on('click', (e) => {
+        if (e.originalEvent) L.DomEvent.stop(e);
+        toggleTile(cell);
+      });
+    }
+  };
+
+  // selected tiles
+  for (const c of cells) drawCell(c, true, false);
+  // addable neighbours (not already selected), only if under the cap
+  if (tileable && cells.length < MAX_TILES) {
+    const seenAdd = new Set();
+    for (const c of cells) {
+      for (const nb of neighborsOf(currentShape, c)) {
+        const k = `${nb.a},${nb.b}`;
+        if (sel.has(k) || seenAdd.has(k)) continue;
+        seenAdd.add(k);
+        drawCell(nb, false, true);
+      }
+    }
+  }
+}
+
+// Add a neighbour tile, or remove a selected one (anchor can't be removed).
+function toggleTile(cell) {
+  if (cell.a === 0 && cell.b === 0) return;   // anchor stays
+  const k = `${cell.a},${cell.b}`;
+  const idx = selectedTiles.findIndex(c => `${c.a},${c.b}` === k);
+  let next;
+  if (idx >= 0) {
+    next = selectedTiles.filter((_, i) => i !== idx);
+  } else {
+    if (selectedTiles.length >= MAX_TILES) { setStatus(`Max ${MAX_TILES} tiles.`, 0); return; }
+    next = [...selectedTiles, cell];
+  }
+  // Keep only contiguous selections (removing a middle tile could orphan others)
+  const v = validateSelection(currentShape, next);
+  if (!v.ok) { setStatus(`Tiles must stay connected.`, 0); return; }
+  selectedTiles = next;
+  updateShapeOverlay();
+  updateTilePrice();
+}
+
+// Live tile count + price readout on the Order button + a small label.
+function updateTilePrice() {
+  const n = isTileable(currentShape) ? selectedTiles.length : 1;
+  const price = priceForTiles(n);
+  const lbl = el('order-price-label');
+  if (lbl) lbl.textContent = n > 1
+    ? `Order ${n} tiles — $${price.toFixed(2)}`
+    : `Order Print — $${price.toFixed(2)}`;
+  const tc = el('tile-count-label');
+  if (tc) tc.textContent = isTileable(currentShape)
+    ? (n > 1 ? `${n} connected tiles · $${price.toFixed(2)}` : 'Click a dashed tile to extend the map')
+    : 'Circle: single tile only';
 }
 
 function getRadiusMeters() {
@@ -171,6 +244,31 @@ async function doSearch() {
   } catch (err) {
     setStatus('Search failed: ' + err.message, 0);
   }
+}
+
+// ─── Connected-tile helpers ────────────────────────────────────────────────
+
+// Build ONE tile (core pipeline: OSM + terrain + engine) at a given geo centre,
+// returning its THREE.Group. Used for the EXTRA tiles in a connected map; the
+// anchor tile keeps the full generate() path (subway/Overture/etc.). Kept
+// deliberately minimal so a connected order is fast and predictable.
+async function buildOneTileGroup(cLat, cLng, radiusMeters, vertExag, rotRad, onMsg) {
+  const projection = createProjection(cLat, cLng, radiusMeters, rotRad);
+  const shapeVerts = getShapeVertices(MODEL_RADIUS_MM, currentShape);
+  const bbox = projection.getBBox(1.25);
+  const osmJson = await fetchOSMData(bbox, () => {}, adminToken);
+  const features = parseOSMData(osmJson, projection, shapeVerts);
+  if (Array.isArray(features.buildings) && features.buildings.length > 1) {
+    features.buildings = resolveOverlaps(features.buildings);
+  }
+  let terrainOptions = null;
+  try {
+    const GRID = 129;
+    const elevGrid = await fetchElevationForModel(cLat, cLng, radiusMeters, MODEL_RADIUS_MM, GRID, () => {});
+    terrainOptions = { elevGrid, gridSize: GRID };
+  } catch { /* flat base fallback */ }
+  const result = buildMapModelV2(features, terrainOptions, projection, vertExag, () => {}, currentShape);
+  return result.group;
 }
 
 // ─── Generation pipeline ──────────────────────────────────────────────────────
@@ -395,8 +493,35 @@ async function generate() {
       }
     }
     const result = buildMapModelV2(features, terrainOptions, projection, vertExag, setStatus, currentShape);
-    const group = result.group;
+    let group = result.group;
     const modelStats = result.stats;
+
+    // ── Connected tiles: build extra selected tiles and offset them so they
+    //    abut the anchor as one bigger uniform map. Only for tileable shapes
+    //    (square grid / hex honeycomb); circle is single-tile only.
+    const extraCells = (isTileable(currentShape) ? selectedTiles : [])
+      .filter(c => !(c.a === 0 && c.b === 0))
+      .slice(0, MAX_TILES - 1);
+    if (extraCells.length > 0) {
+      const combined = new THREE.Group();
+      combined.add(group); // anchor at origin
+      let tileNum = 1;
+      for (const cell of extraCells) {
+        if (thisRunId !== generateId) break; // a newer run started — bail
+        tileNum++;
+        setStatus(`Connected map: building tile ${tileNum}/${extraCells.length + 1}…`, 60 + Math.round(35 * tileNum / (extraCells.length + 1)));
+        try {
+          const geo = cellToGeoCenter(currentShape, cell, lat, lng, radiusMeters);
+          const tileGroup = await buildOneTileGroup(geo.lat, geo.lng, radiusMeters, vertExag, rotRad);
+          const off = cellToModelOffset(currentShape, cell);
+          tileGroup.position.set(off.x, 0, -off.y); // model→scene: y stays, x→x, y→-z
+          combined.add(tileGroup);
+        } catch (e) {
+          console.error('tile build failed', cell, e);
+        }
+      }
+      group = combined;
+    }
 
     // 6. Init or update scene
     const canvas      = el('preview-canvas');
@@ -573,6 +698,7 @@ async function doOrderPrint() {
         shape:             currentShape,
         rotation: parseFloat(el('rotation-slider')?.value || '0'),
         region,
+        tileCount: isTileable(currentShape) ? selectedTiles.length : 1,
       }),
     });
 
@@ -697,9 +823,11 @@ function initControls() {
       const shape = btn.dataset.shape;
       if (shape === currentShape) return;
       currentShape = shape;
+      selectedTiles = [{ a: 0, b: 0 }];   // shape change → reset connected tiles
       shapeSelector.querySelectorAll('.shape-btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       updateShapeOverlay();
+      updateTilePrice();
     });
   }
 
