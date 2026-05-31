@@ -291,6 +291,12 @@ function roofShapeFromTags(tags) {
   return null; // gabled/hipped/etc handled later in the roof phase
 }
 
+// Shrink a polygon toward its centroid by factor s (0..1). s=0.85 → 85% size.
+function shrinkPoly(poly, s) {
+  const c = centroidOf(poly);
+  return poly.map(p => ({ x: c.x + (p.x - c.x) * s, y: c.y + (p.y - c.y) * s }));
+}
+
 // Regular N-gon footprint centred on (cx,cy) with radius r (for cylinders).
 function ngon(cx, cy, r, n) {
   const out = [];
@@ -342,9 +348,36 @@ function collectPyramidCap(acc, ring, y0, height) {
   }
 }
 
+// Setback tower: tall buildings step INWARD as they rise (classic skyscraper
+// silhouette). Data-driven — only called for genuinely tall buildings. The
+// number of tiers scales with real height so a 60 m block gets 1 step and a
+// 250 m supertall gets several.
+function collectSetbackTower(acc, poly, footY, bodyH, heightM) {
+  // tiers by real height (metres)
+  let tiers;
+  if (heightM >= 200)      tiers = [0.55, 0.78, 1.0];  // 3 setbacks
+  else if (heightM >= 120) tiers = [0.7, 1.0];          // 2 setbacks
+  else                     tiers = [0.82, 1.0];         // 1 gentle setback
+  // tiers array = cumulative HEIGHT fractions; scale shrinks per tier.
+  const heights = [];
+  let prev = 0;
+  for (const f of tiers) { heights.push(f - prev); prev = f; }
+
+  let y = footY;
+  let scale = 1.0;
+  for (let t = 0; t < heights.length; t++) {
+    const segH = bodyH * heights[t];
+    const tierPoly = scale < 0.999 ? shrinkPoly(poly, scale) : poly;
+    collectPrism(acc, tierPoly, y, segH);
+    y += segH;
+    // shrink the NEXT tier inward (each step ~12–18% smaller)
+    scale *= (heightM >= 200 ? 0.8 : 0.86);
+  }
+}
+
 // ─── Buildings draped on terrain ────────────────────────────────────────────
 function collectBuildings(acc, buildings, hf, vExag) {
-  let count = 0, cyl = 0, dome = 0, pyr = 0;
+  let count = 0, cyl = 0, dome = 0, pyr = 0, setback = 0;
   for (const bld of (buildings || [])) {
     let poly = bld.polygon;
     if (!poly || poly.length < 3) continue;
@@ -377,7 +410,17 @@ function collectBuildings(acc, buildings, hf, vExag) {
       continue;
     }
 
-    // ── Explicit roof tags on a normal footprint ────────────────────────────
+    // ── Tall building with no explicit roof → stepped setback tower ──────────
+    // Data-driven: only genuinely tall buildings (≥55 m real) get setbacks,
+    // so ordinary houses/blocks stay simple. Skip if a roof shape is tagged
+    // (that takes precedence below).
+    if (!roof && heightM >= 55) {
+      collectSetbackTower(acc, poly, footY, bodyH, heightM);
+      setback++; count++;
+      continue;
+    }
+
+    // ── Explicit roof tags / normal footprint ───────────────────────────────
     collectPrism(acc, poly, footY, bodyH);
     if (roof === 'dome') {
       const bb = bboxOf(poly);
