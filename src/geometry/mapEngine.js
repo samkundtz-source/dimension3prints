@@ -78,15 +78,18 @@ function makeHeightField(elevGrid, N, vScaleMMperM) {
     const e = elevGrid[k];
     if (e < lo) lo = e; if (e > hi) hi = e;
   }
-  if (!isFinite(lo)) { lo = 0; hi = 0; }
+  if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 0; }
   const baseTop = BASE;
   return {
     lo, hi,
     heightAt(x, y) {
-      const u = (x + R) / (2 * R);
-      const v = (y + R) / (2 * R);
-      const e = bilinearInterp(elevGrid, N, Math.max(0, Math.min(1, u)), Math.max(0, Math.min(1, v)));
-      return baseTop + (e - lo) * vScaleMMperM;
+      // bilinearInterp expects MODEL-space x,y in [-R,R] plus the radius R; it
+      // normalises internally. The previous call pre-normalised to [0,1] AND
+      // omitted the radius arg → x/undefined = NaN → every vertex NaN → Three
+      // dropped the whole mesh → black screen.
+      const e = bilinearInterp(elevGrid, N, x, y, R);
+      const h = baseTop + (e - lo) * vScaleMMperM;
+      return Number.isFinite(h) ? h : baseTop;   // never emit NaN into geometry
     },
   };
 }
@@ -157,6 +160,9 @@ function collectFlatBase(acc) {
 function collectPrism(acc, poly, baseY, h) {
   const ring = ensureCCW(poly);
   if (ring.length < 3) return;
+  // Guard: any non-finite coord or base/height blanks the whole mesh in Three.
+  if (!Number.isFinite(baseY) || !Number.isFinite(h)) return;
+  for (const p of ring) if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
   const flat = [];
   for (const p of ring) flat.push(p.x, p.y);
   const tris = earcut(flat, [], 2);
