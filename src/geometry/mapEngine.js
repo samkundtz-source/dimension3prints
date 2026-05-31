@@ -302,13 +302,15 @@ function ngon(cx, cy, r, n) {
 }
 
 // Dome cap: stacked shrinking rings from (cx,cy) radius r0 at y0 up to a point.
-function collectDome(acc, cx, cy, y0, r0, height, sides = 16, layers = 5) {
+// Starts at L=0 so the BASE ring (full radius r0, at y0) is included — without
+// it the dome started narrow and high, appearing to float above the cylinder.
+function collectDome(acc, cx, cy, y0, r0, height, sides = 20, layers = 6) {
   let prevRing = null, prevY = y0;
-  for (let L = 1; L <= layers; L++) {
-    const t = L / layers;                 // 0..1
-    const ringR = r0 * Math.cos(t * Math.PI / 2);   // shrink toward apex
+  for (let L = 0; L <= layers; L++) {
+    const t = L / layers;                 // 0 (base) … 1 (apex)
+    const ringR = r0 * Math.cos(t * Math.PI / 2);   // r0 at base → 0 at apex
     const ringY = y0 + height * Math.sin(t * Math.PI / 2);
-    const ring = ngon(cx, cy, Math.max(ringR, 0.05), sides);
+    const ring = ngon(cx, cy, Math.max(ringR, 0.02), sides);
     if (prevRing) {
       for (let i = 0; i < sides; i++) {
         const ni = (i + 1) % sides;
@@ -398,47 +400,67 @@ function collectBuildings(acc, buildings, hf, vExag) {
 // reads clearly and never culls. RISE is well above the building foot-sink so
 // roads always sit on top of the surface.
 function collectRoads(acc, roads, hf) {
-  const HW = 0.85;       // half-width (mm) — wider so roads read as solid ribbons
+  const HW = 0.8;        // half-width (mm)
   const RISE = 1.0;      // height of road top above terrain (mm)
-  let count = 0, drawn = 0;
+  const BOT = 0.3;       // how far the slab sinks into the terrain
+
+  // One solid slab segment between a→b (already clipped, finite).
+  const slab = (a, b) => {
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-4) return;
+    const nx = -dy / len * HW, ny = dx / len * HW;
+    const ga = hf ? hf.heightAt(a.x, a.y) : BASE;
+    const gb = hf ? hf.heightAt(b.x, b.y) : BASE;
+    const s = acc.n;
+    acc.pos.push(a.x + nx, ga + RISE, -(a.y + ny));
+    acc.pos.push(b.x + nx, gb + RISE, -(b.y + ny));
+    acc.pos.push(b.x - nx, gb + RISE, -(b.y - ny));
+    acc.pos.push(a.x - nx, ga + RISE, -(a.y - ny));
+    acc.pos.push(a.x + nx, ga - BOT, -(a.y + ny));
+    acc.pos.push(b.x + nx, gb - BOT, -(b.y + ny));
+    acc.pos.push(b.x - nx, gb - BOT, -(b.y - ny));
+    acc.pos.push(a.x - nx, ga - BOT, -(a.y - ny));
+    acc.n += 8;
+    acc.idx.push(s, s + 1, s + 2,  s, s + 2, s + 3);                 // top
+    acc.idx.push(s, s + 4, s + 5,  s, s + 5, s + 1);                 // +n side
+    acc.idx.push(s + 3, s + 2, s + 6,  s + 3, s + 6, s + 7);         // -n side
+    acc.idx.push(s, s + 3, s + 7,  s, s + 7, s + 4);                 // end a
+    acc.idx.push(s + 1, s + 5, s + 6,  s + 1, s + 6, s + 2);         // end b
+  };
+
+  // Round joint disc at an interior vertex → fills the wedge gap between two
+  // segments so the road reads as ONE continuous ribbon, not bent boxes.
+  const joint = (p) => {
+    const g = hf ? hf.heightAt(p.x, p.y) : BASE;
+    const sides = 10;
+    const ring = ngon(p.x, p.y, HW, sides);
+    const cTop = acc.n;
+    acc.pos.push(p.x, g + RISE, -p.y); acc.n++;          // top centre
+    const topStart = acc.n;
+    for (const q of ring) { acc.pos.push(q.x, g + RISE, -q.y); acc.n++; }
+    for (let i = 0; i < sides; i++) {
+      acc.idx.push(cTop, topStart + i, topStart + (i + 1) % sides);  // top fan
+    }
+  };
+
+  let count = 0;
   for (const road of (roads || [])) {
     const pts = road.points;
     if (!pts || pts.length < 2) continue;
     let any = false;
+    let prevB = null;   // end of previous in-bounds segment (for joint placement)
     for (let i = 0; i < pts.length - 1; i++) {
-      const seg = clipSegmentToSquare(pts[i], pts[i + 1]);  // ← stop at border
-      if (!seg) continue;
+      const seg = clipSegmentToSquare(pts[i], pts[i + 1]);
+      if (!seg) { prevB = null; continue; }
       const [a, b] = seg;
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const len = Math.hypot(dx, dy);
-      if (len < 1e-3) continue;
-      const nx = -dy / len * HW, ny = dx / len * HW;
-      const ga = (hf ? hf.heightAt(a.x, a.y) : BASE);
-      const gb = (hf ? hf.heightAt(b.x, b.y) : BASE);
-      // 8 verts: top quad (raised) + bottom quad (at terrain) → a solid slab
-      const s = acc.n;
-      // top
-      acc.pos.push(a.x + nx, ga + RISE, -(a.y + ny));
-      acc.pos.push(b.x + nx, gb + RISE, -(b.y + ny));
-      acc.pos.push(b.x - nx, gb + RISE, -(b.y - ny));
-      acc.pos.push(a.x - nx, ga + RISE, -(a.y - ny));
-      // bottom (sits slightly into the terrain so no gap underneath)
-      acc.pos.push(a.x + nx, ga - 0.3, -(a.y + ny));
-      acc.pos.push(b.x + nx, gb - 0.3, -(b.y + ny));
-      acc.pos.push(b.x - nx, gb - 0.3, -(b.y - ny));
-      acc.pos.push(a.x - nx, ga - 0.3, -(a.y - ny));
-      acc.n += 8;
-      // top face
-      acc.idx.push(s, s + 1, s + 2,  s, s + 2, s + 3);
-      // two side walls (left edge, right edge)
-      acc.idx.push(s, s + 4, s + 5,  s, s + 5, s + 1);   // +n side
-      acc.idx.push(s + 3, s + 2, s + 6,  s + 3, s + 6, s + 7); // -n side
-      // end caps
-      acc.idx.push(s, s + 3, s + 7,  s, s + 7, s + 4);
-      acc.idx.push(s + 1, s + 5, s + 6,  s + 1, s + 6, s + 2);
+      // Joint disc where this segment continues from the previous one.
+      if (prevB && Math.hypot(prevB.x - a.x, prevB.y - a.y) < 0.05) joint(a);
+      slab(a, b);
+      prevB = b;
       any = true;
     }
-    if (any) { count++; drawn++; }
+    if (any) count++;
   }
   return count;
 }
