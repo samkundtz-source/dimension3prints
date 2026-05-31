@@ -354,25 +354,66 @@ function collectPyramidCap(acc, ring, y0, height) {
 // number of tiers scales with real height so a 60 m block gets 1 step and a
 // 250 m supertall gets several.
 function collectSetbackTower(acc, poly, footY, bodyH, heightM) {
-  // tiers by real height (metres)
-  let tiers;
-  if (heightM >= 200)      tiers = [0.55, 0.78, 1.0];  // 3 setbacks
-  else if (heightM >= 120) tiers = [0.7, 1.0];          // 2 setbacks
-  else                     tiers = [0.82, 1.0];         // 1 gentle setback
-  // tiers array = cumulative HEIGHT fractions; scale shrinks per tier.
-  const heights = [];
-  let prev = 0;
-  for (const f of tiers) { heights.push(f - prev); prev = f; }
+  // Smooth continuous taper (frustum) instead of stacked boxes: the footprint
+  // shrinks gradually from base → top, so the walls are smooth sloped triangles.
+  // Taller buildings taper more. ringScale = footprint size at the top.
+  const topScale = heightM >= 200 ? 0.55
+                 : heightM >= 120 ? 0.68
+                 :                  0.80;
+  collectTaperedPrism(acc, poly, footY, bodyH, topScale);
+}
 
-  let y = footY;
-  let scale = 1.0;
-  for (let t = 0; t < heights.length; t++) {
-    const segH = bodyH * heights[t];
-    const tierPoly = scale < 0.999 ? shrinkPoly(poly, scale) : poly;
-    collectPrism(acc, tierPoly, y, segH);
-    y += segH;
-    // shrink the NEXT tier inward (each step ~12–18% smaller)
-    scale *= (heightM >= 200 ? 0.8 : 0.86);
+// Tapered prism (frustum): bottom ring at full size, top ring shrunk to
+// topScale, walls are sloped quads → smooth angled sides, not stacked boxes.
+// `steps` vertical segments keep the slope clean and let tall towers curve
+// slightly (each step uses an eased scale for a subtle entasis).
+function collectTaperedPrism(acc, poly, baseY, h, topScale, steps = 6) {
+  const ring = ensureCCW(poly);
+  if (ring.length < 3) return;
+  if (!Number.isFinite(baseY) || !Number.isFinite(h)) return;
+  for (const p of ring) if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+  const c = centroidOf(ring);
+  const nV = ring.length;
+
+  // Scale at a given height fraction t (0..1): smooth ease so the taper is
+  // gentle near the base and stronger up top (reads more natural than linear).
+  const scaleAt = (t) => 1 + (topScale - 1) * (t * t * (3 - 2 * t)); // smoothstep
+
+  // Build each vertical band as sloped wall quads (own verts → crisp facets
+  // that still read as one smooth slope).
+  for (let s = 0; s < steps; s++) {
+    const t0 = s / steps, t1 = (s + 1) / steps;
+    const y0 = baseY + h * t0, y1 = baseY + h * t1;
+    const sc0 = scaleAt(t0), sc1 = scaleAt(t1);
+    for (let i = 0; i < nV; i++) {
+      const a = ring[i], b = ring[(i + 1) % nV];
+      const ax0 = c.x + (a.x - c.x) * sc0, ay0 = c.y + (a.y - c.y) * sc0;
+      const bx0 = c.x + (b.x - c.x) * sc0, by0 = c.y + (b.y - c.y) * sc0;
+      const ax1 = c.x + (a.x - c.x) * sc1, ay1 = c.y + (a.y - c.y) * sc1;
+      const bx1 = c.x + (b.x - c.x) * sc1, by1 = c.y + (b.y - c.y) * sc1;
+      const k = acc.n;
+      acc.pos.push(ax1, y1, -ay1);  // 0 top-a
+      acc.pos.push(bx1, y1, -by1);  // 1 top-b
+      acc.pos.push(bx0, y0, -by0);  // 2 bot-b
+      acc.pos.push(ax0, y0, -ay0);  // 3 bot-a
+      acc.n += 4;
+      acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
+    }
+  }
+
+  // Top cap (shrunk) + bottom cap (full) so the frustum is closed/solid.
+  const flat = []; for (const p of ring) flat.push(p.x, p.y);
+  const tris = earcut(flat, [], 2);
+  if (tris.length) {
+    const topSc = scaleAt(1), topY = baseY + h;
+    const ts = acc.n;
+    for (const p of ring) acc.pos.push(c.x + (p.x - c.x) * topSc, topY, -(c.y + (p.y - c.y) * topSc));
+    acc.n += nV;
+    for (let t = 0; t < tris.length; t += 3) acc.idx.push(ts + tris[t], ts + tris[t + 1], ts + tris[t + 2]);
+    const bs = acc.n;
+    for (const p of ring) acc.pos.push(p.x, baseY, -p.y);
+    acc.n += nV;
+    for (let t = 0; t < tris.length; t += 3) acc.idx.push(bs + tris[t + 2], bs + tris[t + 1], bs + tris[t]);
   }
 }
 
