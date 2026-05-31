@@ -21,6 +21,7 @@
 import * as THREE from 'three';
 import earcut from 'earcut';
 import { MODEL_RADIUS_MM, BASE_THICKNESS_MM, bilinearInterp } from '../utils/helpers.js';
+import { getShapeVertices } from '../geo/geoMath.js';
 
 const R = MODEL_RADIUS_MM;           // model half-width (mm)
 const BASE = BASE_THICKNESS_MM;      // solid floor thickness (mm)
@@ -75,8 +76,14 @@ function ensureCCW(poly) { return signedArea(poly) < 0 ? poly.slice().reverse() 
 // needed for those shapes later.
 const CLIP = R - 0.5;
 
-// Sutherland–Hodgman polygon clip against the axis-aligned square [-CLIP, CLIP].
+// Active board boundary (CCW convex polygon in model mm). null = square (the
+// fast axis-aligned path below). Set per-build by buildMapModelV2 for hex/circle.
+let BOUNDARY = null;
+
+// Clip a polygon to the active board shape. Square → fast axis path; otherwise
+// the generic convex clipper against BOUNDARY.
 function clipPolyToSquare(poly) {
+  if (BOUNDARY) return clipPolyToConvex(poly, BOUNDARY);
   let out = poly;
   const edges = [
     (p) => p.x >= -CLIP, (a, b) => lerpAt(a, b, 'x', -CLIP),
@@ -104,9 +111,72 @@ function lerpAt(a, b, axis, val) {
   return { [axis]: val, [other]: a[other] + (b[other] - a[other]) * t };
 }
 
+// ── Generic convex-boundary clipping (for hexagon / circle board shapes) ─────
+// `boundary` is a CCW convex polygon (hex = 6 verts, circle = 64). These mirror
+// the square clippers but work for any convex shape, so buildings/roads/water/
+// terrain all stop cleanly at a hex or circle edge.
+function insideEdge(p, a, b) {
+  // CCW polygon: inside = left of edge a→b (cross ≥ 0)
+  return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x) >= -1e-9;
+}
+function edgeIntersect(p1, p2, a, b) {
+  const r = { x: p2.x - p1.x, y: p2.y - p1.y };
+  const s = { x: b.x - a.x, y: b.y - a.y };
+  const denom = r.x * s.y - r.y * s.x;
+  if (Math.abs(denom) < 1e-12) return { ...p2 };
+  const t = ((a.x - p1.x) * s.y - (a.y - p1.y) * s.x) / denom;
+  return { x: p1.x + t * r.x, y: p1.y + t * r.y };
+}
+// Sutherland–Hodgman against an arbitrary CCW convex boundary.
+function clipPolyToConvex(poly, boundary) {
+  let out = poly;
+  const n = boundary.length;
+  for (let e = 0; e < n; e++) {
+    const a = boundary[e], b = boundary[(e + 1) % n];
+    const next = [];
+    for (let i = 0; i < out.length; i++) {
+      const A = out[i], B = out[(i + 1) % out.length];
+      const aIn = insideEdge(A, a, b), bIn = insideEdge(B, a, b);
+      if (aIn) next.push(A);
+      if (aIn !== bIn) next.push(edgeIntersect(A, B, a, b));
+    }
+    out = next;
+    if (out.length < 3) return null;
+  }
+  return out;
+}
+// Clip a segment to a convex boundary (optionally inset by `margin`).
+function clipSegmentToConvex(a, b, boundary, margin) {
+  // Inset the boundary toward its centroid by margin, then Liang–Barsky-style
+  // half-plane clip against each inset edge.
+  let cx = 0, cy = 0;
+  for (const v of boundary) { cx += v.x; cy += v.y; }
+  cx /= boundary.length; cy /= boundary.length;
+  const m = margin || 0;
+  let p0 = { ...a }, p1 = { ...b };
+  const n = boundary.length;
+  for (let e = 0; e < n; e++) {
+    let A = boundary[e], B = boundary[(e + 1) % n];
+    if (m) {
+      const push = (v) => { const dx = cx - v.x, dy = cy - v.y, L = Math.hypot(dx, dy) || 1; return { x: v.x + dx / L * m, y: v.y + dy / L * m }; };
+      A = push(A); B = push(B);
+    }
+    const in0 = insideEdge(p0, A, B), in1 = insideEdge(p1, A, B);
+    if (!in0 && !in1) return null;
+    if (in0 && !in1) p1 = edgeIntersect(p0, p1, A, B);
+    else if (!in0 && in1) p0 = edgeIntersect(p0, p1, A, B);
+  }
+  return [p0, p1];
+}
+function polyCentroidConvex(poly) {
+  let cx = 0, cy = 0; for (const p of poly) { cx += p.x; cy += p.y; }
+  return { x: cx / poly.length, y: cy / poly.length };
+}
+
 // Clip a polyline to the square, returning an array of inside sub-segments
 // [{x,y},{x,y}] so roads stop cleanly at the border instead of shooting past.
 function clipSegmentToSquare(a, b, clipMargin) {
+  if (BOUNDARY) return clipSegmentToConvex(a, b, BOUNDARY, clipMargin || 0);
   // Liang–Barsky against [-(CLIP-margin), CLIP-margin]². The margin lets road
   // slabs (which add ±half-width perpendicular to the centreline) keep their
   // EDGES inside the border instead of poking past it.
@@ -253,6 +323,9 @@ function buildWaterMask(GN, waterPolys, landMask) {
 // low seabed is kept, only humps are lowered. When seaRings is empty (inland
 // cities), the terrain is completely untouched.
 function collectTerrain(acc, hf, GN, seaRings, clampY) {
+  // Hex/circle board: build a SHAPED terrain (clipped top + shaped floor +
+  // boundary walls). Square keeps the fast original path below.
+  if (BOUNDARY) { collectTerrainShaped(acc, hf, GN, seaRings, clampY, BOUNDARY); return; }
   const step = (2 * R) / GN;
   const xy = (i) => -R + i * step;
   const hasSea = seaRings && seaRings.length > 0;
@@ -312,8 +385,57 @@ function collectTerrain(acc, hf, GN, seaRings, clampY) {
   for (let j = 0; j < GN; j++) wall(GN, j + 1, GN, j);    // east edge (x=+R)
 }
 
+// Shaped terrain for hex/circle boards. Top = grid cells clipped to the convex
+// boundary (smooth edge); floor = boundary at y=0; walls = boundary edges from
+// floor up to the terrain height. DoubleSide material → winding-agnostic.
+function collectTerrainShaped(acc, hf, GN, seaRings, clampY, boundary) {
+  const step = (2 * R) / GN;
+  const xy = (i) => -R + i * step;
+  const hasSea = seaRings && seaRings.length > 0;
+  const hAt = (x, y) => {
+    let h = hf.heightAt(x, y);
+    if (hasSea && h > clampY && pointInPolys(x, y, seaRings)) h = clampY;
+    return h;
+  };
+  // ── Top surface: clip each cell to the boundary ──
+  for (let j = 0; j < GN; j++) {
+    for (let i = 0; i < GN; i++) {
+      const x0 = xy(i), x1 = xy(i + 1), y0 = xy(j), y1 = xy(j + 1);
+      const cell = [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }];
+      const poly = clipPolyToConvex(cell, boundary);
+      if (!poly || poly.length < 3) continue;
+      const s = acc.n;
+      for (const p of poly) { acc.pos.push(p.x, hAt(p.x, p.y), -p.y); acc.n++; }
+      for (let t = 1; t < poly.length - 1; t++) acc.idx.push(s, s + t, s + t + 1);
+    }
+  }
+
+  // ── Floor (boundary at y=0) ──
+  const bflat = [];
+  for (const p of boundary) bflat.push(p.x, p.y);
+  const btris = earcut(bflat, [], 2);
+  const fs = acc.n;
+  for (const p of boundary) { acc.pos.push(p.x, 0, -p.y); acc.n++; }
+  for (let t = 0; t < btris.length; t += 3) acc.idx.push(fs + btris[t + 2], fs + btris[t + 1], fs + btris[t]);
+
+  // ── Walls along each boundary edge (floor → terrain height) ──
+  const n = boundary.length;
+  for (let e = 0; e < n; e++) {
+    const a = boundary[e], b = boundary[(e + 1) % n];
+    const k = acc.n;
+    acc.pos.push(a.x, hAt(a.x, a.y), -a.y);
+    acc.pos.push(b.x, hAt(b.x, b.y), -b.y);
+    acc.pos.push(b.x, 0, -b.y);
+    acc.pos.push(a.x, 0, -a.y);
+    acc.n += 4;
+    acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
+  }
+}
+
 // ─── Flat base (no-terrain fallback) ────────────────────────────────────────
 function collectFlatBase(acc) {
+  // Hex/circle → shaped plate; square → original.
+  if (BOUNDARY) { collectPrism(acc, BOUNDARY, 0, BASE); return; }
   const sq = [
     { x: -R, y: -R }, { x: R, y: -R }, { x: R, y: R }, { x: -R, y: R },
   ];
@@ -735,9 +857,18 @@ function collectWaterPolys(acc, polys, hf, seaLevelY) {
  * @param {Function} onProgress
  * @returns {{ group: THREE.Group, stats: Object }}
  */
-export function buildMapModelV2(features, terrainOptions, projection, vertExag, onProgress) {
+export function buildMapModelV2(features, terrainOptions, projection, vertExag, onProgress, shape = 'square') {
   onProgress?.('New engine: building terrain…', 62);
   const group = new THREE.Group();
+
+  // Board boundary: square uses the fast axis path (BOUNDARY=null); hexagon and
+  // circle use a CCW convex polygon that every clipper + the terrain follow, so
+  // edges come out smooth. Inset a hair so nothing pokes past the wall.
+  if (shape === 'hexagon' || shape === 'circle') {
+    BOUNDARY = ensureCCW(getShapeVertices(R - 0.5, shape, 0));
+  } else {
+    BOUNDARY = null;
+  }
 
   const whiteAcc = new Acc();  // terrain + base + buildings
   const blackAcc = new Acc();  // roads + water
