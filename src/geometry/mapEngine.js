@@ -541,8 +541,11 @@ function collectRoads(acc, roads, hf) {
       const seg = clipSegmentToSquare(pts[i], pts[i + 1]);
       if (!seg) { prevB = null; continue; }
       const [a, b] = seg;
-      // Joint disc where this segment continues from the previous one.
-      if (prevB && Math.hypot(prevB.x - a.x, prevB.y - a.y) < 0.05) joint(a);
+      // Joint disc where this segment continues from the previous one — but
+      // ONLY if the vertex is comfortably inside the border, else the full-
+      // radius disc spills past the edge (the overhang bug).
+      const inB = Math.abs(a.x) < CLIP - HW && Math.abs(a.y) < CLIP - HW;
+      if (prevB && inB && Math.hypot(prevB.x - a.x, prevB.y - a.y) < 0.05) joint(a);
       slab(a, b);
       prevB = b;
       any = true;
@@ -552,25 +555,54 @@ function collectRoads(acc, roads, hf) {
   return count;
 }
 
-// ─── Water draped flat-ish on terrain ───────────────────────────────────────
+// ─── Water as a SOLID recessed body (surface + banks + bottom) ──────────────
+// A flat membrane reads as a floating sheet. Instead we build a real volume:
+// a water surface RECESSED below the terrain, vertical bank walls down to it,
+// and a closed bottom — so the river looks carved into the land with edges.
 function collectWater(acc, water, hf) {
+  const DROP = 1.2;     // how far the water surface sits below terrain (mm)
+  const FLOOR = 0.6;    // thickness of the water body below its surface
   let count = 0;
   for (const w of (water || [])) {
     let poly = w.polygon;
     if (!poly || poly.length < 3) continue;
-    poly = clipPolyToSquare(poly);            // ← clip to border
+    poly = clipPolyToSquare(poly);            // clip to border
     if (!poly || poly.length < 3) continue;
     const ring = ensureCCW(poly);
+    const nV = ring.length;
     const flat = [];
     for (const p of ring) flat.push(p.x, p.y);
     const tris = earcut(flat, [], 2);
     if (!tris.length) continue;
-    const s = acc.n;
-    for (const p of ring) {
-      const g = (hf ? hf.heightAt(p.x, p.y) : BASE) + 0.3;
-      acc.pos.push(p.x, g, -p.y); acc.n++;
+
+    // Surface height per vertex = terrain there minus DROP (recessed).
+    const surfY = ring.map(p => (hf ? hf.heightAt(p.x, p.y) : BASE) - DROP);
+    const botY  = surfY.map(y => y - FLOOR);
+
+    // 1. Water surface (top)
+    const ts = acc.n;
+    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, surfY[i], -ring[i].y);
+    acc.n += nV;
+    for (let t = 0; t < tris.length; t += 3) acc.idx.push(ts + tris[t], ts + tris[t + 1], ts + tris[t + 2]);
+
+    // 2. Floor (bottom, reversed)
+    const bs = acc.n;
+    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, botY[i], -ring[i].y);
+    acc.n += nV;
+    for (let t = 0; t < tris.length; t += 3) acc.idx.push(bs + tris[t + 2], bs + tris[t + 1], bs + tris[t]);
+
+    // 3. Bank walls connecting surface ring → floor ring (the "edges/borders")
+    for (let i = 0; i < nV; i++) {
+      const ni = (i + 1) % nV;
+      const a = ring[i], b = ring[ni];
+      const k = acc.n;
+      acc.pos.push(a.x, surfY[i], -a.y);   // 0 top-a
+      acc.pos.push(b.x, surfY[ni], -b.y);  // 1 top-b
+      acc.pos.push(b.x, botY[ni], -b.y);   // 2 bot-b
+      acc.pos.push(a.x, botY[i], -a.y);    // 3 bot-a
+      acc.n += 4;
+      acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
     }
-    for (let t = 0; t < tris.length; t += 3) acc.idx.push(s + tris[t], s + tris[t + 1], s + tris[t + 2]);
     count++;
   }
   return count;
