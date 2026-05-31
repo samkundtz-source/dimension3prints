@@ -106,12 +106,15 @@ function lerpAt(a, b, axis, val) {
 
 // Clip a polyline to the square, returning an array of inside sub-segments
 // [{x,y},{x,y}] so roads stop cleanly at the border instead of shooting past.
-function clipSegmentToSquare(a, b) {
-  // Liang–Barsky against [-CLIP, CLIP]²
+function clipSegmentToSquare(a, b, clipMargin) {
+  // Liang–Barsky against [-(CLIP-margin), CLIP-margin]². The margin lets road
+  // slabs (which add ±half-width perpendicular to the centreline) keep their
+  // EDGES inside the border instead of poking past it.
+  const lim = CLIP - (clipMargin || 0);
   let t0 = 0, t1 = 1;
   const dx = b.x - a.x, dy = b.y - a.y;
   const p = [-dx, dx, -dy, dy];
-  const q = [a.x + CLIP, CLIP - a.x, a.y + CLIP, CLIP - a.y];
+  const q = [a.x + lim, lim - a.x, a.y + lim, lim - a.y];
   for (let i = 0; i < 4; i++) {
     if (p[i] === 0) { if (q[i] < 0) return null; }
     else {
@@ -538,7 +541,7 @@ function collectRoads(acc, roads, hf) {
     let any = false;
     let prevB = null;   // end of previous in-bounds segment (for joint placement)
     for (let i = 0; i < pts.length - 1; i++) {
-      const seg = clipSegmentToSquare(pts[i], pts[i + 1]);
+      const seg = clipSegmentToSquare(pts[i], pts[i + 1], HW + 0.2);  // keep slab edges inside
       if (!seg) { prevB = null; continue; }
       const [a, b] = seg;
       // Joint disc where this segment continues from the previous one — but
@@ -560,8 +563,12 @@ function collectRoads(acc, roads, hf) {
 // a water surface RECESSED below the terrain, vertical bank walls down to it,
 // and a closed bottom — so the river looks carved into the land with edges.
 function collectWater(acc, water, hf) {
-  const DROP = 1.2;     // how far the water surface sits below terrain (mm)
-  const FLOOR = 0.6;    // thickness of the water body below its surface
+  // Water sits ABOVE the terrain as a thin solid slab (like roads) so it's
+  // always visible — a recessed-below-terrain surface was hidden under the
+  // opaque terrain mesh. SURF = top of water above terrain; the slab has a
+  // small thickness down to the terrain so it reads as a solid body, not a sheet.
+  const SURF = 0.5;     // water top above terrain (mm) — flatter than roads
+  const THK  = 0.5;     // slab thickness down toward terrain
   let count = 0;
   for (const w of (water || [])) {
     let poly = w.polygon;
@@ -575,31 +582,28 @@ function collectWater(acc, water, hf) {
     const tris = earcut(flat, [], 2);
     if (!tris.length) continue;
 
-    // Surface height per vertex = terrain there minus DROP (recessed).
-    const surfY = ring.map(p => (hf ? hf.heightAt(p.x, p.y) : BASE) - DROP);
-    const botY  = surfY.map(y => y - FLOOR);
+    const topY = ring.map(p => (hf ? hf.heightAt(p.x, p.y) : BASE) + SURF);
+    const botY = topY.map(y => y - THK);
 
-    // 1. Water surface (top)
+    // top surface
     const ts = acc.n;
-    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, surfY[i], -ring[i].y);
+    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, topY[i], -ring[i].y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(ts + tris[t], ts + tris[t + 1], ts + tris[t + 2]);
-
-    // 2. Floor (bottom, reversed)
+    // bottom (reversed)
     const bs = acc.n;
     for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, botY[i], -ring[i].y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(bs + tris[t + 2], bs + tris[t + 1], bs + tris[t]);
-
-    // 3. Bank walls connecting surface ring → floor ring (the "edges/borders")
+    // edge walls (the visible borders of the river)
     for (let i = 0; i < nV; i++) {
       const ni = (i + 1) % nV;
       const a = ring[i], b = ring[ni];
       const k = acc.n;
-      acc.pos.push(a.x, surfY[i], -a.y);   // 0 top-a
-      acc.pos.push(b.x, surfY[ni], -b.y);  // 1 top-b
-      acc.pos.push(b.x, botY[ni], -b.y);   // 2 bot-b
-      acc.pos.push(a.x, botY[i], -a.y);    // 3 bot-a
+      acc.pos.push(a.x, topY[i], -a.y);
+      acc.pos.push(b.x, topY[ni], -b.y);
+      acc.pos.push(b.x, botY[ni], -b.y);
+      acc.pos.push(a.x, botY[i], -a.y);
       acc.n += 4;
       acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
     }
