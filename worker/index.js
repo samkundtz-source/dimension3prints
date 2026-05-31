@@ -364,6 +364,7 @@ async function handleCreateCheckout(request, env) {
       shape,
       rotation:          String(rotation),
       region,
+      tileCount:         String(tileCount),
       preOrder:          String(isPreOrder),
     },
     success_url: `${origin}/success.html?session_id={CHECKOUT_SESSION_ID}`,
