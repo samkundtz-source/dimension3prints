@@ -1,0 +1,297 @@
+/**
+ * mapEngine.js — NEW terrain-fused map engine (from-scratch rewrite, beta).
+ *
+ * Core idea that the old pipeline lacked: every feature is DRAPED onto a real
+ * elevation surface, producing one cohesive 3-D landscape instead of flat
+ * boxes on a flat plate. Data (OSM or Overture) + terrain elevation → mesh.
+ *
+ *   1. Terrain surface  — N×N displaced grid from the elevation field, walls +
+ *      floor make it a solid printable block.
+ *   2. Buildings        — extruded from the terrain height under their footprint
+ *      (so they sit ON the hills, never float, never sink).
+ *   3. Roads / water    — draped polylines/polygons that follow the terrain.
+ *
+ * Returns the SAME contract as buildMapModel: { group, stats }. Meshes are
+ * tagged with userData.featureType so the existing SceneManager materials apply.
+ *
+ * Phase 1 targets the SQUARE shape (regular grid → perfectly clean edges).
+ * Hex/circle terrain clipping is the next step.
+ */
+
+import * as THREE from 'three';
+import earcut from 'earcut';
+import { MODEL_RADIUS_MM, BASE_THICKNESS_MM, bilinearInterp } from '../utils/helpers.js';
+
+const R = MODEL_RADIUS_MM;           // model half-width (mm)
+const BASE = BASE_THICKNESS_MM;      // solid floor thickness (mm)
+
+// ─── Geometry accumulator (same pattern as buildMap) ────────────────────────
+class Acc {
+  constructor() { this.pos = []; this.idx = []; this.n = 0; }
+  add(pos, idx) {
+    const base = this.n;
+    for (let i = 0; i < pos.length; i++) this.pos.push(pos[i]);
+    for (let i = 0; i < idx.length; i++) this.idx.push(idx[i] + base);
+    this.n += pos.length / 3;
+  }
+  build(featureType) {
+    if (!this.pos.length || !this.idx.length) return null;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(new Float32Array(this.pos), 3));
+    geo.setIndex(new THREE.Uint32BufferAttribute(new Uint32Array(this.idx), 1));
+    geo.computeVertexNormals();
+    const mesh = new THREE.Mesh(geo);
+    mesh.userData.featureType = featureType;
+    return mesh;
+  }
+}
+
+// ─── Small helpers ──────────────────────────────────────────────────────────
+function centroidOf(poly) {
+  let x = 0, y = 0;
+  for (const p of poly) { x += p.x; y += p.y; }
+  return { x: x / poly.length, y: y / poly.length };
+}
+
+function parseHeightM(tags) {
+  if (tags?.height) { const v = parseFloat(tags.height); if (v > 0) return v; }
+  if (tags?.['building:levels']) { const v = parseFloat(tags['building:levels']); if (v > 0) return v * 3.2; }
+  return 8; // default ~2.5 storeys
+}
+
+function signedArea(poly) {
+  let a = 0;
+  for (let i = 0, n = poly.length; i < n; i++) {
+    const p = poly[i], q = poly[(i + 1) % n];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a / 2;
+}
+function ensureCCW(poly) { return signedArea(poly) < 0 ? poly.slice().reverse() : poly; }
+
+// ─── Terrain height field ───────────────────────────────────────────────────
+// Maps model (x,y) ∈ [-R,R]² → surface height (mm). elevGrid is the raw metres
+// field (N×N, row-major). We normalise so the lowest point sits at `baseTop`.
+function makeHeightField(elevGrid, N, vScaleMMperM) {
+  let lo = Infinity, hi = -Infinity;
+  for (let k = 0; k < elevGrid.length; k++) {
+    const e = elevGrid[k];
+    if (e < lo) lo = e; if (e > hi) hi = e;
+  }
+  if (!isFinite(lo)) { lo = 0; hi = 0; }
+  const baseTop = BASE;
+  return {
+    lo, hi,
+    heightAt(x, y) {
+      const u = (x + R) / (2 * R);
+      const v = (y + R) / (2 * R);
+      const e = bilinearInterp(elevGrid, N, Math.max(0, Math.min(1, u)), Math.max(0, Math.min(1, v)));
+      return baseTop + (e - lo) * vScaleMMperM;
+    },
+  };
+}
+
+// ─── Terrain surface mesh (square) ──────────────────────────────────────────
+// Displaced grid top + perimeter walls + flat floor = solid printable block.
+function collectTerrain(acc, hf, GN) {
+  const step = (2 * R) / GN;
+  const xy = (i) => -R + i * step;
+
+  // Top surface vertices
+  const topIdx = [];
+  for (let j = 0; j <= GN; j++) {
+    for (let i = 0; i <= GN; i++) {
+      const x = xy(i), y = xy(j);
+      topIdx.push(acc.n);
+      acc.pos.push(x, hf.heightAt(x, y), -y);
+      acc.n++;
+    }
+  }
+  const at = (i, j) => topIdx[j * (GN + 1) + i];
+  // Top triangles
+  for (let j = 0; j < GN; j++) {
+    for (let i = 0; i < GN; i++) {
+      const a = at(i, j), b = at(i + 1, j), c = at(i + 1, j + 1), d = at(i, j + 1);
+      acc.idx.push(a, c, b,  a, d, c);
+    }
+  }
+
+  // Floor (flat at y=0), reversed winding to face down
+  const floorIdx = [];
+  for (let j = 0; j <= GN; j++) {
+    for (let i = 0; i <= GN; i++) {
+      const x = xy(i), y = xy(j);
+      floorIdx.push(acc.n);
+      acc.pos.push(x, 0, -y);
+      acc.n++;
+    }
+  }
+  const fat = (i, j) => floorIdx[j * (GN + 1) + i];
+  for (let j = 0; j < GN; j++) {
+    for (let i = 0; i < GN; i++) {
+      const a = fat(i, j), b = fat(i + 1, j), c = fat(i + 1, j + 1), d = fat(i, j + 1);
+      acc.idx.push(a, b, c,  a, c, d);
+    }
+  }
+
+  // Perimeter walls: connect top edge ring to floor edge ring
+  const wall = (i0, j0, i1, j1) => {
+    const t0 = at(i0, j0), t1 = at(i1, j1), b0 = fat(i0, j0), b1 = fat(i1, j1);
+    acc.idx.push(t0, b0, t1,  t1, b0, b1);
+  };
+  for (let i = 0; i < GN; i++) wall(i + 1, 0, i, 0);      // south edge (y=-R)
+  for (let i = 0; i < GN; i++) wall(i, GN, i + 1, GN);    // north edge (y=+R)
+  for (let j = 0; j < GN; j++) wall(0, j, 0, j + 1);      // west edge (x=-R)
+  for (let j = 0; j < GN; j++) wall(GN, j + 1, GN, j);    // east edge (x=+R)
+}
+
+// ─── Flat base (no-terrain fallback) ────────────────────────────────────────
+function collectFlatBase(acc) {
+  const sq = [
+    { x: -R, y: -R }, { x: R, y: -R }, { x: R, y: R }, { x: -R, y: R },
+  ];
+  collectPrism(acc, sq, 0, BASE);
+}
+
+// ─── Generic prism extrusion (footprint from baseY up by h) ─────────────────
+function collectPrism(acc, poly, baseY, h) {
+  const ring = ensureCCW(poly);
+  if (ring.length < 3) return;
+  const flat = [];
+  for (const p of ring) flat.push(p.x, p.y);
+  const tris = earcut(flat, [], 2);
+  if (!tris.length) return;
+  const top = baseY + h;
+  const nV = ring.length;
+
+  const start = acc.n;
+  // top ring
+  for (const p of ring) { acc.pos.push(p.x, top, -p.y); acc.n++; }
+  // bottom ring
+  for (const p of ring) { acc.pos.push(p.x, baseY, -p.y); acc.n++; }
+  // top face
+  for (let t = 0; t < tris.length; t += 3) acc.idx.push(start + tris[t], start + tris[t + 1], start + tris[t + 2]);
+  // bottom face (reversed)
+  const b = start + nV;
+  for (let t = 0; t < tris.length; t += 3) acc.idx.push(b + tris[t + 2], b + tris[t + 1], b + tris[t]);
+  // walls
+  for (let i = 0; i < nV; i++) {
+    const ni = (i + 1) % nV;
+    const tl = start + i, tr = start + ni, bl = b + i, br = b + ni;
+    acc.idx.push(tl, tr, bl,  bl, tr, br);
+  }
+}
+
+// ─── Buildings draped on terrain ────────────────────────────────────────────
+function collectBuildings(acc, buildings, hf, vExag) {
+  let count = 0;
+  for (const bld of (buildings || [])) {
+    const poly = bld.polygon;
+    if (!poly || poly.length < 3) continue;
+    const c = centroidOf(poly);
+    const ground = hf ? hf.heightAt(c.x, c.y) : BASE;
+    const hM = parseHeightM(bld.tags);
+    // model mm height: scale metres the same way terrain vExag scales them, but
+    // buildings use the horizontal scale so they look right relative to footprint.
+    const hMM = Math.max(0.6, hM * vExag);
+    // sink the foot slightly so it stays grounded on slopes
+    collectPrism(acc, poly, ground - 0.4, hMM + 0.4);
+    count++;
+  }
+  return count;
+}
+
+// ─── Roads draped on terrain (thin ribbons that follow the surface) ─────────
+function collectRoads(acc, roads, hf) {
+  const HW = 0.45, RISE = 0.25;
+  let count = 0;
+  for (const road of (roads || [])) {
+    const pts = road.points;
+    if (!pts || pts.length < 2) continue;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1];
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const len = Math.hypot(dx, dy);
+      if (len < 1e-3) continue;
+      const nx = -dy / len * HW, ny = dx / len * HW;
+      const ga = (hf ? hf.heightAt(a.x, a.y) : BASE) + RISE;
+      const gb = (hf ? hf.heightAt(b.x, b.y) : BASE) + RISE;
+      const s = acc.n;
+      acc.pos.push(a.x + nx, ga, -(a.y + ny)); acc.n++;
+      acc.pos.push(b.x + nx, gb, -(b.y + ny)); acc.n++;
+      acc.pos.push(b.x - nx, gb, -(b.y - ny)); acc.n++;
+      acc.pos.push(a.x - nx, ga, -(a.y - ny)); acc.n++;
+      acc.idx.push(s, s + 1, s + 2,  s, s + 2, s + 3);
+    }
+    count++;
+  }
+  return count;
+}
+
+// ─── Water draped flat-ish on terrain ───────────────────────────────────────
+function collectWater(acc, water, hf) {
+  let count = 0;
+  for (const w of (water || [])) {
+    const poly = w.polygon;
+    if (!poly || poly.length < 3) continue;
+    const ring = ensureCCW(poly);
+    const flat = [];
+    for (const p of ring) flat.push(p.x, p.y);
+    const tris = earcut(flat, [], 2);
+    if (!tris.length) continue;
+    const s = acc.n;
+    for (const p of ring) {
+      const g = (hf ? hf.heightAt(p.x, p.y) : BASE) + 0.15;
+      acc.pos.push(p.x, g, -p.y); acc.n++;
+    }
+    for (let t = 0; t < tris.length; t += 3) acc.idx.push(s + tris[t], s + tris[t + 1], s + tris[t + 2]);
+    count++;
+  }
+  return count;
+}
+
+// ─── Public entry point ─────────────────────────────────────────────────────
+/**
+ * @param {Object} features  { buildings:[{polygon,tags}], roads:[{points,tags}], water:[{polygon}] }
+ * @param {Object|null} terrainOptions  { elevGrid:Float32Array, gridSize:N } or null (flat)
+ * @param {Object} projection  (for scaleLength)
+ * @param {number} vertExag  building vertical exaggeration (1..5 from UI)
+ * @param {Function} onProgress
+ * @returns {{ group: THREE.Group, stats: Object }}
+ */
+export function buildMapModelV2(features, terrainOptions, projection, vertExag, onProgress) {
+  onProgress?.('New engine: building terrain…', 62);
+  const group = new THREE.Group();
+
+  const whiteAcc = new Acc();  // terrain + base + buildings
+  const blackAcc = new Acc();  // roads + water
+
+  // Vertical scale: convert real metres → model mm. horizontalScale is mm/m;
+  // multiply by vertExag so relief/buildings read clearly at model scale.
+  const mmPerM = projection.horizontalScale * Math.max(1, vertExag);
+
+  let hf = null;
+  if (terrainOptions?.elevGrid && terrainOptions.gridSize) {
+    hf = makeHeightField(terrainOptions.elevGrid, terrainOptions.gridSize, mmPerM);
+    collectTerrain(whiteAcc, hf, 96);   // 96×96 surface
+    onProgress?.(`New engine: terrain relief ${(hf.hi - hf.lo).toFixed(0)} m`, 68);
+  } else {
+    collectFlatBase(whiteAcc);
+  }
+
+  const nB = collectBuildings(whiteAcc, features.buildings, hf, mmPerM);
+  onProgress?.(`New engine: ${nB} buildings draped`, 78);
+  const nR = collectRoads(blackAcc, features.roads, hf);
+  const nW = collectWater(blackAcc, features.water, hf);
+  onProgress?.('New engine: finalising…', 90);
+
+  const terrainMesh = whiteAcc.build('terrain');
+  const blackMesh   = blackAcc.build('road');
+  if (terrainMesh) group.add(terrainMesh);
+  if (blackMesh) group.add(blackMesh);
+
+  return {
+    group,
+    stats: { buildings: nB, roads: nR, water: nW, engine: 'v2-terrain-fused' },
+  };
+}

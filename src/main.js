@@ -24,6 +24,7 @@ const PIN_ICON = L.divIcon({
 import { createProjection, getHexVerticesGeo, getHexVertices, getShapeVertices, getShapeVerticesGeo } from './geo/geoMath.js';
 import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, parseOvertureWater, parseOvertureBuildings, resolveOverlaps } from './geo/osmData.js';
 import { buildMapModel } from './geometry/buildMap.js';
+import { buildMapModelV2 } from './geometry/mapEngine.js';
 import { SceneManager }  from './preview/scene.js';
 import { exportSTL, export3MF } from './export/exporters.js';
 import { MODEL_RADIUS_MM } from './utils/helpers.js';
@@ -381,7 +382,29 @@ async function generate() {
     setStatus('Building 3D model...', 60);
     const detailedBuildings  = el('detailed-buildings')?.checked  || false;
     const proceduralInfill   = el('procedural-infill')?.checked   || false;
-    const result = buildMapModel(features, terrainOptions, projection, vertExag, setStatus, currentShape, detailedBuildings, false, false, activeOrderId, false, proceduralInfill);
+    const newEngine          = el('new-engine')?.checked || false;
+
+    let result;
+    if (newEngine) {
+      // ── NEW terrain-fused engine (beta) ──────────────────────────────────
+      // Always drape onto real elevation: if no terrain was fetched above,
+      // pull a Terrarium grid now (the whole point of this engine is fusion).
+      if (!terrainOptions) {
+        try {
+          setStatus('New engine: fetching terrain elevation…', 52);
+          const GRID = 129;
+          const elevGrid = await fetchElevationForModel(
+            lat, lng, radiusMeters, MODEL_RADIUS_MM, GRID, m => setStatus(m, 55),
+          );
+          terrainOptions = { elevGrid, gridSize: GRID };
+        } catch (err) {
+          setStatus(`New engine: terrain unavailable (${err.message}) — flat base`, 56);
+        }
+      }
+      result = buildMapModelV2(features, terrainOptions, projection, vertExag, setStatus);
+    } else {
+      result = buildMapModel(features, terrainOptions, projection, vertExag, setStatus, currentShape, detailedBuildings, false, false, activeOrderId, false, proceduralInfill);
+    }
     const group = result.group;
     const modelStats = result.stats;
 
