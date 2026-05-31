@@ -127,8 +127,8 @@ export function exportTilesSTLZip(tiles, filename = 'map-tiles.zip') {
  *   - model_settings.config assigns extruders per part
  *   - project_settings.config defines filament colours
  */
-export function export3MF(modelGroup, filename = 'map-model.3mf') {
-  if (!modelGroup) return;
+function build3MFBytes(modelGroup) {
+  if (!modelGroup) return null;
 
   // ── 1. Collect geometry into colour buckets ─────────────────────────────
   const BUCKETS     = getBuckets();
@@ -334,7 +334,26 @@ ${partSettingsXML}
     'Metadata/project_settings.config':   enc.encode(projectSettingsJSON),
   }, { level: 6 });
 
-  triggerDownload(zip, filename, 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml');
+  return zip;
+}
+
+// Single-model 3MF download (unchanged public API).
+export function export3MF(modelGroup, filename = 'map-model.3mf') {
+  const zip = build3MFBytes(modelGroup);
+  if (zip) triggerDownload(zip, filename, 'application/vnd.ms-package.3dmanufacturing-3dmodel+xml');
+}
+
+// Per-tile printable export: one .3mf per tile, bundled into an outer ZIP.
+// tiles = [{ cell:{a,b}, group }]; each group is at the origin = its own plate.
+export function exportTiles3MFZip(tiles, filename = 'map-tiles-3mf.zip') {
+  const parts = {};
+  for (const t of (tiles || [])) {
+    const bytes = build3MFBytes(t.group);
+    if (bytes) parts[`tile_r${t.cell.b}_c${t.cell.a}.3mf`] = bytes;
+  }
+  if (!Object.keys(parts).length) return;
+  const outer = fflate.zipSync(parts, { level: 6 });
+  triggerDownload(outer, filename, 'application/zip');
 }
 
 // ─── Utility ──────────────────────────────────────────────────────────────────

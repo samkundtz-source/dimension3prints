@@ -26,7 +26,7 @@ import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, parseOvertureWat
 import { buildMapModel } from './geometry/buildMap.js';
 import { buildMapModelV2 } from './geometry/mapEngine.js';
 import { SceneManager }  from './preview/scene.js';
-import { exportSTL, export3MF, exportTilesSTLZip } from './export/exporters.js';
+import { exportSTL, export3MF, exportTilesSTLZip, exportTiles3MFZip } from './export/exporters.js';
 import { MODEL_RADIUS_MM } from './utils/helpers.js';
 import { fetchElevationForModel } from './terrain/terrain.js';
 import { fetchHiResElevationForModel, checkSuperDetailCoverage } from './geo/elevationData.js';
@@ -751,6 +751,13 @@ function doExportSTL() {
 
 function doExport3MF() {
   if (!scene?.group) return;
+  // Multiple connected tiles → one printable .3mf per tile, bundled as a ZIP.
+  if (lastTiles.length > 1) {
+    setStatus(`Writing ${lastTiles.length} tile 3MFs…`, 99);
+    exportTiles3MFZip(lastTiles, 'map-tiles-3mf.zip');
+    setStatus(`${lastTiles.length} tile 3MFs downloaded (ZIP).`, 100);
+    return;
+  }
   setStatus('Writing 3MF...', 99);
   export3MF(scene.group, 'map-model.3mf');
   setStatus('3MF downloaded.', 100);

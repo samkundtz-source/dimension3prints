@@ -311,6 +311,7 @@ async function handleCreateCheckout(request, env) {
     `Scale: ${verticalScale}x`,
     `Shape: ${shape}`,
     `Rotation: ${rotation}°`,
+    tileCount > 1 ? `Connected tiles: ${tileCount} (separate prints)` : null,
     detailedBuildings ? 'Detailed buildings' : null,
     terrainRelief     ? 'Terrain relief'     : null,
     elevation         ? 'Real elevation'      : null,

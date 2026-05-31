@@ -216,6 +216,30 @@ function clipSegmentToSquare(a, b, clipMargin) {
 // base thin enough to print many and connect them.
 const MAX_RELIEF_MM = 5;    // tallest terrain bump above the lowest point
 
+// Box-blur an N×N row-major grid `passes` times → smooths sharp elevation
+// steps so terrain reads as gradual slopes, not printed cliffs.
+function boxBlurGrid(grid, N, passes) {
+  let cur = Array.from(grid, v => (Number.isFinite(v) ? v : 0));
+  for (let p = 0; p < passes; p++) {
+    const next = new Float32Array(N * N);
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        let sum = 0, cnt = 0;
+        for (let dj = -1; dj <= 1; dj++) {
+          for (let di = -1; di <= 1; di++) {
+            const ni = i + di, nj = j + dj;
+            if (ni < 0 || ni >= N || nj < 0 || nj >= N) continue;
+            sum += cur[nj * N + ni]; cnt++;
+          }
+        }
+        next[j * N + i] = sum / cnt;
+      }
+    }
+    cur = next;
+  }
+  return cur;
+}
+
 function makeHeightField(elevGrid, N, vScaleMMperM) {
   // Use ROBUST low/high (5th/95th percentile) instead of absolute min/max so a
   // patch of sea (elevation 0) or a single spike doesn't drag the whole land
@@ -225,6 +249,11 @@ function makeHeightField(elevGrid, N, vScaleMMperM) {
   // extreme single-cell spikes. We do NOT hard-clamp per vertex (that caused
   // the "hill then a sudden cliff/jump"); instead the whole range is scaled
   // smoothly and capped only in total height by MAX_RELIEF_MM.
+  // Smooth the elevation grid with a few box-blur passes so real-world steps
+  // (cliffs, sudden drops near water/edges) flow into gradual slopes instead of
+  // printing as vertical walls. N = grid dim. Operates on a copy.
+  elevGrid = boxBlurGrid(elevGrid, N, 2);
+
   const sorted = Array.from(elevGrid).filter(Number.isFinite).sort((a, b) => a - b);
   let lo, hi;
   if (sorted.length) {
