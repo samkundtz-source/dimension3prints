@@ -137,15 +137,24 @@ function clipSegmentToSquare(a, b, clipMargin) {
 // big vertExag balloons the surface — and since the printed base hangs below
 // it, the whole model becomes a giant solid block wasting filament. We scale
 // the real relief into this budget instead.
-const MAX_RELIEF_MM = 12;   // tallest terrain bump above the lowest point
+// Keep terrain relief small so the model stays a thin, tile-able slab. Coastal
+// cities have sea at elevation 0, which would otherwise push all the land up
+// onto a tall plateau. 5mm of relief is plenty to read hills while keeping the
+// base thin enough to print many and connect them.
+const MAX_RELIEF_MM = 5;    // tallest terrain bump above the lowest point
 
 function makeHeightField(elevGrid, N, vScaleMMperM) {
-  let lo = Infinity, hi = -Infinity;
-  for (let k = 0; k < elevGrid.length; k++) {
-    const e = elevGrid[k];
-    if (e < lo) lo = e; if (e > hi) hi = e;
-  }
+  // Use ROBUST low/high (5th/95th percentile) instead of absolute min/max so a
+  // patch of sea (elevation 0) or a single spike doesn't drag the whole land
+  // onto a plateau / flatten the relief. This keeps coastal cities thin.
+  const sorted = Array.from(elevGrid).filter(Number.isFinite).sort((a, b) => a - b);
+  let lo, hi;
+  if (sorted.length) {
+    lo = sorted[Math.floor(sorted.length * 0.05)];
+    hi = sorted[Math.floor(sorted.length * 0.95)];
+  } else { lo = 0; hi = 0; }
   if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 0; }
+  if (hi < lo) hi = lo;
   const span = hi - lo;
   // Relief scale: use vScale, but clamp so total relief never exceeds the
   // budget. Flat cities (NYC ≈ a few m of span) get ~0 relief → thin base.
@@ -158,7 +167,10 @@ function makeHeightField(elevGrid, N, vScaleMMperM) {
     reliefMM: Math.min(relief, MAX_RELIEF_MM),
     heightAt(x, y) {
       const e = bilinearInterp(elevGrid, N, x, y, R);
-      const h = baseTop + (e - lo) * effScale;
+      // Clamp the elevation into the robust [lo,hi] band so sea/spikes outside
+      // the percentile range can't push a vertex below the base or sky-high.
+      const ec = e < lo ? lo : (e > hi ? hi : e);
+      const h = baseTop + (ec - lo) * effScale;
       return Number.isFinite(h) ? h : baseTop;
     },
   };
@@ -584,12 +596,17 @@ function collectWater(acc, water, hf) {
   // small thickness down to the terrain so it reads as a solid body, not a sheet.
   const SURF = 0.5;     // water top above terrain (mm) — flatter than roads
   const THK  = 0.5;     // slab thickness down toward terrain
+  const PLATE_AREA = (2 * R) * (2 * R);
   let count = 0;
   for (const w of (water || [])) {
     let poly = w.polygon;
     if (!poly || poly.length < 3) continue;
     poly = clipPolyToSquare(poly);            // clip to border
     if (!poly || poly.length < 3) continue;
+    // Reject OVERSIZED water: OSM tags whole harbours/bays/oceans as huge
+    // polygons that clip to a rectangle blanketing the land (the "water covers
+    // NYC" bug). A genuine in-frame river rarely exceeds ~half the plate.
+    if (polyArea(poly) > PLATE_AREA * 0.55) continue;
     const ring = ensureCCW(poly);
     const nV = ring.length;
     const flat = [];
