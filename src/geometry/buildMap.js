@@ -1431,50 +1431,109 @@ function collectBeveledBuilding(acc, polygon, baseY, heightMM) {
 // Rendered into the white building accumulator as raised ridges. Uses the same
 // extrude primitive as buildings (axis: 2D (x,y) → 3D (x, height, -y)).
 function collectSubway(acc, lines, stations, baseTop, shapeVerts) {
-  const HALF_W = 0.9;          // tube half-width (mm)
-  const RISE   = 2.4;          // tube height above base (mm)
-  const STN_R  = 1.7;          // station marker half-size (mm)
-  const STN_H  = RISE + 1.6;   // stations stand slightly taller than the lines
+  const HALF_W = 0.55;          // tube half-width (mm) — thin, clean lines
+  const RISE   = 1.5;           // tube height above base (mm)
+  const STN_R  = 1.25;          // station marker radius (mm)
+  const STN_H  = RISE + 1.2;    // stations stand slightly taller than the lines
+  const INSET  = 3.0;           // keep lines this far inside the plate edge
 
-  const inShape = (px, py) => {
-    let inside = false;
-    for (let i = 0, j = shapeVerts.length - 1; i < shapeVerts.length; j = i++) {
-      const xi = shapeVerts[i].x, yi = shapeVerts[i].y;
-      const xj = shapeVerts[j].x, yj = shapeVerts[j].y;
-      if (((yi > py) !== (yj > py)) &&
-          (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside;
+  // ── Inset clip boundary: move each shape vertex toward the centroid ──────
+  let cx = 0, cy = 0;
+  for (const v of shapeVerts) { cx += v.x; cy += v.y; }
+  cx /= shapeVerts.length; cy /= shapeVerts.length;
+  const clip = shapeVerts.map(v => {
+    const dx = cx - v.x, dy = cy - v.y;
+    const L = Math.hypot(dx, dy) || 1;
+    return { x: v.x + dx / L * INSET, y: v.y + dy / L * INSET };
+  });
+  // Per-edge inward normals (winding-agnostic: flip toward centroid)
+  const edges = [];
+  for (let i = 0; i < clip.length; i++) {
+    const A = clip[i], B = clip[(i + 1) % clip.length];
+    let nx = -(B.y - A.y), ny = (B.x - A.x);
+    if (nx * (cx - A.x) + ny * (cy - A.y) < 0) { nx = -nx; ny = -ny; }
+    edges.push({ ax: A.x, ay: A.y, nx, ny });
+  }
+  // Cyrus–Beck: clip a segment to the convex inset polygon. Returns [a,b]|null.
+  const clipSeg = (p0, p1) => {
+    let tE = 0, tL = 1;
+    const dx = p1.x - p0.x, dy = p1.y - p0.y;
+    for (const e of edges) {
+      const a = (p0.x - e.ax) * e.nx + (p0.y - e.ay) * e.ny;
+      const b = dx * e.nx + dy * e.ny;
+      if (Math.abs(b) < 1e-9) { if (a < 0) return null; continue; }
+      const t = -a / b;
+      if (b > 0) { if (t > tE) tE = t; } else { if (t < tL) tL = t; }
+      if (tE > tL) return null;
     }
-    return inside;
+    return [{ x: p0.x + dx * tE, y: p0.y + dy * tE },
+            { x: p0.x + dx * tL, y: p0.y + dy * tL }];
+  };
+  const inClip = (px, py) => {
+    for (const e of edges) if ((px - e.ax) * e.nx + (py - e.ay) * e.ny < 0) return false;
+    return true;
+  };
+  // Douglas–Peucker simplify (iterative) — smooths jitter + cuts triangle count
+  const simplify = (pts, eps) => {
+    if (pts.length < 3) return pts;
+    const keep = new Uint8Array(pts.length);
+    keep[0] = keep[pts.length - 1] = 1;
+    const stack = [[0, pts.length - 1]];
+    while (stack.length) {
+      const [s, e] = stack.pop();
+      const ax = pts[s].x, ay = pts[s].y;
+      const ex = pts[e].x - ax, ey = pts[e].y - ay;
+      const el = Math.hypot(ex, ey) || 1;
+      let maxD = 0, idx = -1;
+      for (let i = s + 1; i < e; i++) {
+        const d = Math.abs((pts[i].x - ax) * ey - (pts[i].y - ay) * ex) / el;
+        if (d > maxD) { maxD = d; idx = i; }
+      }
+      if (maxD > eps && idx > 0) { keep[idx] = 1; stack.push([s, idx], [idx, e]); }
+    }
+    const out = [];
+    for (let i = 0; i < pts.length; i++) if (keep[i]) out.push(pts[i]);
+    return out;
+  };
+  const octagon = (ox, oy, r) => {
+    const o = [];
+    for (let k = 0; k < 8; k++) {
+      const a = (k + 0.5) * Math.PI / 4;
+      o.push({ x: ox + Math.cos(a) * r, y: oy + Math.sin(a) * r });
+    }
+    return o;
   };
 
   for (const line of (lines || [])) {
-    const pts = line.points || [];
+    let pts = line.points || [];
+    if (pts.length < 2) continue;
+    pts = simplify(pts, HALF_W * 0.8);
     for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i], b = pts[i + 1];
-      if (!inShape(a.x, a.y) && !inShape(b.x, b.y)) continue;
+      const seg = clipSeg(pts[i], pts[i + 1]);
+      if (!seg) continue;
+      const [a, b] = seg;
       const dx = b.x - a.x, dy = b.y - a.y;
       const len = Math.hypot(dx, dy);
       if (len < 1e-3) continue;
       const nx = -dy / len * HALF_W, ny = dx / len * HALF_W;
-      const rect = [
+      collectExtrudedPolygon(acc, [
         { x: a.x + nx, y: a.y + ny },
         { x: b.x + nx, y: b.y + ny },
         { x: b.x - nx, y: b.y - ny },
         { x: a.x - nx, y: a.y - ny },
-      ];
-      collectExtrudedPolygon(acc, rect, [], baseTop, RISE);
+      ], [], baseTop, RISE);
+    }
+    // Round joints fill the corner gaps between segments → continuous look
+    for (let i = 1; i < pts.length - 1; i++) {
+      if (inClip(pts[i].x, pts[i].y)) {
+        collectExtrudedPolygon(acc, octagon(pts[i].x, pts[i].y, HALF_W), [], baseTop, RISE);
+      }
     }
   }
 
   for (const s of (stations || [])) {
-    if (!inShape(s.x, s.y)) continue;
-    const sq = [
-      { x: s.x - STN_R, y: s.y - STN_R },
-      { x: s.x + STN_R, y: s.y - STN_R },
-      { x: s.x + STN_R, y: s.y + STN_R },
-      { x: s.x - STN_R, y: s.y + STN_R },
-    ];
-    collectExtrudedPolygon(acc, sq, [], baseTop, STN_H);
+    if (!inClip(s.x, s.y)) continue;
+    collectExtrudedPolygon(acc, octagon(s.x, s.y, STN_R), [], baseTop, STN_H);
   }
 }
 

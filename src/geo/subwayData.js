@@ -19,7 +19,8 @@ const SUBWAY_MIRRORS = [
 
 function subwayQuery({ south, west, north, east }) {
   const bb = `${south},${west},${north},${east}`;
-  return `[out:json][timeout:25];(` +
+  // Generous timeout — whole-metro captures cover a large bbox.
+  return `[out:json][timeout:90];(` +
     `way["railway"="subway"](${bb});` +
     `node["station"="subway"](${bb});` +
     `);out geom;`;

@@ -291,7 +291,7 @@ async function generate() {
 
     // 4a. Super Detail — LiDAR-grade terrain from USGS 3DEP (admin, US coverage).
     //     Falls back to the Terrarium path below if there's no 3DEP coverage.
-    if (superDetailMode) {
+    if (superDetailMode && !subwayOnly) {
       try {
         setStatus('Checking LiDAR coverage…', 50);
         const cov = await checkSuperDetailCoverage(lat, lng);
@@ -316,7 +316,7 @@ async function generate() {
 
     // 4b. Standard terrain (Terrarium tiles) — used directly, or as the
     //     graceful fallback when Super Detail has no coverage / fails.
-    if (!terrainOptions && (testTerrainMode || mountainViewMode || superDetailMode)) {
+    if (!terrainOptions && !subwayOnly && (testTerrainMode || mountainViewMode || superDetailMode)) {
       try {
         setStatus('Fetching terrain elevation…', 52);
         // Higher grid → more elevation samples → smoother, more detailed terrain.
@@ -336,9 +336,8 @@ async function generate() {
     }
 
     // 4d. Subway / transit network (admin) — fetch railway=subway + stations
-    //     directly from Overpass (worker egress is blocked), project onto the
-    //     model, and optionally drop the city so only the network shows.
-    const subwayMode = el('subway-mode')?.checked || false;
+    //     directly from Overpass (worker egress is blocked) and project onto
+    //     the model. In subway-only mode the city was never fetched.
     if (subwayMode) {
       try {
         const sub = await fetchSubway(bbox, msg => setStatus(msg, 56));
@@ -350,11 +349,6 @@ async function generate() {
           const p = projection.project(s.lat, s.lng);
           return { x: p.x, y: p.y, name: s.name };
         });
-        if (!(el('subway-include-city')?.checked)) {
-          features.buildings = []; features.roads = []; features.paths = [];
-          features.water = []; features.waterways = []; features.parks = [];
-          features.landuse = []; features.trees = [];
-        }
         setStatus(`Subway: ${features.subway.length} segments · ${features.subwayStations.length} stations`, 58);
       } catch (err) {
         setStatus(`Subway fetch failed (${err.message})`, 58);
@@ -605,8 +599,9 @@ function initControls() {
   searchInput.addEventListener('input', () => {
     clearTimeout(searchDebounceTimer);
     const q = searchInput.value.trim();
-    if (q.length < 3) { el('search-results').innerHTML = ''; return; }
-    searchDebounceTimer = setTimeout(doSearch, 600);
+    if (q.length < 2) { el('search-results').innerHTML = ''; return; }
+    // 400 ms after you stop typing → show the dropdown of options to pick from.
+    searchDebounceTimer = setTimeout(doSearch, 400);
   });
   searchInput.addEventListener('keydown', async e => {
     if (e.key !== 'Enter') return;
