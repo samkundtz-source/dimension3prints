@@ -414,8 +414,8 @@ function collectBuildings(acc, buildings, hf, vExag) {
     // Data-driven: only genuinely tall buildings (≥55 m real) get setbacks,
     // so ordinary houses/blocks stay simple. Skip if a roof shape is tagged
     // (that takes precedence below).
-    if (!roof && heightM >= 55) {
-      collectSetbackTower(acc, poly, footY, bodyH, heightM);
+    if (!roof && hM >= 55) {
+      collectSetbackTower(acc, poly, footY, bodyH, hM);
       setback++; count++;
       continue;
     }
