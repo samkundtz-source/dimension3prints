@@ -662,10 +662,8 @@ function collectRoads(acc, roads, hf) {
 // real OSM water polygon as a FLAT slab at a fixed `surfaceY`, and (in
 // collectTerrain) FLATTEN the terrain under water cells to just below that.
 // Smooth real-polygon shape on flattened ground = clean flat water, no humps.
-function collectWaterPolys(acc, polys, surfaceY) {
+function collectWaterPolys(acc, polys, hf) {
   const THK = 0.5;            // slab thickness
-  const topY = surfaceY;
-  const botY = surfaceY - THK;
   let count = 0;
   for (const ring of (polys || [])) {
     if (!ring || ring.length < 3) continue;
@@ -675,6 +673,24 @@ function collectWaterPolys(acc, polys, surfaceY) {
     let tris;
     try { tris = earcut(flat, [], 2); } catch { continue; }
     if (!tris.length) continue;
+
+    // Per-polygon FLAT level: sample terrain across the polygon, take a LOW
+    // percentile so the slab sits at the water's natural low point (in the
+    // channel/valley) — never floating, never on a hump. Flat = no bumps poke
+    // through; real polygon = smooth shoreline; terrain mesh untouched = no
+    // blocky edges.
+    let topY;
+    if (hf) {
+      const hs = [];
+      for (const p of ring) hs.push(hf.heightAt(p.x, p.y));
+      let cx = 0, cy = 0; for (const p of ring) { cx += p.x; cy += p.y; }
+      hs.push(hf.heightAt(cx / nV, cy / nV));
+      hs.sort((a, b) => a - b);
+      topY = hs[Math.floor(hs.length * 0.2)] + 0.15;
+    } else {
+      topY = BASE + 0.2;
+    }
+    const botY = topY - THK;
 
     // top face (smooth real shoreline, FLAT)
     const s = acc.n;
@@ -761,7 +777,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   let hf = null;
   if (terrainOptions?.elevGrid && terrainOptions.gridSize) {
     hf = makeHeightField(terrainOptions.elevGrid, terrainOptions.gridSize, mmPerM);
-    collectTerrain(whiteAcc, hf, GN, waterMask, FLATTEN_Y);   // flatten humps under water
+    collectTerrain(whiteAcc, hf, GN, null, 0);   // terrain untouched — no mask/carve/flatten
     onProgress?.(`New engine: terrain relief ${(hf.hi - hf.lo).toFixed(0)} m`, 68);
   } else {
     collectFlatBase(whiteAcc);
@@ -776,7 +792,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   // Render the REAL water polygons (smooth OSM shorelines) draped on the
   // terrain surface so they're always visible and follow the ground — the
   // natural-looking system. Size/isSea filter keeps oceans from blanketing land.
-  const nW = collectWaterPolys(blackAcc, waterPolys, WATER_SURFACE_Y);
+  const nW = collectWaterPolys(blackAcc, waterPolys, hf);
   onProgress?.('New engine: finalising…', 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
