@@ -378,33 +378,23 @@ async function generate() {
       if (dropped > 0) setStatus(`Resolved ${dropped} overlapping building${dropped === 1 ? '' : 's'}…`, 59);
     }
 
-    // 5. Build 3D model
+    // 5. Build 3D model — terrain-fused engine is the ONLY engine now.
     setStatus('Building 3D model...', 60);
-    const detailedBuildings  = el('detailed-buildings')?.checked  || false;
-    const proceduralInfill   = el('procedural-infill')?.checked   || false;
-    const newEngine          = el('new-engine')?.checked || false;
-
-    let result;
-    if (newEngine) {
-      // ── NEW terrain-fused engine (beta) ──────────────────────────────────
-      // Always drape onto real elevation: if no terrain was fetched above,
-      // pull a Terrarium grid now (the whole point of this engine is fusion).
-      if (!terrainOptions) {
-        try {
-          setStatus('New engine: fetching terrain elevation…', 52);
-          const GRID = 129;
-          const elevGrid = await fetchElevationForModel(
-            lat, lng, radiusMeters, MODEL_RADIUS_MM, GRID, m => setStatus(m, 55),
-          );
-          terrainOptions = { elevGrid, gridSize: GRID };
-        } catch (err) {
-          setStatus(`New engine: terrain unavailable (${err.message}) — flat base`, 56);
-        }
+    // Always drape onto real elevation (fusion is the whole point): if no
+    // terrain was fetched above, pull a Terrarium grid now.
+    if (!terrainOptions) {
+      try {
+        setStatus('Fetching terrain elevation…', 52);
+        const GRID = 129;
+        const elevGrid = await fetchElevationForModel(
+          lat, lng, radiusMeters, MODEL_RADIUS_MM, GRID, m => setStatus(m, 55),
+        );
+        terrainOptions = { elevGrid, gridSize: GRID };
+      } catch (err) {
+        setStatus(`Terrain unavailable (${err.message}) — using flat base`, 56);
       }
-      result = buildMapModelV2(features, terrainOptions, projection, vertExag, setStatus);
-    } else {
-      result = buildMapModel(features, terrainOptions, projection, vertExag, setStatus, currentShape, detailedBuildings, false, false, activeOrderId, false, proceduralInfill);
     }
+    const result = buildMapModelV2(features, terrainOptions, projection, vertExag, setStatus, currentShape);
     const group = result.group;
     const modelStats = result.stats;
 
