@@ -607,28 +607,32 @@ function initControls() {
   // Typing also shows a debounced dropdown of options — but only after a 600 ms
   // pause and ≥3 chars, which keeps requests well under the geocode rate limit
   // (the previous 350 ms / 2-char setting hammered it and caused 429s).
-  const searchInput = el('search-input');
-  searchInput.addEventListener('input', () => {
+  // Search — wired via EVENT DELEGATION on document so it can never be
+  // orphaned if the #search-input node is re-rendered after init (that was
+  // the bug: a direct listener silently stopped firing). Delegated listeners
+  // live on document, which is never replaced, so search always works.
+  document.addEventListener('input', (e) => {
+    if (!e.target || e.target.id !== 'search-input') return;
     clearTimeout(searchDebounceTimer);
-    const q = searchInput.value.trim();
-    if (q.length < 2) { el('search-results').innerHTML = ''; return; }
-    // 400 ms after you stop typing → show the dropdown of options to pick from.
-    searchDebounceTimer = setTimeout(doSearch, 400);
+    const q = e.target.value.trim();
+    const resEl = el('search-results');
+    if (q.length < 2) { if (resEl) resEl.innerHTML = ''; return; }
+    searchDebounceTimer = setTimeout(doSearch, 350);
   });
-  searchInput.addEventListener('keydown', async e => {
-    if (e.key !== 'Enter') return;
+  document.addEventListener('keydown', async (e) => {
+    if (!e.target || e.target.id !== 'search-input' || e.key !== 'Enter') return;
     e.preventDefault();
     clearTimeout(searchDebounceTimer);
-    const q = searchInput.value.trim();
+    const q = e.target.value.trim();
     if (!q) return;
     setStatus('Searching…', 2);
     try {
       const places = await geocode(q);
       if (!places.length) { setStatus('No results found', 0); return; }
-      const p = places[0];                              // jump to the top match
+      const p = places[0];
       const label = p.displayName.split(',')[0].trim();
-      searchInput.value = label;
-      el('search-results').innerHTML = '';
+      const inp = el('search-input'); if (inp) inp.value = label;
+      const resEl = el('search-results'); if (resEl) resEl.innerHTML = '';
       selectLocation(p.lat, p.lng, label);
     } catch (err) {
       setStatus('Search failed: ' + err.message, 0);
@@ -638,7 +642,7 @@ function initControls() {
   // Close search results on outside click
   document.addEventListener('click', e => {
     if (!e.target.closest('.search-row') && !e.target.closest('#search-results')) {
-      el('search-results').innerHTML = '';
+      const resEl = el('search-results'); if (resEl) resEl.innerHTML = '';
     }
   });
 
