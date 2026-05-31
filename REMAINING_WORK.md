@@ -54,13 +54,14 @@ PLAN (keep square behaviour identical; add hex/circle as the same code path):
 ═══════════════════════════════════════════════════════════════════════════
 USER'S EXACT INTENT (confirmed): think of a GRID. You select a square (one map
 capture), then you can pick a square NEXT TO it and build off it — extending up
-to a 9×9 grid — so it becomes ONE uniform, bigger map. Each NEW square added
-costs +$35 (base model + $35 per extra tile). Each with 3D previews.
+to a 3×3 grid (MAX 9 tiles total) — so it becomes ONE uniform, bigger map. Each
+NEW square added costs +$35 (base model + $35 per extra tile). Each with 3D
+previews. NOTE: grid cap is 3×3 (=9 tiles), NOT 9×9.
 
 So this is NOT a cart of unrelated models. It's contiguous map TILING:
   • A tile = one capture area of fixed real-world size (= current radius/shape).
   • Tiles are grid-adjacent (share an edge). Selecting builds a bigger uniform map.
-  • Grid max 9×9. Pricing: BASE_PRICE (existing $29.99) + $35 × (tileCount − 1).
+  • Grid max 3×3. Pricing: BASE_PRICE (existing $29.99) + $35 × (tileCount − 1).
 
 BUILD PLAN:
 1. Tile grid model:
@@ -68,7 +69,7 @@ BUILD PLAN:
      real-world metres so neighbours abut exactly (no gap/overlap). Use geoMath:
      metresPerDegLat/Lng to convert the step to lat/lng offsets.
    - Track selected cells as integer (col,row) offsets from the anchor; enforce
-     adjacency (a new cell must touch an existing one) and the 9×9 bound.
+     adjacency (a new cell must touch an existing one) and the 3×3 bound.
 2. Selection UI (on the Leaflet map):
    - Draw the grid of candidate tiles around the selection as rectangles; clicked
      = selected (filled), neighbours of selected = "addable" (outline). Click to
@@ -81,7 +82,7 @@ BUILD PLAN:
    - The engine's thin uniform base (MAX_RELIEF_MM, flat floor at y=0) already
      makes tiles line up flush — good. Verify seams: adjacent tiles must share
      the same base height and border inset so they connect cleanly.
-   - Performance: N tiles = N fetches/builds; cap at 9×9=81 but warn for big sets.
+   - Performance: N tiles = N fetches/builds; cap at 3×3 = 9 tiles max.
 3D PREVIEW: reuse SceneManager; render the combined multi-tile group in the main
    viewport (and optionally a small per-tile thumbnail in the grid UI).
 PRICING + CHECKOUT:
