@@ -585,6 +585,7 @@
                   <div class="detail-row"><span class="detail-label">Radius: </span><span class="detail-val">${m.radius} km</span></div>
                   <div class="detail-row"><span class="detail-label">Scale: </span><span class="detail-val">${m.verticalScale}x</span></div>
                   <div class="detail-row"><span class="detail-label">Shape: </span><span class="detail-val">${m.shape || 'hexagon'}</span></div>
+                  <div class="detail-row"><span class="detail-label">Connected tiles: </span><span class="detail-val">${(Number(m.tileCount) || 1) > 1 ? `${m.tileCount} (separate prints)` : '1'}</span></div>
                   <div class="detail-row"><span class="detail-label">Rotation: </span><span class="detail-val">${m.rotation ?? 0}°</span></div>
                   <div class="detail-row"><span class="detail-label">Elevation: </span><span class="detail-val">${m.elevation ? 'Yes' : 'No'}</span></div>
                   <div class="detail-row"><span class="detail-label">Terrain relief: </span><span class="detail-val">${m.terrainRelief ? 'Yes' : 'No'}</span></div>

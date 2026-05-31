@@ -320,11 +320,16 @@ async function handleCreateCheckout(request, env) {
   const modelDesc   = `${orderId}${preOrderTag} — 3D Map Print — ${lat.toFixed(4)}, ${lng.toFixed(4)} | ${flags}`;
   const shipping    = getShippingForRegion(region);
 
+  // Size-based shipping: a connected multi-tile order is physically bigger/
+  // heavier (each tile is its own plate), so add a per-extra-tile surcharge to
+  // every shipping rate. +$6/extra tile (cents). Server-side, can't be spoofed.
+  const shipSurchargeCents = 600 * (tileCount - 1);
+
   const shippingOptions = shipping.rates.map(r => ({
     shipping_rate_data: {
       type:              r.type,
-      fixed_amount:      r.fixed_amount,
-      display_name:      r.display_name,
+      fixed_amount:      { amount: r.fixed_amount.amount + shipSurchargeCents, currency: r.fixed_amount.currency },
+      display_name:      tileCount > 1 ? `${r.display_name} (${tileCount} tiles)` : r.display_name,
       delivery_estimate: {
         minimum: { unit: 'business_day', value: r.delivery_estimate.min },
         maximum: { unit: 'business_day', value: r.delivery_estimate.max },
