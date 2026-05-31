@@ -763,7 +763,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   const nB = collectBuildings(bldgAcc, features.buildings, hf, mmPerM);
   onProgress?.(`New engine: ${nB} buildings draped`, 78);
   const nR = collectRoads(blackAcc, features.roads, hf);
-  const nW = collectWaterGrid(blackAcc, GN, hf ? waterMask : null, WATER_SURFACE_Y, CARVE_Y);
+  const nW = collectWaterMarching(blackAcc, GN, hf ? waterMask : null, WATER_SURFACE_Y, CARVE_Y);
   onProgress?.('New engine: finalising…', 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
