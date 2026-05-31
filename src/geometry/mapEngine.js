@@ -24,6 +24,7 @@ import { MODEL_RADIUS_MM, BASE_THICKNESS_MM, bilinearInterp } from '../utils/hel
 
 const R = MODEL_RADIUS_MM;           // model half-width (mm)
 const BASE = BASE_THICKNESS_MM;      // solid floor thickness (mm)
+const BUILDING_VSCALE = 0.5;         // halve building height (raw was too tall)
 
 // ─── Geometry accumulator (same pattern as buildMap) ────────────────────────
 class Acc {
@@ -388,7 +389,9 @@ function collectBuildings(acc, buildings, hf, vExag) {
     const c = centroidOf(poly);
     const ground = hf ? hf.heightAt(c.x, c.y) : BASE;
     const hM = parseHeightM(bld.tags);
-    const hMM = Math.max(0.6, hM * vExag);
+    // BUILDING_VSCALE halves building height — the raw extrusion read too tall
+    // and unrealistic. Tune this 0..1 multiplier to taste.
+    const hMM = Math.max(0.6, hM * vExag * BUILDING_VSCALE);
     const footY = ground - 1.0;          // sink foot below terrain on slopes
     const bodyH = hMM + 1.0;
     const topY = footY + bodyH;
