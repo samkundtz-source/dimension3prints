@@ -209,22 +209,34 @@ async function generate() {
     const shapeVerts = getShapeVertices(MODEL_RADIUS_MM, currentShape); // no rotation arg
     const bbox       = projection.getBBox(1.25); // 25% extra margin catches edge buildings
 
-    // 2. Fetch OSM data
-    setStatus('Fetching OpenStreetMap data...', 10);
-    const osmJson = await fetchOSMData(bbox, setStatus, adminToken);
+    // Subway / transit mode (admin). In subway-ONLY mode we skip the entire
+    // city OSM + terrain pipeline so the radius can go large (whole-metro)
+    // without a massive Overpass city fetch timing out.
+    const subwayMode        = el('subway-mode')?.checked || false;
+    const subwayIncludeCity = el('subway-include-city')?.checked || false;
+    const subwayOnly        = subwayMode && !subwayIncludeCity;
 
-    // 3. Parse features
-    setStatus('Parsing features...', 30);
-    const features = parseOSMData(osmJson, projection, shapeVerts);
+    // 2. Fetch OSM data (skipped entirely in subway-only mode)
+    let features;
+    if (subwayOnly) {
+      features = { buildings: [], roads: [], paths: [], water: [], waterways: [], parks: [], trees: [], landuse: [] };
+    } else {
+      setStatus('Fetching OpenStreetMap data...', 10);
+      const osmJson = await fetchOSMData(bbox, setStatus, adminToken);
 
-    const counts = [
-      `${features.buildings.length} buildings`,
-      `${features.roads.length} roads`,
-      `${features.paths.length} paths`,
-      `${features.water.length} water`,
-      `${features.parks.length} parks`,
-    ].join(' · ');
-    setStatus(`Parsed: ${counts}`, 35);
+      // 3. Parse features
+      setStatus('Parsing features...', 30);
+      features = parseOSMData(osmJson, projection, shapeVerts);
+
+      const counts = [
+        `${features.buildings.length} buildings`,
+        `${features.roads.length} roads`,
+        `${features.paths.length} paths`,
+        `${features.water.length} water`,
+        `${features.parks.length} parks`,
+      ].join(' · ');
+      setStatus(`Parsed: ${counts}`, 35);
+    }
 
     // 3a. Overture buildings (admin-only, opt-in via Test Mode radio).
     // Overture supplies real LiDAR-derived building heights and fuller coverage
@@ -232,7 +244,7 @@ async function generate() {
     // populated; if not, the endpoint returns an empty feature list and we
     // silently fall back to OSM-only buildings.
     const dataSource = document.querySelector('input[name="data-source"]:checked')?.value || 'osm';
-    if (adminMode && dataSource === 'overture') {
+    if (!subwayOnly && adminMode && dataSource === 'overture') {
       try {
         setStatus('Fetching Overture buildings…', 36);
         const ovrResp = await fetch('/api/overture-buildings', {
@@ -260,7 +272,7 @@ async function generate() {
     }
 
     // 3b. MS Global Building Footprints (optional toggle)
-    const useMsBuildings = el('ms-buildings')?.checked || false;
+    const useMsBuildings = (el('ms-buildings')?.checked || false) && !subwayOnly;
     if (useMsBuildings) {
       setStatus('Fetching extended building data…', 38);
       try {
