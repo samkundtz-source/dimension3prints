@@ -2,15 +2,15 @@
 
 /**
  * Tile half-width (circumradius) in model millimetres.
- *   • square  → full tile = 2 × this ≈ 120 mm
- *   • hexagon → ≈ 104 mm flat-to-flat
- * Sized so FOUR square tiles (a 2×2 = 240 × 240 mm) fit on ONE Bambu H2D plate
+ *   • square  → full tile = 2 × this ≈ 130 mm
+ *   • hexagon → ≈ 113 mm flat-to-flat
+ * Sized so FOUR square tiles (a 2×2 = 260 × 260 mm) fit on ONE Bambu H2D plate
  * inside its reduced dual-nozzle (2-colour) area (~300 × 320 mm) WITH room left
- * for the purge/wipe tower. Was 75.06 (≈150 mm) which made a 2×2 = 300 × 300 mm
- * and left no room for the tower. Absolute-mm features (road widths, base, relief)
- * stay fixed, so the smaller tile is still fully printable.
+ * (~40 × 60 mm) for the purge/wipe tower. Was 75.06 (≈150 mm) which made a 2×2 =
+ * 300 × 300 mm and left no room for the tower. Absolute-mm features (road widths,
+ * base, relief) stay fixed, so the smaller tile is still fully printable.
  */
-export const MODEL_RADIUS_MM = 60;
+export const MODEL_RADIUS_MM = 65;
 
 /** Solid base plate thickness in mm */
 export const BASE_THICKNESS_MM = 1.5;
