@@ -272,7 +272,7 @@ async function doSearch() {
 // returning its THREE.Group. Used for the EXTRA tiles in a connected map; the
 // anchor tile keeps the full generate() path (subway/Overture/etc.). Kept
 // deliberately minimal so a connected order is fast and predictable.
-async function buildOneTileGroup(cLat, cLng, radiusMeters, vertExag, rotRad, onMsg) {
+async function buildOneTileGroup(cLat, cLng, radiusMeters, vertExag, rotRad, norm = null, onMsg) {
   const projection = createProjection(cLat, cLng, radiusMeters, rotRad);
   const shapeVerts = getShapeVertices(MODEL_RADIUS_MM, currentShape);
   const bbox = projection.getBBox(1.25);
@@ -285,7 +285,9 @@ async function buildOneTileGroup(cLat, cLng, radiusMeters, vertExag, rotRad, onM
   try {
     const GRID = 129;
     const elevGrid = await fetchElevationForModel(cLat, cLng, radiusMeters, MODEL_RADIUS_MM, GRID, () => {});
-    terrainOptions = { elevGrid, gridSize: GRID };
+    // norm = shared elevation mapping from the anchor tile → terrain is
+    // continuous across seams (no height step where connected tiles meet).
+    terrainOptions = { elevGrid, gridSize: GRID, norm };
   } catch { /* flat base fallback */ }
   const result = buildMapModelV2(features, terrainOptions, projection, vertExag, () => {}, currentShape);
   return result.group;
@@ -515,6 +517,9 @@ async function generate() {
     const result = buildMapModelV2(features, terrainOptions, projection, vertExag, setStatus, currentShape);
     let group = result.group;
     const modelStats = result.stats;
+    // Anchor's elevation mapping — reused by every connected tile so the whole
+    // map shares one height scale and the surface stays flush across seams.
+    const sharedNorm = result.norm;
 
     // ── Connected tiles: build extra selected tiles and offset them so they
     //    abut the anchor as one bigger uniform map. Only for tileable shapes
@@ -547,7 +552,7 @@ async function generate() {
           // set is a rigid rotation of the connected grid → 0.00mm seams at every
           // angle (numerically verified at 0/30/90/153°).
           const geo = cellToGeoCenter(currentShape, cell, lat, lng, radiusMeters, 0);
-          const tileGroup = await buildOneTileGroup(geo.lat, geo.lng, radiusMeters, vertExag, rotRad);
+          const tileGroup = await buildOneTileGroup(geo.lat, geo.lng, radiusMeters, vertExag, rotRad, sharedNorm);
           // Tile group is built with rotRad (content rotated) and placed at the
           // rotated grid offset → the whole set reads as one rotated block.
           // Kept at origin in lastTiles for per-tile printable export.
@@ -784,7 +789,7 @@ function doExportSTL() {
   // (a combined 3×3 won't fit on a printer; each tile is its own plate).
   if (lastTiles.length > 1) {
     setStatus(`Writing ${lastTiles.length} tile STLs…`, 99);
-    exportTilesSTLZip(lastTiles, 'map-tiles.zip');
+    exportTilesSTLZip(lastTiles, 'map-tiles.zip', currentShape);
     setStatus(`${lastTiles.length} tile STLs downloaded (ZIP).`, 100);
     return;
   }
@@ -798,7 +803,7 @@ function doExport3MF() {
   // Multiple connected tiles → one printable .3mf per tile, bundled as a ZIP.
   if (lastTiles.length > 1) {
     setStatus(`Writing ${lastTiles.length} tile 3MFs…`, 99);
-    exportTiles3MFZip(lastTiles, 'map-tiles-3mf.zip');
+    exportTiles3MFZip(lastTiles, 'map-tiles-3mf.zip', currentShape);
     setStatus(`${lastTiles.length} tile 3MFs downloaded (ZIP).`, 100);
     return;
   }

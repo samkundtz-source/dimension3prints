@@ -10,6 +10,18 @@
 
 import * as fflate from 'fflate';
 import { FEATURE_COLORS } from '../geometry/buildMap.js';
+import { tileLabel } from '../geo/tileGrid.js';
+
+// Build a friendly, UNIQUE base name for a tile file ("middle", "1-up", …).
+// Falls back to row/col coords if no shape; de-dupes within a single export so
+// two tiles can never collide and silently overwrite each other in the ZIP.
+function tileFileName(t, shape, used, ext) {
+  let base = shape ? tileLabel(shape, t.cell) : `r${t.cell.b}_c${t.cell.a}`;
+  let name = base, n = 2;
+  while (used.has(name)) name = `${base}-${n++}`;
+  used.add(name);
+  return `tile_${name}.${ext}`;
+}
 
 // ─── Colour buckets (derived from FEATURE_COLORS at export time) ─────────────
 
@@ -106,11 +118,12 @@ export function exportSTL(modelGroup, filename = 'map-model.stl') {
 
 // Per-tile printable export: one STL per tile (each group already at origin =
 // its own printable plate), bundled into a ZIP. tiles = [{ cell:{a,b}, group }].
-export function exportTilesSTLZip(tiles, filename = 'map-tiles.zip') {
+export function exportTilesSTLZip(tiles, filename = 'map-tiles.zip', shape = null) {
   const parts = {};
+  const used  = new Set();
   for (const t of (tiles || [])) {
     const bytes = buildSTLBytes(t.group);
-    if (bytes) parts[`tile_r${t.cell.b}_c${t.cell.a}.stl`] = bytes;
+    if (bytes) parts[tileFileName(t, shape, used, 'stl')] = bytes;
   }
   if (!Object.keys(parts).length) return;
   const zip = fflate.zipSync(parts, { level: 6 });
@@ -345,11 +358,12 @@ export function export3MF(modelGroup, filename = 'map-model.3mf') {
 
 // Per-tile printable export: one .3mf per tile, bundled into an outer ZIP.
 // tiles = [{ cell:{a,b}, group }]; each group is at the origin = its own plate.
-export function exportTiles3MFZip(tiles, filename = 'map-tiles-3mf.zip') {
+export function exportTiles3MFZip(tiles, filename = 'map-tiles-3mf.zip', shape = null) {
   const parts = {};
+  const used  = new Set();
   for (const t of (tiles || [])) {
     const bytes = build3MFBytes(t.group);
-    if (bytes) parts[`tile_r${t.cell.b}_c${t.cell.a}.3mf`] = bytes;
+    if (bytes) parts[tileFileName(t, shape, used, '3mf')] = bytes;
   }
   if (!Object.keys(parts).length) return;
   const outer = fflate.zipSync(parts, { level: 6 });

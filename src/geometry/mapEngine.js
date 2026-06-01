@@ -219,7 +219,13 @@ const MAX_RELIEF_MM = 5;    // tallest terrain bump above the lowest point
 // Box-blur an N×N row-major grid `passes` times → smooths sharp elevation
 // steps so terrain reads as gradual slopes, not printed cliffs.
 function boxBlurGrid(grid, N, passes) {
-  let cur = Array.from(grid, v => (Number.isFinite(v) ? v : 0));
+  // Fill missing/NaN cells with the MEAN of valid cells (not 0) — using 0 made
+  // any data gap collapse to sea level, punching false pits/drops into elevated
+  // terrain. The mean keeps gaps flush with their surroundings.
+  let sum0 = 0, cnt0 = 0;
+  for (let k = 0; k < grid.length; k++) { if (Number.isFinite(grid[k])) { sum0 += grid[k]; cnt0++; } }
+  const fill = cnt0 ? sum0 / cnt0 : 0;
+  let cur = Array.from(grid, v => (Number.isFinite(v) ? v : fill));
   for (let p = 0; p < passes; p++) {
     const next = new Float32Array(N * N);
     for (let j = 0; j < N; j++) {
@@ -240,7 +246,7 @@ function boxBlurGrid(grid, N, passes) {
   return cur;
 }
 
-function makeHeightField(elevGrid, N, vScaleMMperM) {
+function makeHeightField(elevGrid, N, vScaleMMperM, normOverride = null) {
   // Use ROBUST low/high (5th/95th percentile) instead of absolute min/max so a
   // patch of sea (elevation 0) or a single spike doesn't drag the whole land
   // onto a plateau / flatten the relief. This keeps coastal cities thin.
@@ -252,14 +258,22 @@ function makeHeightField(elevGrid, N, vScaleMMperM) {
   // Smooth the elevation grid with a few box-blur passes so real-world steps
   // (cliffs, sudden drops near water/edges) flow into gradual slopes instead of
   // printing as vertical walls. N = grid dim. Operates on a copy.
-  elevGrid = boxBlurGrid(elevGrid, N, 2);
+  elevGrid = boxBlurGrid(elevGrid, N, 4);
 
-  const sorted = Array.from(elevGrid).filter(Number.isFinite).sort((a, b) => a - b);
   let lo, hi;
-  if (sorted.length) {
-    lo = sorted[Math.floor(sorted.length * 0.02)];
-    hi = sorted[Math.floor(sorted.length * 0.98)];
-  } else { lo = 0; hi = 0; }
+  if (normOverride && Number.isFinite(normOverride.lo) && Number.isFinite(normOverride.hi)) {
+    // CONNECTED TILES: every tile shares ONE elevation mapping (the anchor's lo/
+    // hi) so a given real elevation → the same model height in every tile. This
+    // is what makes the surface continuous across seams — no step/drop where two
+    // printed tiles meet.
+    lo = normOverride.lo; hi = normOverride.hi;
+  } else {
+    const sorted = Array.from(elevGrid).filter(Number.isFinite).sort((a, b) => a - b);
+    if (sorted.length) {
+      lo = sorted[Math.floor(sorted.length * 0.02)];
+      hi = sorted[Math.floor(sorted.length * 0.98)];
+    } else { lo = 0; hi = 0; }
+  }
   if (!isFinite(lo) || !isFinite(hi)) { lo = 0; hi = 0; }
   if (hi < lo) hi = lo;
   const span = hi - lo;
@@ -959,7 +973,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
 
   let hf = null;
   if (terrainOptions?.elevGrid && terrainOptions.gridSize) {
-    hf = makeHeightField(terrainOptions.elevGrid, terrainOptions.gridSize, mmPerM);
+    hf = makeHeightField(terrainOptions.elevGrid, terrainOptions.gridSize, mmPerM, terrainOptions.norm || null);
     collectTerrain(whiteAcc, hf, GN, seaRings, SEA_CLAMP_Y);   // clamp terrain under SEA only
     onProgress?.(`New engine: terrain relief ${(hf.hi - hf.lo).toFixed(0)} m`, 68);
   } else {
@@ -988,5 +1002,8 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   return {
     group,
     stats: { buildings: nB, roads: nR, water: nW, engine: 'v2-terrain-fused' },
+    // Elevation mapping used — connected tiles reuse this so their terrain is
+    // continuous across seams (passed back as terrainOptions.norm to siblings).
+    norm: hf ? { lo: hf.lo, hi: hf.hi } : null,
   };
 }

@@ -128,3 +128,32 @@ export function validateSelection(shape, cells) {
   if (seen.size !== set.size) return { ok: false, reason: 'tiles not all connected' };
   return { ok: true };
 }
+
+/**
+ * Human-friendly name for a tile, relative to the MIDDLE (anchor) piece — used
+ * for print/export filenames so they're obvious to assemble. The anchor is
+ * always "middle"; others are described by steps up/down/left/right from it.
+ *   square : {0,0}→"middle", {1,0}→"1-right", {0,1}→"1-up",
+ *            {-1,0}→"1-left", {0,-1}→"1-down", {1,1}→"1-up-1-right",
+ *            {-1,-1}→"1-down-1-left", {2,-1}→"1-down-2-right"
+ *   hexagon: uses the tile's real model offset → "up", "down", "up-right",
+ *            "up-left", "down-right", "down-left" (further rings may repeat;
+ *            the exporter de-duplicates filenames, so that's fine).
+ * b = rows (north +), a = columns (east +).
+ */
+export function tileLabel(shape, cell) {
+  if (cell.a === 0 && cell.b === 0) return 'middle';
+  if (shape === 'hexagon') {
+    const off = cellToModelOffset('hexagon', cell);
+    const ud = off.y > 1 ? 'up' : off.y < -1 ? 'down' : '';
+    const lr = off.x > 1 ? 'right' : off.x < -1 ? 'left' : '';
+    return [ud, lr].filter(Boolean).join('-') || 'middle';
+  }
+  // square grid
+  const parts = [];
+  if (cell.b > 0)      parts.push(`${cell.b}-up`);
+  else if (cell.b < 0) parts.push(`${-cell.b}-down`);
+  if (cell.a > 0)      parts.push(`${cell.a}-right`);
+  else if (cell.a < 0) parts.push(`${-cell.a}-left`);
+  return parts.join('-') || 'middle';
+}
