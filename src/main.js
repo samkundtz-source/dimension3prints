@@ -529,16 +529,24 @@ async function generate() {
       combined.add(group); // anchor at origin
       let tileNum = 1;
       // Rotate the WHOLE grid around the ANCHOR origin (not each tile around its
-      // own centre) so the set turns as one rigid piece. The grid offset is
-      // rotated by rotRad, and the geo fetch uses the SAME rotation (via
-      // cellToGeoCenter's rotRad arg) so preview position and captured area match.
+      // own centre) so the set turns as one rigid piece. Each tile's content is
+      // rotated by the projection (rotRad) and the tile is placed at the rotated
+      // grid offset R(rotRad)·o — that pair IS the rigid rotation. The capture
+      // centre must stay UNROTATED (see below) or the rotation double-applies.
       const cosR = Math.cos(rotRad), sinR = Math.sin(rotRad);
       for (const cell of extraCells) {
         if (thisRunId !== generateId) break; // a newer run started — bail
         tileNum++;
         setStatus(`Connected map: building tile ${tileNum}/${extraCells.length + 1}…`, 60 + Math.round(35 * tileNum / (extraCells.length + 1)));
         try {
-          const geo = cellToGeoCenter(currentShape, cell, lat, lng, radiusMeters, rotRad);
+          // Capture the UNROTATED grid neighbour here (rotRad = 0). The projection
+          // inside buildOneTileGroup ALREADY rotates the tile's content by rotRad,
+          // and we place the tile at the rotated offset R(rotRad)·o below. Passing
+          // rotRad here too DOUBLE-rotated the capture centre, flinging the tile to
+          // a wrong/mirrored spot (seam gaps up to ~292mm at 153°). With 0, the whole
+          // set is a rigid rotation of the connected grid → 0.00mm seams at every
+          // angle (numerically verified at 0/30/90/153°).
+          const geo = cellToGeoCenter(currentShape, cell, lat, lng, radiusMeters, 0);
           const tileGroup = await buildOneTileGroup(geo.lat, geo.lng, radiusMeters, vertExag, rotRad);
           // Tile group is built with rotRad (content rotated) and placed at the
           // rotated grid offset → the whole set reads as one rotated block.
