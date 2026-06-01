@@ -858,12 +858,8 @@ function initControls() {
     updateShapeOverlay();
   });
 
-  // Rotation slider
-  const rotationSlider = el('rotation-slider');
-  rotationSlider.addEventListener('input', () => {
-    el('rotation-value').textContent = `${rotationSlider.value}°`;
-    updateShapeOverlay();
-  });
+  // Rotation control removed from the UI (maps always generate north-up).
+  // #rotation-slider is now a hidden input pinned to 0; no listener needed.
 
   // Vertical scale slider
   const vscaleSlider = el('vscale-slider');

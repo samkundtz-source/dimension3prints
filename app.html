@@ -86,11 +86,10 @@
             </button>
           </div>
 
-          <div class="setting-row" style="margin-top:12px">
-            <span class="setting-name">Rotation</span>
-            <span class="setting-val" id="rotation-value">0°</span>
-          </div>
-          <input type="range" id="rotation-slider" class="slider" min="0" max="359" step="1" value="0" />
+          <!-- Rotation control removed: maps always generate north-up. Hidden
+               input kept at 0 so existing JS references resolve without null checks. -->
+          <input type="hidden" id="rotation-slider" value="0" />
+          <span id="rotation-value" hidden>0°</span>
 
           <div class="setting-row" style="margin-top:12px">
             <span class="setting-name">Elevation Scale</span>
