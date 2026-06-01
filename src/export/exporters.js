@@ -48,6 +48,39 @@ function transformVertex(mat, x, y, z) {
   return [wx, -wz, wy];
 }
 
+// Merge vertices at the same position (quantised to ~1µm) and rebuild the
+// index, dropping degenerate triangles. The terrain & building meshes are
+// authored with INDEPENDENT wall vertices (walls don't share corners with the
+// caps), so every wall↔cap edge reads as two separate open edges → the slicer
+// reports thousands of "non-manifold edges". Welding fuses those coincident
+// corners so each shared edge is used by exactly two faces = a watertight,
+// manifold solid. Operates on already-transformed (export-space) positions.
+function weldMesh(pos, idx) {
+  const Q = 1000;            // snap grid: 0.001 mm (far below print resolution)
+  const map = new Map();     // quantised "x,y,z" → new vertex index
+  const outPos = [];
+  const remap = new Int32Array(pos.length / 3);
+  for (let i = 0; i < pos.length / 3; i++) {
+    const x = pos[i*3], y = pos[i*3+1], z = pos[i*3+2];
+    const key = `${Math.round(x*Q)},${Math.round(y*Q)},${Math.round(z*Q)}`;
+    let ni = map.get(key);
+    if (ni === undefined) { ni = outPos.length / 3; map.set(key, ni); outPos.push(x, y, z); }
+    remap[i] = ni;
+  }
+  const outIdx = [];
+  for (let t = 0; t + 2 < idx.length; t += 3) {
+    const a = remap[idx[t]], b = remap[idx[t+1]], c = remap[idx[t+2]];
+    if (a === b || b === c || a === c) continue;   // collapsed → drop
+    outIdx.push(a, b, c);
+  }
+  return { pos: outPos, idx: outIdx };
+}
+
+// Solid feature meshes that benefit from welding. Roads & water are NOT welded:
+// they're authored as self-shared closed shapes that OVERLAP each other, so
+// welding would fuse separate pieces into non-manifold junctions.
+const WELD_TYPES = new Set(['terrain', 'base', 'building']);
+
 // ─── Binary STL ───────────────────────────────────────────────────────────────
 
 function buildSTLBytes(modelGroup) {
@@ -161,18 +194,24 @@ function build3MFBytes(modelGroup) {
     const mat = obj.matrixWorld.elements;
     const n   = pos.length / 3;
 
+    // Transform this mesh's vertices into export space first.
+    const tpos = new Float64Array(n * 3);
     for (let i = 0; i < n; i++) {
       const [ex, ey, ez] = transformVertex(mat, pos[i*3], pos[i*3+1], pos[i*3+2]);
-      bucketPos[bi].push(ex, ey, ez);
+      tpos[i*3] = ex; tpos[i*3+1] = ey; tpos[i*3+2] = ez;
     }
-    if (idx) {
-      for (let i = 0; i < idx.length; i++) {
-        bucketIdx[bi].push(idx[i] + bucketVBase[bi]);
-      }
-    } else {
-      for (let i = 0; i < n; i++) bucketIdx[bi].push(bucketVBase[bi] + i);
-    }
-    bucketVBase[bi] += n;
+    let lidx;
+    if (idx) { lidx = idx; }
+    else { lidx = new Uint32Array(n); for (let i = 0; i < n; i++) lidx[i] = i; }
+
+    // Weld solid meshes per-mesh (keeps terrain & buildings as separate solids,
+    // each watertight); pass roads/water through unchanged.
+    const m = WELD_TYPES.has(type) ? weldMesh(tpos, lidx) : { pos: tpos, idx: lidx };
+
+    const vb = bucketVBase[bi];
+    for (let i = 0; i < m.pos.length; i++) bucketPos[bi].push(m.pos[i]);
+    for (let i = 0; i < m.idx.length; i++) bucketIdx[bi].push(m.idx[i] + vb);
+    bucketVBase[bi] += m.pos.length / 3;
   });
 
   // ── 2. Build object-1.model (geometry file) ────────────────────────────

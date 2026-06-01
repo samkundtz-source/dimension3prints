@@ -795,6 +795,7 @@ function collectRoads(acc, roads, hf) {
     acc.idx.push(s + 3, s + 2, s + 6,  s + 3, s + 6, s + 7);         // -n side
     acc.idx.push(s, s + 3, s + 7,  s, s + 7, s + 4);                 // end a
     acc.idx.push(s + 1, s + 5, s + 6,  s + 1, s + 6, s + 2);         // end b
+    acc.idx.push(s + 4, s + 6, s + 5,  s + 4, s + 7, s + 6);         // bottom — closes the box (manifold)
   };
 
   // Round joint disc at an interior vertex → fills the wedge gap between two
@@ -803,12 +804,21 @@ function collectRoads(acc, roads, hf) {
     const g = hf ? hf.heightAt(p.x, p.y) : BASE;
     const sides = 10;
     const ring = ngon(p.x, p.y, HW, sides);
-    const cTop = acc.n;
-    acc.pos.push(p.x, g + RISE, -p.y); acc.n++;          // top centre
+    const topY = g + RISE, botY = g - BOT;
+    // Closed cylinder (top fan + bottom fan + side wall) so the joint is a
+    // watertight manifold solid, not an open flat disc.
+    const cTop = acc.n; acc.pos.push(p.x, topY, -p.y); acc.n++;       // top centre
     const topStart = acc.n;
-    for (const q of ring) { acc.pos.push(q.x, g + RISE, -q.y); acc.n++; }
+    for (const q of ring) { acc.pos.push(q.x, topY, -q.y); acc.n++; }
+    const cBot = acc.n; acc.pos.push(p.x, botY, -p.y); acc.n++;       // bottom centre
+    const botStart = acc.n;
+    for (const q of ring) { acc.pos.push(q.x, botY, -q.y); acc.n++; }
     for (let i = 0; i < sides; i++) {
-      acc.idx.push(cTop, topStart + i, topStart + (i + 1) % sides);  // top fan
+      const ni = (i + 1) % sides;
+      acc.idx.push(cTop, topStart + i, topStart + ni);               // top fan
+      acc.idx.push(cBot, botStart + ni, botStart + i);               // bottom fan (reversed)
+      acc.idx.push(topStart + i, botStart + i, botStart + ni,        // side wall
+                   topStart + i, botStart + ni, topStart + ni);
     }
   };
 
@@ -884,16 +894,13 @@ function collectWaterPolys(acc, polys, hf, seaLevelY) {
     for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, botY, -ring[i].y);
     acc.n += nV;
     for (let t = 0; t < tris.length; t += 3) acc.idx.push(b + tris[t + 2], b + tris[t + 1], b + tris[t]);
-    // edge walls (smooth bank along the real polygon)
+    // edge walls — index the EXISTING top (s) and floor (b) ring vertices
+    // instead of pushing duplicates, so the slab is a watertight manifold (each
+    // rim edge shared by a cap + a wall, each vertical edge by two walls). This
+    // is why water needs no welding at export.
     for (let i = 0; i < nV; i++) {
       const ni = (i + 1) % nV;
-      const k = acc.n;
-      acc.pos.push(ring[i].x, topY, -ring[i].y);
-      acc.pos.push(ring[ni].x, topY, -ring[ni].y);
-      acc.pos.push(ring[ni].x, botY, -ring[ni].y);
-      acc.pos.push(ring[i].x, botY, -ring[i].y);
-      acc.n += 4;
-      acc.idx.push(k, k + 1, k + 2,  k, k + 2, k + 3);
+      acc.idx.push(s + i, s + ni, b + ni,  s + i, b + ni, b + i);
     }
     count++;
   }
