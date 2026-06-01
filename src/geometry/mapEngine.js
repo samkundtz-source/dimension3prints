@@ -83,6 +83,38 @@ const CLIP = R - 0.05;
 // fast axis-aligned path below). Set per-build by buildMapModelV2 for hex/circle.
 let BOUNDARY = null;
 
+// ── Screw-mount holes ────────────────────────────────────────────────────────
+// Blind M3 pockets drilled UP from the base underside near each corner so a
+// finished tile can be screwed down to a backing board. Filled per-build by
+// buildMapModelV2; the terrain floor opens around each hole and a capped
+// cylinder rises into the base. Depth is auto-limited to the local material
+// thickness so the pocket NEVER breaks through the top surface.
+let SCREW_HOLES = [];            // [{x,y}] model-mm centres for the current build
+const SCREW_HOLE_R      = 1.35;  // pocket radius (≈2.7 mm Ø — M3 self-tap pilot)
+const SCREW_HOLE_FACETS = 20;    // cylinder smoothness
+const SCREW_HOLE_INSET  = 8;     // distance in from the corner/edge (mm)
+const SCREW_HOLE_DEPTH  = 4.0;   // target depth (mm); clamped to fit the material
+const SCREW_HOLE_CLEAR  = 0.8;   // material kept above the pocket (no poke-through)
+
+// Corner-ish hole centres for the current board shape (model mm):
+//   square → 4 (near each corner)   hexagon → 6 (near each vertex)   circle → 4
+function screwHoleCenters(shape) {
+  const inset = SCREW_HOLE_INSET;
+  if (shape === 'hexagon') {
+    const f = (R - inset) / R;                          // pull each vertex inward
+    return getShapeVertices(R, 'hexagon', 0).map(v => ({ x: v.x * f, y: v.y * f }));
+  }
+  if (shape === 'circle') {
+    const rr = R - inset;
+    return [45, 135, 225, 315].map(d => {
+      const a = d * Math.PI / 180;
+      return { x: Math.cos(a) * rr, y: Math.sin(a) * rr };
+    });
+  }
+  const c = R - inset;                                  // square
+  return [ { x: c, y: c }, { x: -c, y: c }, { x: -c, y: -c }, { x: c, y: -c } ];
+}
+
 // Clip a polygon to the active board shape. Square → fast axis path; otherwise
 // the generic convex clipper against BOUNDARY.
 function clipPolyToSquare(poly) {
@@ -374,6 +406,52 @@ function buildWaterMask(GN, waterPolys, landMask) {
 // clamp boundary matches the water exactly. Clamp = min(h, clampY): natural
 // low seabed is kept, only humps are lowered. When seaRings is empty (inland
 // cities), the terrain is completely untouched.
+// Build the flat base floor at Y=0 as a polygon-WITH-HOLES (earcut) and raise a
+// capped cylinder ("blind pocket") into the solid at each hole. The pocket's
+// bottom ring IS the floor's opening ring (shared vertices), so the result is a
+// clean watertight manifold. `perim` = ordered boundary points {x,y} (CCW);
+// `holes` = [{x,y,depth}]. Floor faces down (−Y), matching the rest of the base.
+function collectFloorWithHoles(acc, perim, holes) {
+  const K = SCREW_HOLE_FACETS, r = SCREW_HOLE_R;
+  const floorStart = acc.n;
+  const flat = [];
+  for (const p of perim) { acc.pos.push(p.x, 0, -p.y); acc.n++; flat.push(p.x, p.y); }
+  const holeIdx = [];
+  const rings = [];
+  for (const h of (holes || [])) {
+    holeIdx.push(flat.length / 2);
+    const ring = [];
+    for (let k = 0; k < K; k++) {
+      const a = -(k / K) * Math.PI * 2;                 // CW ring (opposite the CCW outline)
+      const x = h.x + Math.cos(a) * r, y = h.y + Math.sin(a) * r;
+      ring.push({ x, y, idx: acc.n });
+      acc.pos.push(x, 0, -y); acc.n++; flat.push(x, y);
+    }
+    rings.push(ring);
+  }
+  const tris = earcut(flat, holeIdx, 2);
+  for (let t = 0; t < tris.length; t += 3) {            // reversed → down-facing floor
+    acc.idx.push(floorStart + tris[t + 2], floorStart + tris[t + 1], floorStart + tris[t]);
+  }
+  // Pockets: cylinder wall (bottom ring shared with the floor opening) + a
+  // down-facing top cap that ceilings the blind hole.
+  for (let hi = 0; hi < (holes || []).length; hi++) {
+    const h = holes[hi], ring = rings[hi];
+    const tStart = acc.n;
+    for (const p of ring) { acc.pos.push(p.x, h.depth, -p.y); acc.n++; }
+    for (let k = 0; k < K; k++) {
+      const nk = (k + 1) % K;
+      const b0 = ring[k].idx, b1 = ring[nk].idx, t0 = tStart + k, t1 = tStart + nk;
+      acc.idx.push(b0, t0, t1,  b0, t1, b1);            // pocket wall
+    }
+    const capC = acc.n; acc.pos.push(h.x, h.depth, -h.y); acc.n++;
+    for (let k = 0; k < K; k++) {
+      const nk = (k + 1) % K;
+      acc.idx.push(capC, tStart + k, tStart + nk);      // top cap (blind-hole ceiling)
+    }
+  }
+}
+
 function collectTerrain(acc, hf, GN, seaRings, clampY) {
   // Hex/circle board: build a SHAPED terrain (clipped top + shaped floor +
   // boundary walls). Square keeps the fast original path below.
@@ -403,32 +481,29 @@ function collectTerrain(acc, hf, GN, seaRings, clampY) {
     }
   }
 
-  // Floor: a THIN slab — sits just below the terrain low point, NOT at y=0.
-  // Terrain low point is at BASE (1.5mm); floor at 0 → only ~1.5mm of solid
-  // base under the lowest terrain, instead of a tens-of-mm block. This is the
-  // filament-saving fix: base thickness is now constant regardless of how high
-  // the city's elevation reads.
-  const FLOOR_Y = 0;   // base-plate bottom (terrain low point is at BASE above it)
-  const floorIdx = [];
-  for (let j = 0; j <= GN; j++) {
-    for (let i = 0; i <= GN; i++) {
-      const x = xy(i), y = xy(j);
-      floorIdx.push(acc.n);
-      acc.pos.push(x, FLOOR_Y, -y);
-      acc.n++;
-    }
-  }
-  const fat = (i, j) => floorIdx[j * (GN + 1) + i];
-  for (let j = 0; j < GN; j++) {
-    for (let i = 0; i < GN; i++) {
-      const a = fat(i, j), b = fat(i + 1, j), c = fat(i + 1, j + 1), d = fat(i, j + 1);
-      acc.idx.push(a, b, c,  a, c, d);
-    }
-  }
+  // Floor at Y=0 with screw-hole pockets. Built as a polygon-WITH-HOLES (earcut)
+  // using the GRID EDGE points as the perimeter, so the perimeter walls below
+  // line up with it after vertex welding at export. (A thin base — terrain low
+  // point sits at BASE above this floor.)
+  const perim = [];
+  for (let i = 0;      i <= GN; i++) perim.push({ x: xy(i),  y: xy(0)  }); // south (y=-R)
+  for (let j = 1;      j <= GN; j++) perim.push({ x: xy(GN), y: xy(j)  }); // east  (x=+R)
+  for (let i = GN - 1; i >= 0;  i--) perim.push({ x: xy(i),  y: xy(GN) }); // north (y=+R)
+  for (let j = GN - 1; j >= 1;  j--) perim.push({ x: xy(0),  y: xy(j)  }); // west  (x=-R)
+  const holes = SCREW_HOLES.map(c => {
+    let surf = hf.heightAt(c.x, c.y);
+    if (hasSea && surf > clampY && pointInPolys(c.x, c.y, seaRings)) surf = clampY;
+    return { x: c.x, y: c.y, depth: Math.min(SCREW_HOLE_DEPTH, Math.max(0.6, surf - SCREW_HOLE_CLEAR)) };
+  });
+  collectFloorWithHoles(acc, perim, holes);
 
-  // Perimeter walls: connect top edge ring to floor edge ring
+  // Perimeter walls: top grid edge → floor. Each wall pushes its OWN Y=0 verts
+  // (welded to the floor perimeter at export) so the floor stays a clean
+  // earcut-with-holes rather than a grid.
   const wall = (i0, j0, i1, j1) => {
-    const t0 = at(i0, j0), t1 = at(i1, j1), b0 = fat(i0, j0), b1 = fat(i1, j1);
+    const t0 = at(i0, j0), t1 = at(i1, j1);
+    const b0 = acc.n; acc.pos.push(xy(i0), 0, -xy(j0)); acc.n++;
+    const b1 = acc.n; acc.pos.push(xy(i1), 0, -xy(j1)); acc.n++;
     acc.idx.push(t0, b0, t1,  t1, b0, b1);
   };
   for (let i = 0; i < GN; i++) wall(i + 1, 0, i, 0);      // south edge (y=-R)
@@ -462,13 +537,12 @@ function collectTerrainShaped(acc, hf, GN, seaRings, clampY, boundary) {
     }
   }
 
-  // ── Floor (boundary at y=0) ──
-  const bflat = [];
-  for (const p of boundary) bflat.push(p.x, p.y);
-  const btris = earcut(bflat, [], 2);
-  const fs = acc.n;
-  for (const p of boundary) { acc.pos.push(p.x, 0, -p.y); acc.n++; }
-  for (let t = 0; t < btris.length; t += 3) acc.idx.push(fs + btris[t + 2], fs + btris[t + 1], fs + btris[t]);
+  // ── Floor (boundary at y=0) with screw-hole pockets ──
+  const holes = SCREW_HOLES.map(c => ({
+    x: c.x, y: c.y,
+    depth: Math.min(SCREW_HOLE_DEPTH, Math.max(0.6, hAt(c.x, c.y) - SCREW_HOLE_CLEAR)),
+  }));
+  collectFloorWithHoles(acc, boundary, holes);
 
   // ── Walls along each boundary edge (floor → terrain height) ──
   const n = boundary.length;
@@ -928,6 +1002,10 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   } else {
     BOUNDARY = null;
   }
+
+  // Screw-mount hole centres for this board shape — the terrain floor builders
+  // open the base around each and rise a blind pocket into it.
+  SCREW_HOLES = screwHoleCenters(shape);
 
   const whiteAcc = new Acc();  // terrain + base + buildings
   const blackAcc = new Acc();  // roads + water
