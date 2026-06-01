@@ -645,7 +645,7 @@ function showRegionPicker() {
 
     modal.innerHTML = `
       <h3 style="color:#e8e8e8;font-size:16px;margin-bottom:4px">Where are we shipping?</h3>
-      <p style="color:#777;font-size:12px;margin-bottom:20px">Select your region for accurate shipping rates</p>
+      <p id="region-subtitle" style="color:#777;font-size:12px;margin-bottom:20px">Select your region for accurate shipping rates</p>
       <div id="region-options" style="display:flex;flex-direction:column;gap:8px"></div>
       <button id="region-cancel" style="width:100%;margin-top:12px;background:transparent;border:1px solid #2a2a2a;border-radius:8px;color:#777;padding:10px;font-family:inherit;font-size:13px;cursor:pointer">Cancel</button>
     `;
@@ -653,11 +653,22 @@ function showRegionPicker() {
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
 
+    // Shipping prices mirror the worker's AUTHORITATIVE rates: each region's
+    // base + $6 per EXTRA connected tile (bigger model → bigger box). Without
+    // this, the picker always showed the single-tile price even for a 3×3.
+    const tiles     = isTileable(currentShape) ? selectedTiles.length : 1;
+    const surcharge = 6 * (tiles - 1); // dollars, matches worker shipSurchargeCents/100
+    const fmt = (base) => `$${base + surcharge}`;
     const options = [
-      { region: 'US', label: 'United States', price: 'from $8' },
-      { region: 'CA', label: 'Canada', price: '$18' },
-      { region: 'INTL', label: 'International', price: '$30' },
+      { region: 'US',   label: 'United States', price: `from ${fmt(8)}` },
+      { region: 'CA',   label: 'Canada',        price: fmt(18) },
+      { region: 'INTL', label: 'International',  price: fmt(30) },
     ];
+    // Explain the higher price when the order is a connected multi-tile map.
+    if (surcharge > 0) {
+      const sub = modal.querySelector('#region-subtitle');
+      if (sub) sub.textContent = `${tiles} connected tiles · +$${surcharge} shipping (larger box)`;
+    }
 
     const container = modal.querySelector('#region-options');
     for (const opt of options) {
