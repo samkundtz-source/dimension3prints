@@ -846,76 +846,81 @@ function collectRoads(acc, roads, hf) {
   const RISE = 1.0;      // height of road top above terrain (mm)
   const BOT = 0.3;       // how far the slab sinks into the terrain
 
-  // One solid slab segment between a→b (already clipped, finite).
-  const slab = (a, b) => {
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const len = Math.hypot(dx, dy);
-    if (len < 1e-4) return;
-    const nx = -dy / len * HW, ny = dx / len * HW;
-    const ga = hf ? hf.heightAt(a.x, a.y) : BASE;
-    const gb = hf ? hf.heightAt(b.x, b.y) : BASE;
-    const s = acc.n;
-    acc.pos.push(a.x + nx, ga + RISE, -(a.y + ny));
-    acc.pos.push(b.x + nx, gb + RISE, -(b.y + ny));
-    acc.pos.push(b.x - nx, gb + RISE, -(b.y - ny));
-    acc.pos.push(a.x - nx, ga + RISE, -(a.y - ny));
-    acc.pos.push(a.x + nx, ga - BOT, -(a.y + ny));
-    acc.pos.push(b.x + nx, gb - BOT, -(b.y + ny));
-    acc.pos.push(b.x - nx, gb - BOT, -(b.y - ny));
-    acc.pos.push(a.x - nx, ga - BOT, -(a.y - ny));
-    acc.n += 8;
-    acc.idx.push(s, s + 1, s + 2,  s, s + 2, s + 3);                 // top
-    acc.idx.push(s, s + 4, s + 5,  s, s + 5, s + 1);                 // +n side
-    acc.idx.push(s + 3, s + 2, s + 6,  s + 3, s + 6, s + 7);         // -n side
-    acc.idx.push(s, s + 3, s + 7,  s, s + 7, s + 4);                 // end a
-    acc.idx.push(s + 1, s + 5, s + 6,  s + 1, s + 6, s + 2);         // end b
-    acc.idx.push(s + 4, s + 6, s + 5,  s + 4, s + 7, s + 6);         // bottom — closes the box (manifold)
-  };
-
-  // Round joint disc at an interior vertex → fills the wedge gap between two
-  // segments so the road reads as ONE continuous ribbon, not bent boxes.
-  const joint = (p) => {
-    const g = hf ? hf.heightAt(p.x, p.y) : BASE;
-    const sides = 10;
-    const ring = ngon(p.x, p.y, HW, sides);
-    const topY = g + RISE, botY = g - BOT;
-    // Closed cylinder (top fan + bottom fan + side wall) so the joint is a
-    // watertight manifold solid, not an open flat disc.
-    const cTop = acc.n; acc.pos.push(p.x, topY, -p.y); acc.n++;       // top centre
-    const topStart = acc.n;
-    for (const q of ring) { acc.pos.push(q.x, topY, -q.y); acc.n++; }
-    const cBot = acc.n; acc.pos.push(p.x, botY, -p.y); acc.n++;       // bottom centre
-    const botStart = acc.n;
-    for (const q of ring) { acc.pos.push(q.x, botY, -q.y); acc.n++; }
-    for (let i = 0; i < sides; i++) {
-      const ni = (i + 1) % sides;
-      acc.idx.push(cTop, topStart + i, topStart + ni);               // top fan
-      acc.idx.push(cBot, botStart + ni, botStart + i);               // bottom fan (reversed)
-      acc.idx.push(topStart + i, botStart + i, botStart + ni,        // side wall
-                   topStart + i, botStart + ni, topStart + ni);
+  // Render each road as ONE continuous extruded ribbon following the whole
+  // polyline (mitred corners), instead of overlapping per-segment boxes + joint
+  // discs. Result: a single SMOOTH strip per road, and a closed manifold tube
+  // (top + bottom + both side walls + end caps) so the slicer reports no
+  // non-manifold edges. Miter is clamped so corners stay tidy and never spill
+  // past the board edge.
+  const ribbon = (P) => {
+    const pl = [P[0]];                                   // drop repeated points
+    for (let i = 1; i < P.length; i++) {
+      const q = pl[pl.length - 1];
+      if (Math.hypot(P[i].x - q.x, P[i].y - q.y) > 1e-4) pl.push(P[i]);
     }
+    const m = pl.length;
+    if (m < 2) return false;
+    const segN = [];                                     // left unit normal per segment
+    for (let i = 0; i < m - 1; i++) {
+      const dx = pl[i + 1].x - pl[i].x, dy = pl[i + 1].y - pl[i].y;
+      const L = Math.hypot(dx, dy) || 1;
+      segN.push({ x: -dy / L, y: dx / L });
+    }
+    const base = acc.n;
+    for (let i = 0; i < m; i++) {
+      let nx, ny;
+      if (i === 0)          { nx = segN[0].x;     ny = segN[0].y; }
+      else if (i === m - 1) { nx = segN[m - 2].x; ny = segN[m - 2].y; }
+      else {
+        let mx = segN[i - 1].x + segN[i].x, my = segN[i - 1].y + segN[i].y;
+        const ml = Math.hypot(mx, my) || 1; mx /= ml; my /= ml;
+        const cos = mx * segN[i].x + my * segN[i].y;     // cos(½ turn)
+        const scale = Math.min(1.5, cos > 0.01 ? 1 / cos : 1.5); // clamp → no overhang
+        nx = mx * scale; ny = my * scale;
+      }
+      const g  = hf ? hf.heightAt(pl[i].x, pl[i].y) : BASE;
+      const lx = pl[i].x + nx * HW, ly = pl[i].y + ny * HW;
+      const rx = pl[i].x - nx * HW, ry = pl[i].y - ny * HW;
+      acc.pos.push(lx, g + RISE, -ly);   // 0 L-top
+      acc.pos.push(rx, g + RISE, -ry);   // 1 R-top
+      acc.pos.push(rx, g - BOT,  -ry);   // 2 R-bot
+      acc.pos.push(lx, g - BOT,  -ly);   // 3 L-bot
+      acc.n += 4;
+    }
+    const V = (i, k) => base + i * 4 + k;
+    for (let i = 0; i < m - 1; i++) {
+      acc.idx.push(V(i,0), V(i,1), V(i+1,1),  V(i,0), V(i+1,1), V(i+1,0)); // top
+      acc.idx.push(V(i,3), V(i+1,2), V(i,2),  V(i,3), V(i+1,3), V(i+1,2)); // bottom
+      acc.idx.push(V(i,0), V(i+1,0), V(i+1,3), V(i,0), V(i+1,3), V(i,3));  // left wall
+      acc.idx.push(V(i,1), V(i,2), V(i+1,2),  V(i,1), V(i+1,2), V(i+1,1)); // right wall
+    }
+    acc.idx.push(V(0,0), V(0,3), V(0,2),       V(0,0), V(0,2), V(0,1));         // start cap
+    acc.idx.push(V(m-1,0), V(m-1,1), V(m-1,2), V(m-1,0), V(m-1,2), V(m-1,3));   // end cap
+    return true;
   };
 
   let count = 0;
   for (const road of (roads || [])) {
     const pts = road.points;
     if (!pts || pts.length < 2) continue;
-    let any = false;
-    let prevB = null;   // end of previous in-bounds segment (for joint placement)
+    // Clip to the board and chain consecutive in-bounds segments into
+    // continuous polylines, then ribbon each.
+    let cur = [];
+    let drew = false;
+    const flush = () => { if (cur.length >= 2 && ribbon(cur)) drew = true; cur = []; };
     for (let i = 0; i < pts.length - 1; i++) {
-      const seg = clipSegmentToSquare(pts[i], pts[i + 1], HW + 0.2);  // keep slab edges inside
-      if (!seg) { prevB = null; continue; }
+      const seg = clipSegmentToSquare(pts[i], pts[i + 1], HW + 0.2);
+      if (!seg) { flush(); continue; }
       const [a, b] = seg;
-      // Joint disc where this segment continues from the previous one — but
-      // ONLY if the vertex is comfortably inside the border, else the full-
-      // radius disc spills past the edge (the overhang bug).
-      const inB = Math.abs(a.x) < CLIP - HW && Math.abs(a.y) < CLIP - HW;
-      if (prevB && inB && Math.hypot(prevB.x - a.x, prevB.y - a.y) < 0.05) joint(a);
-      slab(a, b);
-      prevB = b;
-      any = true;
+      if (cur.length === 0) { cur.push(a, b); }
+      else {
+        const last = cur[cur.length - 1];
+        if (Math.hypot(last.x - a.x, last.y - a.y) < 0.05) cur.push(b);
+        else { flush(); cur.push(a, b); }
+      }
     }
-    if (any) count++;
+    flush();
+    if (drew) count++;
   }
   return count;
 }
