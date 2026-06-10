@@ -171,6 +171,10 @@
         <span class="info-label">Order Number</span>
         <span class="info-value" id="order-id-val" style="font-size:14px;letter-spacing:0.04em;font-family:'SF Mono','Consolas',monospace">—</span>
       </div>
+      <div class="info-row" id="order-tiles-row" style="display:none">
+        <span class="info-label">Tiles</span>
+        <span class="info-value" id="order-tiles-val">—</span>
+      </div>
       <div class="info-row">
         <span class="info-label">Status</span>
         <span class="info-value">Processing</span>
@@ -199,41 +203,6 @@
       </a>
     </div>
   </div>
-  <script>
-    (async () => {
-      const params = new URLSearchParams(window.location.search);
-      const sessionId = params.get('session_id');
-      if (!sessionId) return;
-      try {
-        const resp = await fetch('/api/order-info', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ sessionId }),
-        });
-        const data = await resp.json();
-        if (data.orderId) {
-          document.getElementById('order-id-val').textContent = data.orderId;
-          document.getElementById('order-id-row').style.display = '';
-        }
-        if (data.lat && data.lng) {
-          const p = new URLSearchParams({
-            lat:               data.lat,
-            lng:               data.lng,
-            radius:            data.radius            ?? 1,
-            scale:             data.verticalScale      ?? 3,
-            rotation:          data.rotation           ?? 0,
-            shape:             data.shape              || 'hexagon',
-            terrainRelief:     data.terrainRelief      ?? false,
-            detailedBuildings: data.detailedBuildings  ?? false,
-            roadElevation:     data.roadElevation      ?? false,
-          });
-          if (data.orderId) p.set('orderId', data.orderId);
-          const btn = document.getElementById('view-generator-btn');
-          btn.href = '/app.html?' + p.toString();
-          btn.style.display = '';
-        }
-      } catch {}
-    })();
-  </script>
+  <script type="module" src="/src/success.js"></script>
 </body>
 </html>

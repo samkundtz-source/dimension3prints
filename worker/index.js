@@ -60,6 +60,42 @@ function securityHeaders() {
   };
 }
 
+// ── Page security headers ────────────────────────────────────────────────────
+// One canonical CSP for every HTML page (the union of what the pages need:
+// Leaflet tiles + marker icons, Google Fonts, Overpass mirrors fetched directly
+// from the browser, Terrarium elevation tiles). No inline scripts are allowed —
+// all page JS is bundled by Vite — which is the main XSS hardening line.
+const PAGE_CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src https://fonts.gstatic.com",
+  // https: kept broad for images ONLY — the admin gallery accepts arbitrary
+  // https image URLs; script/connect/style stay tightly pinned.
+  "img-src 'self' data: blob: https:",
+  "connect-src 'self' https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.kumi.systems https://overpass.openstreetmap.fr https://overpass.openstreetmap.ru https://overpass.private.coffee https://maps.mail.ru https://s3.amazonaws.com https://tile.nextzen.org",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
+// Wrap static-asset responses with security headers. HTML additionally gets the
+// CSP; everything gets nosniff/HSTS/etc. Cheap (headers only), applies site-wide.
+async function serveAsset(request, env) {
+  const resp = await env.ASSETS.fetch(request);
+  const headers = new Headers(resp.headers);
+  headers.set('X-Content-Type-Options', 'nosniff');
+  headers.set('X-Frame-Options', 'DENY');
+  headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+  headers.set('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  headers.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=(), usb=()');
+  if ((headers.get('Content-Type') || '').includes('text/html')) {
+    headers.set('Content-Security-Policy', PAGE_CSP);
+  }
+  return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers });
+}
+
 function jsonResponse(body, status = 200, extra = {}) {
   return new Response(JSON.stringify(body), {
     status,
@@ -92,6 +128,9 @@ function validateCheckoutBody(body) {
 
   if (shape !== undefined && !VALID_SHAPES.has(shape)) return 'shape must be hexagon, square, or circle';
   if (region !== undefined && !VALID_REGIONS.has(region)) return 'region must be US, CA, or INTL';
+
+  if (body.tileCount !== undefined && (!isFiniteNum(body.tileCount) || body.tileCount < 1 || body.tileCount > 9))
+    return 'tileCount must be 1–9';
 
   return null;
 }
@@ -224,9 +263,11 @@ async function getSettings(env) {
 }
 
 const DEFAULT_GALLERY = Array.from({ length: 6 }, () => ({ url: '', caption: '' }));
+// Defaults MIRROR the hardcoded landing hero, so applying the default content
+// from /api/content is a visual no-op until the admin actually customises it.
 const DEFAULT_CONTENT = {
-  heroHeadline: 'Your City,<br/><em>in 3D.</em>',
-  heroSub: 'Pick any place on Earth. We generate a real 3D model with actual buildings, roads, and terrain — then print and ship it to you.',
+  heroHeadline: 'Cities<br/>in 3D.',
+  heroSub: 'Pick any place on Earth. We turn it into a 3D-printed model — buildings, roads, parks, terrain. Yours, delivered.',
   gallery: DEFAULT_GALLERY,
 };
 
@@ -337,7 +378,10 @@ async function handleCreateCheckout(request, env) {
     },
   }));
 
-  const origin  = request.headers.get('origin') || new URL(request.url).origin;
+  // Success/cancel URLs are derived from the REQUEST URL, never from the
+  // Origin header — a forged Origin could otherwise point the post-payment
+  // redirect at an attacker-controlled site.
+  const origin  = new URL(request.url).origin;
   const payload = {
     payment_method_types: ['card'],
     mode:                 'payment',
@@ -425,6 +469,7 @@ async function handleOrderInfo(request, env) {
     detailedBuildings: m.detailedBuildings === 'true',
     roadElevation:     m.roadElevation     === 'true',
     shape:             VALID_SHAPES.has(m.shape) ? m.shape : 'hexagon',
+    tileCount:         Math.min(9, Math.max(1, parseInt(m.tileCount, 10) || 1)),
   });
 }
 
@@ -765,7 +810,7 @@ function buildOverpassQuery(south, west, north, east) {
   way["building"](${bb});
   way["building:part"](${bb});
   relation["building"](${bb});
-  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street)$"](${bb});
+  way["highway"~"^(motorway|motorway_link|trunk|trunk_link|primary|primary_link|secondary|secondary_link|tertiary|tertiary_link|unclassified|residential|living_street|service|pedestrian|footway|cycleway|path|steps)$"](${bb});
   way["natural"~"^(water|wetland)$"](${bb});
   way["water"](${bb});
   way["waterway"="riverbank"](${bb});
@@ -916,7 +961,7 @@ async function handleAdminVerify(request, env) {
 
   let body;
   try { body = await request.json(); } catch { return jsonResponse({ error: 'Bad request' }, 400); }
-  if (typeof body.password !== 'string') return jsonResponse({ error: 'Bad request' }, 400);
+  if (typeof body.password !== 'string' || body.password.length > 512) return jsonResponse({ error: 'Bad request' }, 400);
 
   if (timingSafeEqual(body.password, env.ADMIN_PASSWORD)) {
     await clearRateLimit(env, ip);
@@ -998,6 +1043,7 @@ async function handleAdminOrders(request, env) {
         roadElevation:     s.metadata?.roadElevation     === 'true',
         shape:             VALID_SHAPES.has(s.metadata?.shape) ? s.metadata.shape : 'hexagon',
         rotation:          parseFloat(s.metadata?.rotation)      || 0,
+        tileCount:         Math.min(9, Math.max(1, parseInt(s.metadata?.tileCount, 10) || 1)),
       },
     }));
 
@@ -1172,6 +1218,6 @@ export default {
       case '/api/admin-blocked-ips':     return handleAdminBlockedIPs(request, env);
     }
 
-    return env.ASSETS.fetch(request);
+    return serveAsset(request, env);
   },
 };

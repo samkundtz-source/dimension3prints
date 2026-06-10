@@ -643,16 +643,16 @@ function showRegionPicker() {
   return new Promise((resolve) => {
     // Create modal overlay
     const overlay = document.createElement('div');
-    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(4px)';
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.78);z-index:9999;display:flex;align-items:center;justify-content:center;backdrop-filter:saturate(180%) blur(12px);-webkit-backdrop-filter:saturate(180%) blur(12px)';
 
     const modal = document.createElement('div');
-    modal.style.cssText = 'background:#111;border:1px solid #2a2a2a;border-radius:14px;padding:28px;max-width:360px;width:90%;font-family:Inter,system-ui,sans-serif';
+    modal.style.cssText = 'background:#0A0A0A;border:1px solid rgba(255,255,255,0.12);border-radius:18px;padding:28px;max-width:380px;width:90%;font-family:inherit';
 
     modal.innerHTML = `
-      <h3 style="color:#e8e8e8;font-size:16px;margin-bottom:4px">Where are we shipping?</h3>
-      <p id="region-subtitle" style="color:#777;font-size:12px;margin-bottom:20px">Select your region for accurate shipping rates</p>
+      <h3 style="color:#fff;font-size:17px;font-weight:600;letter-spacing:-0.015em;margin-bottom:4px">Where are we shipping?</h3>
+      <p id="region-subtitle" style="color:rgba(255,255,255,0.5);font-size:12.5px;margin-bottom:20px">Select your region for accurate shipping rates</p>
       <div id="region-options" style="display:flex;flex-direction:column;gap:8px"></div>
-      <button id="region-cancel" style="width:100%;margin-top:12px;background:transparent;border:1px solid #2a2a2a;border-radius:8px;color:#777;padding:10px;font-family:inherit;font-size:13px;cursor:pointer">Cancel</button>
+      <button id="region-cancel" style="width:100%;margin-top:12px;background:transparent;border:1px solid rgba(255,255,255,0.12);border-radius:999px;color:rgba(255,255,255,0.55);padding:10px;font-family:inherit;font-size:13px;cursor:pointer">Cancel</button>
     `;
 
     overlay.appendChild(modal);
@@ -678,10 +678,10 @@ function showRegionPicker() {
     const container = modal.querySelector('#region-options');
     for (const opt of options) {
       const btn = document.createElement('button');
-      btn.style.cssText = 'display:flex;justify-content:space-between;align-items:center;background:#1a1a1a;border:1px solid #2a2a2a;border-radius:10px;color:#e8e8e8;padding:14px 16px;font-family:inherit;font-size:14px;cursor:pointer;transition:all 0.15s';
-      btn.innerHTML = `<span style="font-weight:600">${opt.label}</span><span style="color:#777;font-size:13px">${opt.price}</span>`;
-      btn.addEventListener('mouseenter', () => { btn.style.borderColor = '#555'; btn.style.background = '#222'; });
-      btn.addEventListener('mouseleave', () => { btn.style.borderColor = '#2a2a2a'; btn.style.background = '#1a1a1a'; });
+      btn.style.cssText = 'display:flex;justify-content:space-between;align-items:center;background:#111;border:1px solid rgba(255,255,255,0.10);border-radius:12px;color:#fff;padding:14px 16px;font-family:inherit;font-size:14px;cursor:pointer;transition:all 0.15s';
+      btn.innerHTML = `<span style="font-weight:500;letter-spacing:-0.01em">${opt.label}</span><span style="color:rgba(255,255,255,0.5);font-size:13px;font-variant-numeric:tabular-nums">${opt.price}</span>`;
+      btn.addEventListener('mouseenter', () => { btn.style.borderColor = 'rgba(255,255,255,0.32)'; btn.style.background = '#161616'; });
+      btn.addEventListener('mouseleave', () => { btn.style.borderColor = 'rgba(255,255,255,0.10)'; btn.style.background = '#111'; });
       btn.addEventListener('click', () => {
         document.body.removeChild(overlay);
         resolve(opt.region);

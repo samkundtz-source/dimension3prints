@@ -841,8 +841,23 @@ function collectBuildings(acc, buildings, hf, vExag) {
 // 2 sides) sitting ON the terrain — not a paper-thin double-sided quad — so it
 // reads clearly and never culls. RISE is well above the building foot-sink so
 // roads always sit on top of the surface.
+// Half-width (mm) by OSM highway class — gives the printed map a real road
+// HIERARCHY: motorways read as broad arteries, residential streets as fine
+// lines, footpaths as hairlines. Every full width stays ≥0.6mm (one 0.4mm
+// nozzle pass + margin) so everything still prints. Unknown classes get the
+// residential width.
+const ROAD_HALF_W = {
+  motorway: 1.30, motorway_link: 0.90,
+  trunk:    1.15, trunk_link:    0.80,
+  primary:  1.00, primary_link:  0.70,
+  secondary:0.85, secondary_link:0.65,
+  tertiary: 0.70, tertiary_link: 0.55,
+  unclassified: 0.55, residential: 0.55, living_street: 0.50, road: 0.55,
+  service: 0.40, pedestrian: 0.45,
+  footway: 0.30, path: 0.30, cycleway: 0.30, steps: 0.30, track: 0.35, bridleway: 0.30,
+};
+
 function collectRoads(acc, roads, hf) {
-  const HW = 0.8;        // half-width (mm)
   const RISE = 1.0;      // height of road top above terrain (mm)
   const BOT = 0.3;       // how far the slab sinks into the terrain
 
@@ -852,7 +867,7 @@ function collectRoads(acc, roads, hf) {
   // (top + bottom + both side walls + end caps) so the slicer reports no
   // non-manifold edges. Miter is clamped so corners stay tidy and never spill
   // past the board edge.
-  const ribbon = (P) => {
+  const ribbon = (P, HW) => {
     const pl = [P[0]];                                   // drop repeated points
     for (let i = 1; i < P.length; i++) {
       const q = pl[pl.length - 1];
@@ -903,11 +918,12 @@ function collectRoads(acc, roads, hf) {
   for (const road of (roads || [])) {
     const pts = road.points;
     if (!pts || pts.length < 2) continue;
+    const HW = ROAD_HALF_W[road.tags?.highway] ?? 0.55;  // class width
     // Clip to the board and chain consecutive in-bounds segments into
     // continuous polylines, then ribbon each.
     let cur = [];
     let drew = false;
-    const flush = () => { if (cur.length >= 2 && ribbon(cur)) drew = true; cur = []; };
+    const flush = () => { if (cur.length >= 2 && ribbon(cur, HW)) drew = true; cur = []; };
     for (let i = 0; i < pts.length - 1; i++) {
       const seg = clipSegmentToSquare(pts[i], pts[i + 1], HW + 0.2);
       if (!seg) { flush(); continue; }
@@ -986,6 +1002,63 @@ function collectWaterPolys(acc, polys, hf, seaLevelY) {
   return count;
 }
 
+// ─── Parks & green areas — thin raised plates in the detail colour ──────────
+// Each park/green polygon prints as a subtly raised plateau (same filament as
+// roads/water), so green space reads on the model the way it does on a map.
+// Slab topology = top cap + floor cap + walls indexing the SAME ring vertices,
+// so every plate is a closed manifold as-built (parks overlap the terrain like
+// roads do; the slicer unions overlapping solids).
+function collectParkPolys(acc, parks, hf) {
+  const PLATE_AREA = (2 * R) * (2 * R);
+  let count = 0;
+  for (const pk of (parks || [])) {
+    let poly = pk.polygon;
+    if (!poly || poly.length < 3) continue;
+    poly = clipPolyToSquare(poly);
+    if (!poly || poly.length < 3) continue;
+    const area = Math.abs(polyArea(poly));
+    if (area < 6) continue;                    // smaller than ~2.5mm square — won't print
+    if (area > PLATE_AREA * 0.92) continue;    // blanket landuse, not a park
+    const ring = ensureCCW(poly);
+    const nV = ring.length;
+    const flat = [];
+    for (const p of ring) flat.push(p.x, p.y);
+    let tris;
+    try { tris = earcut(flat, [], 2); } catch { continue; }
+    if (!tris.length) continue;
+
+    // Level: a flat plateau just above the local ground. 80th-percentile of
+    // sampled terrain keeps the plate above most of the park without letting
+    // one bump float the whole thing; floor dips well below the lowest point.
+    let topY = BASE + 0.35, botY = BASE - 0.6;
+    if (hf) {
+      const hs = [];
+      for (const p of ring) hs.push(hf.heightAt(p.x, p.y));
+      let cx = 0, cy = 0;
+      for (const p of ring) { cx += p.x; cy += p.y; }
+      hs.push(hf.heightAt(cx / nV, cy / nV));
+      hs.sort((a, b) => a - b);
+      topY = hs[Math.floor(hs.length * 0.8)] + 0.35;
+      botY = hs[0] - 0.8;
+    }
+
+    const s = acc.n;
+    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, topY, -ring[i].y);
+    acc.n += nV;
+    for (let t = 0; t < tris.length; t += 3) acc.idx.push(s + tris[t], s + tris[t + 1], s + tris[t + 2]);
+    const b = acc.n;
+    for (let i = 0; i < nV; i++) acc.pos.push(ring[i].x, botY, -ring[i].y);
+    acc.n += nV;
+    for (let t = 0; t < tris.length; t += 3) acc.idx.push(b + tris[t + 2], b + tris[t + 1], b + tris[t]);
+    for (let i = 0; i < nV; i++) {
+      const ni = (i + 1) % nV;
+      acc.idx.push(s + i, s + ni, b + ni,  s + i, b + ni, b + i);
+    }
+    count++;
+  }
+  return count;
+}
+
 // ─── Public entry point ─────────────────────────────────────────────────────
 /**
  * @param {Object} features  { buildings:[{polygon,tags}], roads:[{points,tags}], water:[{polygon}] }
@@ -1055,7 +1128,9 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   // terrain humps under water get levelled to. The water slab's floor (surface
   // - thickness) lands at FLATTEN_Y, so terrain and water meet flush — no humps
   // poke through, no gap.
-  const GN = 96;
+  // Terrain mesh density: 128×128 quads gives noticeably smoother hillsides
+  // than the old 96 grid at a modest triangle cost (~33k vs ~18k terrain tris).
+  const GN = 128;
 
   // Land mask from buildings → water is forbidden on the city. Water mask =
   // inside a water polygon AND not land. Both carve and fill use this mask, so
@@ -1075,12 +1150,17 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   const bldgAcc = new Acc();
   const nB = collectBuildings(bldgAcc, features.buildings, hf, mmPerM);
   onProgress?.(`New engine: ${nB} buildings draped`, 78);
-  const nR = collectRoads(blackAcc, features.roads, hf);
+  // Roads AND footpaths render together — per-class widths give the hierarchy
+  // (arteries wide, streets fine, paths hairline).
+  const nR = collectRoads(blackAcc, [...(features.roads || []), ...(features.paths || [])], hf);
   // Render the REAL water polygons (smooth OSM shorelines) draped on the
   // terrain surface so they're always visible and follow the ground — the
   // natural-looking system. Size/isSea filter keeps oceans from blanketing land.
   const nW = collectWaterPolys(blackAcc, waterPolys, hf, SEA_LEVEL_Y);
-  onProgress?.('New engine: finalising…', 90);
+  // Parks & green areas as subtly raised plates — detail that makes the map
+  // read instantly (Central Park, squares, golf courses…).
+  const nP = collectParkPolys(blackAcc, features.parks, hf);
+  onProgress?.(`New engine: ${nP} parks · finalising…`, 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');
   const buildingMesh = bldgAcc.build('building');
@@ -1091,7 +1171,7 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
 
   return {
     group,
-    stats: { buildings: nB, roads: nR, water: nW, engine: 'v2-terrain-fused' },
+    stats: { buildings: nB, roads: nR, water: nW, parks: nP, engine: 'v2-terrain-fused' },
     // Elevation mapping used — connected tiles reuse this so their terrain is
     // continuous across seams (passed back as terrainOptions.norm to siblings).
     norm: hf ? { lo: hf.lo, hi: hf.hi } : null,

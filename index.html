@@ -4,27 +4,31 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <title>Cities3ds — Custom 3D Printed City Maps</title>
+  <title>Cities3ds — Custom 3D-Printed City Maps</title>
+  <meta name="description" content="Pick any place on Earth. We turn it into a 3D-printed model — real buildings, roads, parks, terrain. Printed to order, shipped worldwide." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
       --bg: #000000;
-      --text: #ffffff;
-      --text-dim: rgba(255, 255, 255, 0.56);
-      --text-faint: rgba(255, 255, 255, 0.32);
+      --panel: #0A0A0A;
+      --text: #FFFFFF;
+      --text-secondary: rgba(255, 255, 255, 0.72);
+      --text-muted: rgba(255, 255, 255, 0.50);
+      --text-dim: rgba(255, 255, 255, 0.34);
       --border: rgba(255, 255, 255, 0.10);
-      --accent: #ffffff;
+      --border-strong: rgba(255, 255, 255, 0.22);
       --font: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'SF Pro Text', 'Inter', system-ui, sans-serif;
+      --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
       --ease: cubic-bezier(0.32, 0.72, 0, 1);
-      --dur: 0.45s;
     }
 
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+      html { scroll-behavior: auto !important; }
     }
 
     html { scroll-behavior: smooth; }
@@ -42,492 +46,334 @@
 
     a { color: inherit; text-decoration: none; }
     button { font-family: inherit; cursor: pointer; }
+    img { display: block; max-width: 100%; }
 
-    /* ── Top global nav (thin) ────────────────────────────────────────── */
+    ::selection { background: #fff; color: #000; }
+
+    /* ── Top nav ─────────────────────────────────────────────────────── */
     .topnav {
-      position: sticky;
-      top: 0;
-      z-index: 200;
-      background: rgba(0, 0, 0, 0.85);
+      position: sticky; top: 0; z-index: 200;
+      background: rgba(0, 0, 0, 0.82);
       backdrop-filter: saturate(180%) blur(20px);
       -webkit-backdrop-filter: saturate(180%) blur(20px);
       border-bottom: 1px solid var(--border);
     }
     .topnav-inner {
-      width: 100%;
-      margin: 0;
-      padding: 0 40px;
-      height: 48px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      width: 100%; padding: 0 40px; height: 52px;
+      display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
     }
-    .topnav-links {
-      display: flex;
-      align-items: center;
-      gap: 36px;
-      list-style: none;
+    .topnav-links { display: flex; gap: 32px; list-style: none; justify-self: start; }
+    .topnav-links a {
+      font-size: 12px; color: var(--text); opacity: 0.78;
+      transition: opacity 0.2s var(--ease); letter-spacing: -0.005em;
     }
-    .topnav-links li a {
-      font-size: 12px;
-      font-weight: 400;
-      color: var(--text);
-      opacity: 0.84;
-      transition: opacity 0.2s var(--ease);
-      letter-spacing: -0.005em;
-    }
-    .topnav-links li a:hover { opacity: 1; }
+    .topnav-links a:hover { opacity: 1; }
     .topnav-logo {
-      font-size: 14px;
-      font-weight: 600;
-      letter-spacing: -0.02em;
+      justify-self: center; display: flex; align-items: center; gap: 9px;
+      font-size: 15px; font-weight: 600; letter-spacing: -0.02em;
     }
-    .topnav-icons {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-    .topnav-icons a {
-      width: 22px;
-      height: 22px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      opacity: 0.9;
-      transition: opacity 0.2s var(--ease);
-    }
-    .topnav-icons a:hover { opacity: 1; }
-    .topnav-icons svg { width: 18px; height: 18px; }
-
-    /* ── Product subnav ──────────────────────────────────────────────── */
-    .subnav {
-      position: sticky;
-      top: 48px;
-      z-index: 199;
-      background: rgba(0, 0, 0, 0.78);
-      backdrop-filter: saturate(180%) blur(20px);
-      -webkit-backdrop-filter: saturate(180%) blur(20px);
-      border-bottom: 1px solid var(--border);
-    }
-    .subnav-inner {
-      width: 100%;
-      margin: 0;
-      padding: 0 40px;
-      height: 52px;
-      display: grid;
-      grid-template-columns: 1fr auto 1fr;
-      align-items: center;
-      gap: 24px;
-    }
-    .subnav-left  { justify-self: start; }
-    .subnav-right { justify-self: end; }
-    .subnav-product {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      font-size: 19px;
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      justify-self: center;
-    }
-    .subnav-product-img {
-      height: 36px;
-      width: auto;
-      max-width: 80px;
-      object-fit: contain;
-      display: block;
-    }
-    .subnav-product-img:not([src]),
-    .subnav-product-img[src=""] { display: none; }
-    .subnav-actions {
-      display: flex;
-      align-items: center;
-      gap: 24px;
-    }
-    .subnav-actions a {
-      font-size: 12px;
-      color: var(--text);
-      opacity: 0.88;
-      transition: opacity 0.2s var(--ease);
-      letter-spacing: -0.005em;
-    }
-    .subnav-actions a:hover { opacity: 1; }
-    .btn-buy {
-      background: #fff;
-      color: #000;
-      font-size: 12px;
-      font-weight: 500;
-      padding: 6px 14px;
-      border: none;
-      border-radius: 999px;
+    .topnav-logo svg { width: 18px; height: 18px; }
+    .topnav-cta { justify-self: end; display: flex; align-items: center; gap: 20px; }
+    .btn-pill {
+      display: inline-flex; align-items: center; gap: 8px;
+      background: #fff; color: #000;
+      font-size: 12px; font-weight: 500;
+      padding: 7px 16px; border: none; border-radius: 999px;
       transition: opacity 0.2s var(--ease), transform 0.3s var(--ease);
       letter-spacing: -0.005em;
     }
-    .btn-buy:hover { opacity: 0.92; }
-    .btn-buy:active { transform: scale(0.96); }
+    .btn-pill:hover { opacity: 0.9; }
+    .btn-pill:active { transform: scale(0.96); }
 
     /* ── Hero ────────────────────────────────────────────────────────── */
     .hero {
-      min-height: calc(100vh - 100px);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      padding: 80px 24px 120px;
-      position: relative;
-      overflow: hidden;
-      isolation: isolate; /* scopes mix-blend-mode to the hero only */
+      min-height: calc(100vh - 52px);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      text-align: center; padding: 72px 24px 110px;
+      position: relative; overflow: hidden; isolation: isolate;
     }
-    /* Lamp photo sitting behind the giant headline (AirPods-style hero product shot) */
     .hero-bg {
-      position: absolute;
-      top: 50%;
-      left: 50%;
+      position: absolute; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: min(1600px, 130vw);
-      max-height: 130vh;
-      object-fit: contain;
-      pointer-events: none;
-      z-index: 0;
-      opacity: 0;
-      animation: heroBgIn 1.4s var(--ease) 0.05s forwards;
+      width: min(1600px, 130vw); max-height: 130vh;
+      object-fit: contain; pointer-events: none; z-index: 0;
+      opacity: 0; animation: heroBgIn 1.4s var(--ease) 0.05s forwards;
     }
-    .hero-bg:not([src]),
-    .hero-bg[src=""] { display: none; }
     @keyframes heroBgIn {
-      from { opacity: 0; transform: translate(-50%, -50%) scale(1.08); }
+      from { opacity: 0; transform: translate(-50%, -50%) scale(1.06); }
       to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
     }
-    /* Everything above the photo */
-    .hero-eyebrow, .hero-title, .hero-sub, .hero-actions { position: relative; z-index: 1; }
+    .hero > * { position: relative; z-index: 1; }
     .hero-eyebrow {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text);
-      opacity: 0.6;
-      margin-bottom: 24px;
-      letter-spacing: -0.005em;
+      font-size: 13px; font-weight: 500; opacity: 0.66; margin-bottom: 22px;
+      letter-spacing: -0.005em; text-shadow: 0 1px 8px rgba(0,0,0,0.7);
       animation: fadeUp 0.8s var(--ease) 0.1s both;
     }
     .hero-title {
-      font-size: clamp(64px, 14vw, 184px);
-      font-weight: 700;
-      letter-spacing: -0.04em;
-      line-height: 0.92;
-      margin-bottom: 28px;
-      color: #fff;
-      /* Stronger dark halo — same trick as subtitle, scaled up for the big type */
+      font-size: clamp(64px, 13.5vw, 176px);
+      font-weight: 700; letter-spacing: -0.045em; line-height: 0.92;
+      margin-bottom: 26px;
       text-shadow:
-        0 2px 4px rgba(0, 0, 0, 0.9),
-        0 6px 24px rgba(0, 0, 0, 0.8),
-        0 0 60px rgba(0, 0, 0, 0.65),
-        0 0 120px rgba(0, 0, 0, 0.45);
+        0 2px 4px rgba(0,0,0,0.9), 0 6px 24px rgba(0,0,0,0.8),
+        0 0 60px rgba(0,0,0,0.65), 0 0 120px rgba(0,0,0,0.45);
       animation: fadeUp 1s var(--ease) 0.2s both;
     }
+    .hero-title em { font-style: normal; }
     .hero-sub {
-      font-size: clamp(18px, 2.4vw, 28px);
-      font-weight: 400;
-      color: var(--text);
-      opacity: 0.95;
-      max-width: 720px;
-      line-height: 1.3;
-      letter-spacing: -0.015em;
-      margin-bottom: 48px;
-      /* Soft dark halo so it reads cleanly over the busy bg */
-      text-shadow:
-        0 1px 2px rgba(0, 0, 0, 0.85),
-        0 4px 16px rgba(0, 0, 0, 0.75),
-        0 0 40px rgba(0, 0, 0, 0.55);
+      font-size: clamp(17px, 2.3vw, 26px); font-weight: 400;
+      opacity: 0.95; max-width: 700px; line-height: 1.35; letter-spacing: -0.015em;
+      margin-bottom: 44px;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.85), 0 4px 16px rgba(0,0,0,0.75), 0 0 40px rgba(0,0,0,0.55);
       animation: fadeUp 1s var(--ease) 0.35s both;
     }
-    .hero-eyebrow {
-      text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
-    }
     .hero-actions {
-      display: flex;
-      gap: 28px;
-      align-items: center;
+      display: flex; gap: 26px; align-items: center;
       animation: fadeUp 1s var(--ease) 0.5s both;
     }
-    .hero-link {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 17px;
-      font-weight: 400;
-      color: var(--text);
-      transition: opacity 0.2s var(--ease);
-      letter-spacing: -0.01em;
-      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 0, 0, 0.5);
-    }
-    .hero-link:hover { opacity: 0.78; }
-    .hero-link .arrow {
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
-      background: #fff;
-      color: #000;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      transition: transform 0.35s var(--ease);
-    }
-    .hero-link:hover .arrow { transform: translateX(3px); }
-
     .btn-primary {
-      background: #fff;
-      color: #000;
-      font-family: inherit;
-      font-size: 17px;
-      font-weight: 500;
-      padding: 14px 32px;
-      border: none;
-      border-radius: 999px;
-      cursor: pointer;
+      background: #fff; color: #000;
+      font-size: 16px; font-weight: 500; padding: 13px 30px;
+      border: none; border-radius: 999px;
       transition: opacity 0.2s var(--ease), transform 0.3s var(--ease);
       letter-spacing: -0.01em;
     }
-    .btn-primary:hover { opacity: 0.92; }
+    .btn-primary:hover { opacity: 0.9; }
     .btn-primary:active { transform: scale(0.97); }
+    .hero-link {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 16px; transition: opacity 0.2s var(--ease);
+      text-shadow: 0 1px 3px rgba(0,0,0,0.8), 0 0 20px rgba(0,0,0,0.5);
+    }
+    .hero-link:hover { opacity: 0.75; }
+    .hero-link .arrow {
+      width: 20px; height: 20px; border-radius: 50%;
+      background: #fff; color: #000;
+      display: flex; align-items: center; justify-content: center;
+      transition: transform 0.35s var(--ease);
+    }
+    .hero-link:hover .arrow { transform: translateX(3px); }
 
     @keyframes fadeUp {
       from { opacity: 0; transform: translateY(20px); }
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* ── Feature sections ───────────────────────────────────────────── */
-    .feature {
-      padding: 140px 24px;
-      text-align: center;
-      border-top: 1px solid var(--border);
+    /* ── Spec strip ──────────────────────────────────────────────────── */
+    .spec-strip { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+    .spec-strip-inner {
+      max-width: 1200px; margin: 0 auto; padding: 22px 24px;
+      display: flex; justify-content: center; gap: clamp(24px, 5vw, 64px); flex-wrap: wrap;
     }
-    .feature-eyebrow {
-      font-size: 13px;
-      font-weight: 500;
-      color: var(--text);
-      opacity: 0.56;
-      margin-bottom: 20px;
-      letter-spacing: -0.005em;
+    .spec-chip {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 13px; color: var(--text-secondary); letter-spacing: -0.005em;
+      white-space: nowrap;
     }
-    .feature-title {
-      font-size: clamp(40px, 7vw, 80px);
-      font-weight: 700;
-      letter-spacing: -0.035em;
-      line-height: 1.0;
-      margin-bottom: 24px;
-      max-width: 900px;
-      margin-left: auto;
-      margin-right: auto;
-    }
-    .feature-sub {
-      font-size: clamp(17px, 1.8vw, 22px);
-      font-weight: 400;
-      color: var(--text);
-      opacity: 0.78;
-      max-width: 640px;
-      line-height: 1.4;
-      letter-spacing: -0.01em;
-      margin: 0 auto 40px;
-    }
+    .spec-chip svg { width: 15px; height: 15px; opacity: 0.6; flex-shrink: 0; }
 
-    /* ── Three-up grid ──────────────────────────────────────────────── */
-    .three-up {
-      max-width: 1200px;
-      margin: 60px auto 0;
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 16px;
-      padding: 0 24px;
+    /* ── Sections ────────────────────────────────────────────────────── */
+    section { padding: 130px 24px; }
+    .section-head { text-align: center; max-width: 860px; margin: 0 auto 64px; }
+    .eyebrow {
+      font-size: 13px; font-weight: 500; color: var(--text-muted);
+      margin-bottom: 18px; letter-spacing: -0.005em;
     }
-    .card {
-      background: #0a0a0a;
-      border: 1px solid var(--border);
-      border-radius: 24px;
-      padding: 48px 36px;
-      text-align: left;
+    .h2 {
+      font-size: clamp(38px, 6.5vw, 76px);
+      font-weight: 700; letter-spacing: -0.038em; line-height: 1.0;
+      margin-bottom: 22px;
+    }
+    .section-sub {
+      font-size: clamp(16px, 1.8vw, 21px); color: var(--text-secondary);
+      max-width: 620px; line-height: 1.45; letter-spacing: -0.01em; margin: 0 auto;
+    }
+    .hr { border: none; border-top: 1px solid var(--border); margin: 0; }
+
+    .wrap { max-width: 1200px; margin: 0 auto; }
+
+    /* ── Step cards ──────────────────────────────────────────────────── */
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .step-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 22px;
+      padding: 38px 32px 36px; text-align: left;
       transition: border-color 0.3s var(--ease), transform 0.4s var(--ease);
     }
-    .card:hover {
-      border-color: rgba(255, 255, 255, 0.22);
-      transform: translateY(-3px);
+    .step-card:hover { border-color: var(--border-strong); transform: translateY(-3px); }
+    .step-art { height: 120px; margin-bottom: 28px; color: var(--text); }
+    .step-art svg { height: 100%; width: auto; }
+    .step-num { font-size: 12px; font-family: var(--mono); color: var(--text-dim); margin-bottom: 14px; }
+    .step-title { font-size: 22px; font-weight: 600; letter-spacing: -0.02em; margin-bottom: 10px; }
+    .step-desc { font-size: 14.5px; color: var(--text-secondary); line-height: 1.55; letter-spacing: -0.005em; }
+
+    /* ── Detail split ───────────────────────────────────────────────── */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: clamp(32px, 6vw, 90px); align-items: center; }
+    .split-art {
+      border: 1px solid var(--border); border-radius: 26px; background: var(--panel);
+      padding: clamp(24px, 4vw, 56px); display: flex; align-items: center; justify-content: center;
     }
-    .card-num {
-      font-size: 14px;
-      font-weight: 600;
-      opacity: 0.4;
-      margin-bottom: 24px;
-      letter-spacing: -0.005em;
+    .split-art svg { width: 100%; height: auto; }
+    .split-copy .h2 { text-align: left; }
+    .split-copy .eyebrow { text-align: left; }
+    .feature-list { list-style: none; margin-top: 34px; display: flex; flex-direction: column; gap: 0; }
+    .feature-list li {
+      display: flex; gap: 14px; align-items: flex-start;
+      padding: 15px 0; border-top: 1px solid var(--border);
+      font-size: 15px; color: var(--text-secondary); line-height: 1.5; letter-spacing: -0.005em;
     }
-    .card-title {
-      font-size: 24px;
-      font-weight: 600;
-      letter-spacing: -0.02em;
-      margin-bottom: 12px;
+    .feature-list li:last-child { border-bottom: 1px solid var(--border); }
+    .feature-list strong { color: var(--text); font-weight: 600; }
+    .feature-list svg { width: 16px; height: 16px; flex-shrink: 0; margin-top: 3px; opacity: 0.85; }
+
+    /* ── Shapes row ─────────────────────────────────────────────────── */
+    .shapes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; max-width: 880px; margin: 0 auto; }
+    .shape-card {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 22px;
+      padding: 44px 24px 36px; text-align: center;
+      transition: border-color 0.3s var(--ease), transform 0.4s var(--ease);
     }
-    .card-desc {
-      font-size: 15px;
-      color: var(--text);
-      opacity: 0.7;
-      line-height: 1.5;
-      letter-spacing: -0.005em;
+    .shape-card:hover { border-color: var(--border-strong); transform: translateY(-3px); }
+    .shape-card svg { width: 72px; height: 72px; margin: 0 auto 22px; display: block; }
+    .shape-name { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; margin-bottom: 6px; }
+    .shape-note { font-size: 13px; color: var(--text-muted); letter-spacing: -0.005em; }
+
+    /* ── Gallery ────────────────────────────────────────────────────── */
+    #gallery { display: none; }
+    .gallery-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .gallery-item {
+      position: relative; border-radius: 20px; overflow: hidden;
+      border: 1px solid var(--border); background: var(--panel); aspect-ratio: 1;
+    }
+    .gallery-item img {
+      width: 100%; height: 100%; object-fit: cover;
+      transition: transform 0.6s var(--ease);
+    }
+    .gallery-item:hover img { transform: scale(1.03); }
+    .gallery-cap {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      padding: 36px 16px 14px;
+      background: linear-gradient(to top, rgba(0,0,0,0.75), transparent);
+      font-size: 12.5px; color: var(--text-secondary); letter-spacing: -0.005em;
     }
 
-    /* ── Stats ──────────────────────────────────────────────────────── */
-    .stats {
-      max-width: 1100px;
-      margin: 0 auto;
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 60px;
-      padding: 0 24px;
+    /* ── Pricing ────────────────────────────────────────────────────── */
+    .price-card {
+      max-width: 560px; margin: 0 auto; text-align: center;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 28px;
+      padding: 56px 40px 48px;
     }
-    .stat-value {
-      font-size: clamp(40px, 6vw, 72px);
-      font-weight: 700;
-      letter-spacing: -0.04em;
-      line-height: 1;
-      margin-bottom: 12px;
+    .price-big {
+      font-size: clamp(56px, 9vw, 96px); font-weight: 700;
+      letter-spacing: -0.045em; line-height: 1; margin-bottom: 8px;
     }
-    .stat-label {
-      font-size: 14px;
-      font-weight: 400;
-      color: var(--text);
-      opacity: 0.6;
-      letter-spacing: -0.005em;
+    .price-big sup { font-size: 0.38em; font-weight: 600; vertical-align: super; letter-spacing: -0.02em; }
+    .price-note { font-size: 14px; color: var(--text-muted); margin-bottom: 30px; }
+    .price-rows { text-align: left; margin: 0 auto 34px; max-width: 380px; }
+    .price-row {
+      display: flex; justify-content: space-between; gap: 16px;
+      padding: 13px 0; border-top: 1px solid var(--border);
+      font-size: 14px; color: var(--text-secondary); letter-spacing: -0.005em;
     }
+    .price-row:last-child { border-bottom: 1px solid var(--border); }
+    .price-row b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
 
-    /* ── Closing CTA ────────────────────────────────────────────────── */
-    .cta {
-      padding: 160px 24px;
-      text-align: center;
-      border-top: 1px solid var(--border);
-    }
-    .cta-title {
-      font-size: clamp(48px, 9vw, 120px);
-      font-weight: 700;
-      letter-spacing: -0.04em;
-      line-height: 0.95;
-      margin-bottom: 40px;
-    }
-
-    /* ── Footer ─────────────────────────────────────────────────────── */
-    footer {
-      padding: 32px 24px;
-      border-top: 1px solid var(--border);
-      text-align: center;
-    }
-    .footer-inner {
-      max-width: 1200px;
-      margin: 0 auto;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 24px;
-      flex-wrap: wrap;
-    }
-    .footer-text {
-      font-size: 12px;
-      color: var(--text);
-      opacity: 0.5;
-      letter-spacing: -0.005em;
-    }
-    .footer-links {
-      display: flex;
-      gap: 20px;
-      list-style: none;
-    }
-    .footer-links a {
-      font-size: 12px;
-      color: var(--text);
-      opacity: 0.6;
+    /* ── FAQ ────────────────────────────────────────────────────────── */
+    .faq { max-width: 720px; margin: 0 auto; }
+    .faq details { border-top: 1px solid var(--border); }
+    .faq details:last-child { border-bottom: 1px solid var(--border); }
+    .faq summary {
+      list-style: none; cursor: pointer;
+      display: flex; align-items: center; justify-content: space-between; gap: 20px;
+      padding: 22px 4px; font-size: 16.5px; font-weight: 500; letter-spacing: -0.012em;
       transition: opacity 0.2s var(--ease);
     }
-    .footer-links a:hover { opacity: 1; }
+    .faq summary::-webkit-details-marker { display: none; }
+    .faq summary:hover { opacity: 0.8; }
+    .faq summary .ind {
+      width: 22px; height: 22px; flex-shrink: 0; position: relative; opacity: 0.6;
+      transition: transform 0.3s var(--ease);
+    }
+    .faq summary .ind::before, .faq summary .ind::after {
+      content: ''; position: absolute; background: currentColor; top: 50%; left: 50%;
+    }
+    .faq summary .ind::before { width: 12px; height: 1.5px; transform: translate(-50%, -50%); }
+    .faq summary .ind::after  { width: 1.5px; height: 12px; transform: translate(-50%, -50%); }
+    .faq details[open] summary .ind { transform: rotate(45deg); }
+    .faq .faq-a {
+      padding: 0 4px 24px; font-size: 14.5px; color: var(--text-secondary);
+      line-height: 1.6; letter-spacing: -0.005em; max-width: 640px;
+    }
+
+    /* ── CTA ────────────────────────────────────────────────────────── */
+    .cta { text-align: center; padding: 150px 24px 160px; }
+    .cta .h2 { margin-bottom: 36px; }
+
+    /* ── Footer ─────────────────────────────────────────────────────── */
+    footer { border-top: 1px solid var(--border); padding: 36px 24px; }
+    .footer-inner {
+      max-width: 1200px; margin: 0 auto;
+      display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+    }
+    .footer-brand { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+    .footer-brand svg { width: 15px; height: 15px; opacity: 0.9; }
+    .footer-text { font-size: 12px; color: var(--text-muted); letter-spacing: -0.005em; }
+    .footer-links { display: flex; gap: 22px; list-style: none; }
+    .footer-links a { font-size: 12px; color: var(--text-muted); transition: color 0.2s var(--ease); }
+    .footer-links a:hover { color: var(--text); }
 
     /* ── Reveal on scroll ───────────────────────────────────────────── */
-    .reveal {
-      opacity: 0;
-      transform: translateY(40px);
-      transition: opacity 0.8s var(--ease), transform 0.8s var(--ease);
-    }
-    .reveal.in {
-      opacity: 1;
-      transform: translateY(0);
-    }
+    .reveal { opacity: 0; transform: translateY(36px); transition: opacity 0.8s var(--ease), transform 0.8s var(--ease); }
+    .reveal.in { opacity: 1; transform: translateY(0); }
 
     /* ── Mobile ─────────────────────────────────────────────────────── */
-    @media (max-width: 768px) {
+    @media (max-width: 860px) {
       .topnav-links { display: none; }
-      .topnav-logo { display: block; }
-      .topnav-inner { justify-content: space-between; padding: 0 16px; }
-      .subnav-inner { padding: 0 16px; grid-template-columns: auto 1fr auto; }
-      .subnav-actions { gap: 14px; }
-      .subnav-product-img { height: 28px; max-width: 60px; }
-      .subnav-actions a:not(.btn-buy) { display: none; }
-      .hero { padding: 60px 20px 100px; }
-      .hero-actions { flex-direction: column; gap: 20px; }
-      .three-up { grid-template-columns: 1fr; gap: 16px; }
-      .stats { grid-template-columns: 1fr; gap: 40px; }
-      .feature { padding: 100px 20px; }
+      .topnav-inner { grid-template-columns: auto 1fr auto; padding: 0 18px; }
+      .topnav-logo { justify-self: start; }
+      .hero { padding: 56px 20px 90px; }
+      .hero-actions { flex-direction: column; gap: 18px; }
+      section { padding: 90px 20px; }
+      .steps, .shapes, .gallery-grid { grid-template-columns: 1fr; }
+      .split { grid-template-columns: 1fr; }
+      .split-art { order: -1; }
       .cta { padding: 100px 20px; }
-      footer { padding: 24px 16px; }
-      .footer-inner { flex-direction: column; }
+      .footer-inner { flex-direction: column; text-align: center; }
     }
   </style>
 </head>
 <body>
 
-  <!-- ── Top global nav (Apple-style thin) ────────────────────────── -->
+  <!-- ── Top nav ───────────────────────────────────────────────────── -->
   <nav class="topnav">
     <div class="topnav-inner">
       <ul class="topnav-links">
         <li><a href="#how">How it works</a></li>
-        <li><a href="#features">Features</a></li>
+        <li><a href="#detail">Detail</a></li>
+        <li><a href="#tiles">Connected tiles</a></li>
         <li><a href="#pricing">Pricing</a></li>
+        <li><a href="#faq">FAQ</a></li>
       </ul>
-      <div class="topnav-logo">Cities3ds</div>
-      <div class="topnav-icons">
-        <a href="#" aria-label="Search">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-            <circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/>
-          </svg>
-        </a>
-        <a href="/app.html" aria-label="Open app">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-            <path d="M3 8l9 6 9-6"/><rect x="3" y="6" width="18" height="14" rx="2"/>
-          </svg>
-        </a>
+      <a class="topnav-logo" href="/">
+        <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z"/>
+        </svg>
+        Cities3ds
+      </a>
+      <div class="topnav-cta">
+        <a href="/app.html" class="btn-pill">Open the Studio</a>
       </div>
     </div>
   </nav>
 
-  <!-- ── Product subnav (Apple-style) ─────────────────────────────── -->
-  <nav class="subnav">
-    <div class="subnav-inner">
-      <div class="subnav-left"></div>
-      <div class="subnav-product"><span>Cities3ds</span></div>
-      <div class="subnav-actions subnav-right">
-        <a href="#how">Overview</a>
-        <a href="#features">Tech specs</a>
-        <a href="/app.html" class="btn-buy">Start Making</a>
-      </div>
-    </div>
-  </nav>
-
-  <!-- ── HERO — big bold AirPods-Pro style ────────────────────────── -->
-  <section class="hero">
-    <!-- Lamp product photo behind the headline. Drop file at public/images/lamp.png -->
-    <img class="hero-bg" id="hero-bg-img"
-         src="/images/city_cinematic.jpg" alt=""
-         onerror="this.style.display='none'" />
-    <div class="hero-eyebrow">New</div>
-    <h1 class="hero-title">Cities<br>in 3D.</h1>
-    <p class="hero-sub">Pick any place on Earth. We turn it into a 3D-printed model — buildings, roads, terrain. Yours, delivered.</p>
+  <!-- ── Hero ──────────────────────────────────────────────────────── -->
+  <section class="hero" style="padding-top: 40px">
+    <img class="hero-bg" id="hero-bg-img" src="/images/city_cinematic.jpg" alt="" />
+    <div class="hero-eyebrow">Custom 3D-printed city maps</div>
+    <h1 class="hero-title" id="hero-headline">Cities<br>in 3D.</h1>
+    <p class="hero-sub" id="hero-sub">Pick any place on Earth. We turn it into a 3D-printed model — buildings, roads, parks, terrain. Yours, delivered.</p>
     <div class="hero-actions">
-      <a href="/app.html" class="btn-primary">Start making</a>
+      <a href="/app.html" class="btn-primary">Create your map</a>
       <a href="#how" class="hero-link">
-        See how
+        See how it works
         <span class="arrow">
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3">
             <polyline points="9 6 15 12 9 18"/>
@@ -537,77 +383,333 @@
     </div>
   </section>
 
-  <!-- ── How it works ─────────────────────────────────────────────── -->
-  <section class="feature reveal" id="how">
-    <div class="feature-eyebrow">How it works</div>
-    <h2 class="feature-title">Three steps.<br>One model.</h2>
-    <p class="feature-sub">From a place on a map to a physical 3D print on your desk.</p>
-    <div class="three-up">
-      <div class="card">
-        <div class="card-num">01</div>
-        <div class="card-title">Pick a place</div>
-        <div class="card-desc">Search any city, neighborhood, or landmark. Drop a pin anywhere on Earth.</div>
+  <!-- ── Spec strip ────────────────────────────────────────────────── -->
+  <div class="spec-strip">
+    <div class="spec-strip-inner">
+      <span class="spec-chip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
+        130&nbsp;mm tiles
+      </span>
+      <span class="spec-chip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.6 4 5.6 4 9s-1.5 6.4-4 9c-2.5-2.6-4-5.6-4-9s1.5-6.4 4-9z"/></svg>
+        Real OpenStreetMap data
+      </span>
+      <span class="spec-chip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-9 4 5 3-4 5 8"/><path d="M3 21h18"/></svg>
+        True terrain relief
+      </span>
+      <span class="spec-chip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3.2"/><circle cx="12" cy="12" r="8.5" stroke-dasharray="3 3.4"/></svg>
+        Two-colour print
+      </span>
+      <span class="spec-chip">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 8h14l-1.5 12.5a2 2 0 01-2 1.5h-7a2 2 0 01-2-1.5L5 8z"/><path d="M8 8V6a4 4 0 018 0v2"/></svg>
+        Ships worldwide
+      </span>
+    </div>
+  </div>
+
+  <!-- ── How it works ──────────────────────────────────────────────── -->
+  <section id="how" class="reveal">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">How it works</div>
+        <h2 class="h2">Three steps.<br>One model.</h2>
+        <p class="section-sub">From a place on a map to a physical print on your desk — generated from real data, not stock geometry.</p>
       </div>
-      <div class="card">
-        <div class="card-num">02</div>
-        <div class="card-title">Tune it</div>
-        <div class="card-desc">Adjust radius, shape, rotation. See the 3D preview update instantly.</div>
-      </div>
-      <div class="card">
-        <div class="card-num">03</div>
-        <div class="card-title">We print &amp; ship</div>
-        <div class="card-desc">We 3D print your custom model and ship it. 2–4 days production. Worldwide.</div>
+      <div class="steps">
+        <div class="step-card">
+          <div class="step-art">
+            <svg viewBox="0 0 160 120" fill="none" stroke="currentColor">
+              <rect x="8" y="10" width="144" height="100" rx="12" stroke-width="1.5" opacity="0.35"/>
+              <path d="M8 78c22-10 30-30 52-30s28 16 46 16 24-10 46-22" stroke-width="1.2" opacity="0.4"/>
+              <path d="M8 92c24-8 34-22 56-22s26 12 44 12 28-8 44-16" stroke-width="1.2" opacity="0.25"/>
+              <path d="M8 38c18 6 30 18 50 14s30-20 50-20 28 8 44 6" stroke-width="1.2" opacity="0.25"/>
+              <path d="M80 28c-12 0-20 9-20 20 0 14 20 32 20 32s20-18 20-32c0-11-8-20-20-20z" stroke-width="2" fill="#000"/>
+              <circle cx="80" cy="48" r="7" stroke-width="2"/>
+            </svg>
+          </div>
+          <div class="step-num">01</div>
+          <div class="step-title">Pick a place</div>
+          <div class="step-desc">Search any city, neighbourhood or landmark — or drop a pin anywhere on Earth. The map captures a 1&nbsp;km radius around it.</div>
+        </div>
+        <div class="step-card">
+          <div class="step-art">
+            <svg viewBox="0 0 160 120" fill="none" stroke="currentColor">
+              <path d="M34 14l14 8v16l-14 8-14-8V22l14-8z" stroke-width="2"/>
+              <rect x="66" y="16" width="28" height="28" rx="3" stroke-width="2" opacity="0.55"/>
+              <circle cx="124" cy="30" r="14.5" stroke-width="2" opacity="0.55"/>
+              <path d="M20 76h120" stroke-width="1.5" opacity="0.3"/>
+              <circle cx="96" cy="76" r="7" stroke-width="2" fill="#000"/>
+              <path d="M20 98h120" stroke-width="1.5" opacity="0.3"/>
+              <circle cx="52" cy="98" r="7" stroke-width="2" fill="#000"/>
+            </svg>
+          </div>
+          <div class="step-num">02</div>
+          <div class="step-title">Tune it</div>
+          <div class="step-desc">Choose hexagon, square or circle. Set the elevation scale. Watch the full 3D preview rebuild in seconds — what you see is what we print.</div>
+        </div>
+        <div class="step-card">
+          <div class="step-art">
+            <svg viewBox="0 0 160 120" fill="none" stroke="currentColor">
+              <rect x="30" y="12" width="100" height="34" rx="8" stroke-width="2"/>
+              <path d="M62 46v10M98 46v10" stroke-width="1.5" opacity="0.5"/>
+              <path d="M80 56v18M80 74l-6-6M80 74l6-6" stroke-width="1.8" opacity="0.7"/>
+              <rect x="44" y="84" width="72" height="6" rx="2" stroke-width="1.5" opacity="0.5"/>
+              <path d="M56 84v-4h8v4M72 84v-8h6v8M84 84v-12h8v12M98 84v-6h6v6" stroke-width="1.6"/>
+              <path d="M24 102h112" stroke-width="1.5" opacity="0.3"/>
+            </svg>
+          </div>
+          <div class="step-num">03</div>
+          <div class="step-title">We print &amp; ship</div>
+          <div class="step-desc">Each order is printed to order in two colours over 2–4 days, quality-checked, and shipped — US, Canada and worldwide.</div>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- ── Stats ───────────────────────────────────────────────────── -->
-  <section class="feature reveal" id="features">
-    <div class="feature-eyebrow">Built for detail</div>
-    <h2 class="feature-title">Real data.<br>Real buildings.</h2>
-    <p class="feature-sub">OpenStreetMap + Overture data, LiDAR-derived heights, real terrain.</p>
-    <div class="stats">
-      <div>
-        <div class="stat-value">1 km</div>
-        <div class="stat-label">Default capture radius</div>
-      </div>
-      <div>
-        <div class="stat-value">150 mm</div>
-        <div class="stat-label">Hex model width</div>
-      </div>
-      <div>
-        <div class="stat-value">∞</div>
-        <div class="stat-label">Locations worldwide</div>
+  <hr class="hr" />
+
+  <!-- ── Detail section ────────────────────────────────────────────── -->
+  <section id="detail" class="reveal">
+    <div class="wrap">
+      <div class="split">
+        <div class="split-copy">
+          <div class="eyebrow">Built for detail</div>
+          <h2 class="h2">Every street.<br>Every building.</h2>
+          <ul class="feature-list">
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 21h18M9 21V8h6v13M3 21V13h6M15 21V3h6v18"/></svg>
+              <span><strong>Real building footprints</strong> with real heights, drawn from OpenStreetMap and Overture data — towers taper, domes curve.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19L19 4M7 21l5-5M3 16l5-5"/></svg>
+              <span><strong>A true road hierarchy</strong> — motorways print broad, side streets fine, footpaths as hairlines. The map reads like a map.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12c3-4 6-6 9-6s6 2 9 6c-3 4-6 6-9 6s-6-2-9-6z"/></svg>
+              <span><strong>Water and parks inlaid</strong> as smooth recessed and raised surfaces, following the real shorelines and boundaries.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 17l6-9 4 5 3-4 5 8M3 21h18"/></svg>
+              <span><strong>True terrain relief</strong> under the whole city, sampled from elevation data and smoothed for clean printing.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="2.6"/></svg>
+              <span><strong>M3 mounting pockets</strong> hidden under the base, so tiles screw cleanly onto a board or frame.</span>
+            </li>
+          </ul>
+        </div>
+        <div class="split-art">
+          <svg viewBox="0 0 420 330" fill="none" stroke="currentColor">
+            <!-- terrain base -->
+            <path d="M30 250l180 60 180-60v-26l-180 60-180-60v26z" stroke-width="2"/>
+            <path d="M30 224c40 4 70 18 110 14s70-26 110-22 80 22 120 8" stroke-width="1.3" opacity="0.45"/>
+            <!-- buildings -->
+            <path d="M120 224v-58l24-8v58" stroke-width="1.8"/>
+            <path d="M144 216v-58l20 7v52" stroke-width="1.8"/>
+            <path d="M196 238v-94l26-9v95" stroke-width="2"/>
+            <path d="M222 230v-95l22 8v80" stroke-width="2"/>
+            <path d="M196 144l26-9 22 8" stroke-width="1.6"/>
+            <path d="M278 232v-44l20-7v44" stroke-width="1.8"/>
+            <path d="M298 225v-44l16 6v36" stroke-width="1.8"/>
+            <path d="M86 232v-30l18-6v32" stroke-width="1.6" opacity="0.8"/>
+            <!-- roads -->
+            <path d="M60 252c60 14 130 22 200 14" stroke-width="3" opacity="0.85"/>
+            <path d="M96 268c50 9 100 13 160 9" stroke-width="1.6" opacity="0.5"/>
+            <!-- dome landmark -->
+            <path d="M330 226v-20c0-12 9-20 20-20s20 8 20 20v6" stroke-width="1.8"/>
+            <circle cx="350" cy="182" r="3" stroke-width="1.6"/>
+            <!-- water -->
+            <path d="M52 236c14 6 30 9 46 7" stroke-width="2" opacity="0.4"/>
+            <path d="M48 243c16 7 34 10 52 8" stroke-width="1.4" opacity="0.25"/>
+          </svg>
+        </div>
       </div>
     </div>
   </section>
 
-  <!-- ── Closing CTA ─────────────────────────────────────────────── -->
-  <section class="cta reveal" id="pricing">
-    <h2 class="cta-title">$29.99<br>Shipped.</h2>
-    <a href="/app.html" class="btn-primary">Make yours</a>
+  <hr class="hr" />
+
+  <!-- ── Shapes ────────────────────────────────────────────────────── -->
+  <section id="shapes" class="reveal">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">Three silhouettes</div>
+        <h2 class="h2">Pick your shape.</h2>
+        <p class="section-sub">Every shape prints 130&nbsp;mm wide with a thin, flat base — made to sit on a desk or mount on a wall.</p>
+      </div>
+      <div class="shapes">
+        <div class="shape-card">
+          <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4">
+            <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z"/>
+            <path d="M16 8L22.66 11.5V20.5L16 24L9.34 20.5V11.5L16 8Z" opacity="0.3"/>
+          </svg>
+          <div class="shape-name">Hexagon</div>
+          <div class="shape-note">Tiles into a honeycomb</div>
+        </div>
+        <div class="shape-card">
+          <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4">
+            <rect x="3" y="3" width="26" height="26"/>
+            <rect x="9" y="9" width="14" height="14" opacity="0.3"/>
+          </svg>
+          <div class="shape-name">Square</div>
+          <div class="shape-note">Tiles into a grid</div>
+        </div>
+        <div class="shape-card">
+          <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.4">
+            <circle cx="16" cy="16" r="13"/>
+            <circle cx="16" cy="16" r="7" opacity="0.3"/>
+          </svg>
+          <div class="shape-name">Circle</div>
+          <div class="shape-note">A single statement piece</div>
+        </div>
+      </div>
+    </div>
   </section>
 
-  <!-- ── Footer ──────────────────────────────────────────────────── -->
+  <hr class="hr" />
+
+  <!-- ── Connected tiles ───────────────────────────────────────────── -->
+  <section id="tiles" class="reveal">
+    <div class="wrap">
+      <div class="split">
+        <div class="split-art">
+          <svg viewBox="0 0 360 360" fill="none" stroke="currentColor">
+            <g stroke-width="1.5">
+              <rect x="40"  y="40"  width="90" height="90" rx="8" opacity="0.35"/>
+              <rect x="135" y="40"  width="90" height="90" rx="8" opacity="0.35"/>
+              <rect x="230" y="40"  width="90" height="90" rx="8" opacity="0.35"/>
+              <rect x="40"  y="135" width="90" height="90" rx="8" opacity="0.6"/>
+              <rect x="230" y="135" width="90" height="90" rx="8" opacity="0.6"/>
+              <rect x="40"  y="230" width="90" height="90" rx="8" opacity="0.35"/>
+              <rect x="135" y="230" width="90" height="90" rx="8" opacity="0.6"/>
+              <rect x="230" y="230" width="90" height="90" rx="8" opacity="0.35"/>
+            </g>
+            <rect x="135" y="135" width="90" height="90" rx="8" stroke-width="2.5"/>
+            <path d="M158 200c10 4 26 6 44 3M156 188c14-2 24-10 32-18M170 212v-36M196 212v-24" stroke-width="1.3" opacity="0.8"/>
+            <path d="M129 180h7M224 180h7M180 129v7M180 224v7" stroke-width="2.5"/>
+          </svg>
+        </div>
+        <div class="split-copy">
+          <div class="eyebrow">Connected tiles</div>
+          <h2 class="h2">Start small.<br>Grow the city.</h2>
+          <ul class="feature-list">
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8" rx="1.5"/><rect x="13" y="3" width="8" height="8" rx="1.5"/><rect x="3" y="13" width="8" height="8" rx="1.5"/><rect x="13" y="13" width="8" height="8" rx="1.5"/></svg>
+              <span><strong>Click neighbouring tiles on the map</strong> to extend your model — up to a 3×3 grid, nine tiles, one continuous city.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 8.5L12 3 3 8.5l9 5.5 9-5.5zM3 15.5L12 21l9-5.5"/></svg>
+              <span><strong>Seamless edges.</strong> Tiles share one elevation scale and abut exactly — streets and rivers continue across the joins.</span>
+            </li>
+            <li>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 8v8M8 12h8"/></svg>
+              <span><strong>$35 per added tile.</strong> Each tile is printed separately at full 130&nbsp;mm quality, then assembles edge-to-edge.</span>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <hr class="hr" />
+
+  <!-- ── Gallery (admin-managed; hidden when empty) ────────────────── -->
+  <section id="gallery" class="reveal">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">From the printer</div>
+        <h2 class="h2">Recent prints.</h2>
+      </div>
+      <div class="gallery-grid" id="gallery-grid"></div>
+    </div>
+  </section>
+
+  <!-- ── Pricing ───────────────────────────────────────────────────── -->
+  <section id="pricing" class="reveal">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">Pricing</div>
+        <h2 class="h2">Simple, per tile.</h2>
+      </div>
+      <div class="price-card">
+        <div class="price-big"><sup>$</sup>29<sup style="vertical-align: baseline; font-size: 0.32em">.99</sup></div>
+        <div class="price-note">per model · made to order</div>
+        <div class="price-rows">
+          <div class="price-row"><span>First tile (130&nbsp;mm, any shape)</span><b>$29.99</b></div>
+          <div class="price-row"><span>Each connected tile (up to 3×3)</span><b>+$35</b></div>
+          <div class="price-row"><span>US shipping</span><b>from $8</b></div>
+          <div class="price-row"><span>Canada / International</span><b>from $18 / $30</b></div>
+        </div>
+        <a href="/app.html" class="btn-primary">Create your map</a>
+      </div>
+    </div>
+  </section>
+
+  <hr class="hr" />
+
+  <!-- ── FAQ ───────────────────────────────────────────────────────── -->
+  <section id="faq" class="reveal">
+    <div class="wrap">
+      <div class="section-head">
+        <div class="eyebrow">FAQ</div>
+        <h2 class="h2">Good questions.</h2>
+      </div>
+      <div class="faq">
+        <details>
+          <summary>How big is a model? <span class="ind"></span></summary>
+          <div class="faq-a">Each tile is 130&nbsp;mm (about 5.1&nbsp;in) across with a thin, flat base — square and hexagon tiles connect edge-to-edge, so a full 3×3 build is roughly 390&nbsp;mm wide. Every tile covers a 2&nbsp;km-wide capture of the real city.</div>
+        </details>
+        <details>
+          <summary>What is it printed in? <span class="ind"></span></summary>
+          <div class="faq-a">PLA, printed in two colours: structure in one filament, roads, parks and water inlaid in a contrasting one. Crisp edges, no paint, no stickers — the detail is the geometry itself.</div>
+        </details>
+        <details>
+          <summary>Where does the map data come from? <span class="ind"></span></summary>
+          <div class="faq-a">Building footprints, roads, parks and water come from OpenStreetMap and Overture Maps; the ground relief is sampled from real elevation data. If the place exists on the map, we can print it.</div>
+        </details>
+        <details>
+          <summary>How long until it arrives? <span class="ind"></span></summary>
+          <div class="faq-a">Production takes 2–4 business days. US standard shipping is 5–10 business days (express 2–4), Canada 7–14, international 10–21. Shipping cost scales with the size of the build.</div>
+        </details>
+        <details>
+          <summary>Can I mount it on a wall? <span class="ind"></span></summary>
+          <div class="faq-a">Yes — every tile has blind M3 screw pockets hidden under the base (four on squares and circles, six on hexagons), so it mounts flush to a board or frame with standard M3 screws.</div>
+        </details>
+        <details>
+          <summary>Can I preview exactly what I'll get? <span class="ind"></span></summary>
+          <div class="faq-a">The Studio renders the full 3D model in your browser before you order — every building, road and shoreline. What you see in the preview is the geometry we print.</div>
+        </details>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Closing CTA ───────────────────────────────────────────────── -->
+  <section class="cta reveal">
+    <h2 class="h2">Your city.<br>On your desk.</h2>
+    <a href="/app.html" class="btn-primary">Open the Studio</a>
+  </section>
+
+  <!-- ── Footer ────────────────────────────────────────────────────── -->
   <footer>
     <div class="footer-inner">
-      <div class="footer-text">© Cities3ds · Custom 3D city prints, made to order.</div>
+      <div class="footer-brand">
+        <svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z"/>
+        </svg>
+        Cities3ds
+        <span class="footer-text" style="margin-left: 6px">— custom 3D city prints, made to order.</span>
+      </div>
       <ul class="footer-links">
-        <li><a href="/app.html">Generator</a></li>
+        <li><a href="/app.html">Studio</a></li>
         <li><a href="#how">How it works</a></li>
         <li><a href="#pricing">Pricing</a></li>
+        <li><a href="#faq">FAQ</a></li>
       </ul>
     </div>
   </footer>
 
-  <script>
-    // Reveal sections on scroll — clean fade-up, no parallax
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach(e => {
-        if (e.isIntersecting) e.target.classList.add('in');
-      });
-    }, { threshold: 0.12 });
-    document.querySelectorAll('.reveal').forEach(el => io.observe(el));
-  </script>
+  <script type="module" src="/src/landing.js"></script>
 </body>
 </html>

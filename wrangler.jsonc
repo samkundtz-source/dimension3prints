@@ -12,7 +12,10 @@
   "assets": {
     "directory": "./dist",
     "binding": "ASSETS",
-    "not_found_handling": "single-page-application"
+    "not_found_handling": "single-page-application",
+    // Route EVERY request through the worker (not assets-first) so serveAsset
+    // can attach the security headers (CSP, HSTS, nosniff, …) to all pages.
+    "run_worker_first": true
   },
   "kv_namespaces": [
     { "binding": "SETTINGS", "id": "59a9fc521dc9450b934a359acafb9bc1" }

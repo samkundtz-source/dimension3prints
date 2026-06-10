@@ -11,12 +11,18 @@
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     :root {
-      --bg: #0a0a0a; --bg-panel: #111; --bg-elevated: #1a1a1a;
-      --border: #2a2a2a; --text: #e8e8e8; --text-sec: #bbb;
-      --text-muted: #777; --font: 'Inter', system-ui, sans-serif;
-      --font-mono: 'SF Mono', 'Consolas', monospace;
+      --bg: #000000; --bg-panel: #0A0A0A; --bg-elevated: #141414;
+      --border: rgba(255, 255, 255, 0.10); --border-strong: rgba(255, 255, 255, 0.24);
+      --text: #FFFFFF; --text-sec: rgba(255, 255, 255, 0.72);
+      --text-muted: rgba(255, 255, 255, 0.45);
+      --font: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', system-ui, sans-serif;
+      --font-mono: ui-monospace, 'SF Mono', 'Consolas', monospace;
     }
-    body { font-family: var(--font); background: var(--bg); color: var(--text); min-height: 100vh; }
+    body {
+      font-family: var(--font); background: var(--bg); color: var(--text);
+      min-height: 100vh; letter-spacing: -0.005em;
+      -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale;
+    }
 
     /* Login */
     .login-wrap {
@@ -24,23 +30,23 @@
       min-height: 100vh; padding: 20px;
     }
     .login-box {
-      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px;
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 18px;
       padding: 40px; width: 100%; max-width: 380px; text-align: center;
     }
-    .login-box h1 { font-size: 22px; margin-bottom: 8px; }
+    .login-box h1 { font-size: 21px; margin-bottom: 8px; letter-spacing: -0.02em; }
     .login-box p { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
     .login-box input {
-      width: 100%; background: #141414; border: 1px solid var(--border); border-radius: 10px;
+      width: 100%; background: #111; border: 1px solid var(--border); border-radius: 10px;
       color: var(--text); font-family: var(--font); font-size: 14px;
       padding: 12px 16px; outline: none; margin-bottom: 16px;
     }
-    .login-box input:focus { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.08); }
+    .login-box input:focus { border-color: var(--border-strong); box-shadow: 0 0 0 3px rgba(255,255,255,0.08); }
     .login-box button {
-      width: 100%; background: #fff; color: #000; border: none; border-radius: 10px;
+      width: 100%; background: #fff; color: #000; border: none; border-radius: 999px;
       padding: 12px; font-family: var(--font); font-size: 14px; font-weight: 600;
-      cursor: pointer; transition: all 0.2s;
+      cursor: pointer; transition: opacity 0.2s;
     }
-    .login-box button:hover { background: #ddd; }
+    .login-box button:hover { opacity: 0.9; }
     .login-error { color: #ff6b6b; font-size: 12px; margin-top: 8px; }
 
     /* Dashboard */
@@ -49,47 +55,52 @@
       background: var(--bg-panel); border-bottom: 1px solid var(--border);
       padding: 16px 24px; display: flex; align-items: center; justify-content: space-between;
     }
-    .dash-header h1 { font-size: 18px; font-weight: 700; }
-    .dash-header .stats { display: flex; gap: 24px; }
+    .dash-header h1 { font-size: 17px; font-weight: 600; letter-spacing: -0.015em; }
+    .dash-header .stats { display: flex; gap: 26px; }
     .stat { text-align: center; }
-    .stat-val { font-size: 22px; font-weight: 700; font-family: var(--font-mono); }
+    .stat-val { font-size: 21px; font-weight: 700; font-family: var(--font-mono); }
     .stat-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
     .btn-logout {
-      background: transparent; border: 1px solid var(--border); border-radius: 8px;
+      background: transparent; border: 1px solid var(--border); border-radius: 999px;
       color: var(--text-muted); font-family: var(--font); font-size: 12px;
-      padding: 6px 14px; cursor: pointer;
+      padding: 6px 14px; cursor: pointer; transition: all 0.15s;
     }
-    .btn-logout:hover { border-color: #555; color: var(--text); }
+    .btn-logout:hover { border-color: var(--border-strong); color: var(--text); }
 
     /* Orders */
     .orders-wrap { padding: 24px; max-width: 1200px; margin: 0 auto; }
-    .orders-title { font-size: 14px; color: var(--text-muted); margin-bottom: 16px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; }
 
     .order-card {
-      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px;
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px;
       margin-bottom: 12px; overflow: hidden; transition: border-color 0.2s;
     }
-    .order-card:hover { border-color: #444; }
+    .order-card:hover { border-color: var(--border-strong); }
     .order-header {
       display: flex; align-items: center; justify-content: space-between;
       padding: 16px 20px; cursor: pointer; user-select: none;
     }
-    .order-header:hover { background: var(--bg-elevated); }
+    .order-header:hover { background: rgba(255, 255, 255, 0.03); }
     .order-left { display: flex; align-items: center; gap: 16px; }
-    .order-id { font-size: 18px; font-weight: 700; font-family: var(--font-mono); color: #fff; letter-spacing: 0.04em; }
+    .order-id { font-size: 17px; font-weight: 700; font-family: var(--font-mono); color: #fff; letter-spacing: 0.04em; }
     .order-num { font-size: 11px; font-weight: 500; font-family: var(--font-mono); color: var(--text-muted); }
     .order-date { font-size: 12px; color: var(--text-muted); }
-    .order-amount { font-size: 16px; font-weight: 700; font-family: var(--font-mono); }
+    .order-amount { font-size: 15px; font-weight: 700; font-family: var(--font-mono); }
     .order-right { display: flex; align-items: center; gap: 12px; }
 
     .status-badge {
       font-size: 11px; font-weight: 600; padding: 4px 10px; border-radius: 20px;
       text-transform: uppercase; letter-spacing: 0.04em;
     }
-    .status-pending { background: #2a2000; color: #ffc107; border: 1px solid #3d3000; }
-    .status-printing { background: #001a2a; color: #42a5f5; border: 1px solid #002a44; }
-    .status-shipped { background: #0a2a0a; color: #66bb6a; border: 1px solid #1a3a1a; }
-    .status-delivered { background: #1a1a1a; color: #888; border: 1px solid #333; }
+    .status-pending   { background: #2a2000; color: #ffc107; border: 1px solid #3d3000; }
+    .status-printing  { background: #001a2a; color: #42a5f5; border: 1px solid #002a44; }
+    .status-shipped   { background: #0a2a0a; color: #66bb6a; border: 1px solid #1a3a1a; }
+    .status-delivered { background: #161616; color: #999; border: 1px solid #2c2c2c; }
+
+    .tiles-badge {
+      font-size: 10px; font-weight: 600; padding: 3px 8px; border-radius: 10px;
+      border: 1px solid var(--border-strong); color: var(--text-sec);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
 
     .order-details { display: none; padding: 0 20px 20px; border-top: 1px solid var(--border); }
     .order-details.open { display: block; padding-top: 16px; }
@@ -102,40 +113,47 @@
 
     .order-actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
     .btn-action {
-      background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 999px;
       color: var(--text-sec); font-family: var(--font); font-size: 12px; font-weight: 500;
-      padding: 8px 14px; cursor: pointer; transition: all 0.15s;
+      padding: 8px 16px; cursor: pointer; transition: all 0.15s;
     }
-    .btn-action:hover { border-color: #555; color: #fff; }
+    .btn-action:hover { border-color: var(--border-strong); color: #fff; }
     .btn-action.primary { background: #fff; color: #000; border-color: #fff; font-weight: 600; }
-    .btn-action.primary:hover { background: #ddd; border-color: #ddd; }
+    .btn-action.primary:hover { opacity: 0.9; }
 
     .status-select {
-      background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px;
+      background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 999px;
       color: var(--text); font-family: var(--font); font-size: 12px;
-      padding: 8px 12px; cursor: pointer; outline: none;
+      padding: 8px 14px; cursor: pointer; outline: none;
     }
 
     /* Status tabs */
     .status-tabs {
       display: flex; gap: 4px; margin-bottom: 20px;
-      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 10px;
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 999px;
       padding: 4px; width: fit-content;
     }
     .status-tab {
-      background: transparent; border: none; border-radius: 8px;
+      background: transparent; border: none; border-radius: 999px;
       color: var(--text-muted); font-family: var(--font); font-size: 13px; font-weight: 500;
       padding: 8px 16px; cursor: pointer; transition: all 0.15s;
       display: flex; align-items: center; gap: 6px;
     }
-    .status-tab:hover { color: var(--text-sec); background: var(--bg-elevated); }
-    .status-tab.active { background: var(--bg-elevated); color: #fff; font-weight: 600; }
+    .status-tab:hover { color: var(--text-sec); }
+    .status-tab.active { background: #fff; color: #000; font-weight: 600; }
     .tab-count {
       font-size: 11px; font-weight: 600; font-family: var(--font-mono);
-      background: var(--bg); padding: 1px 6px; border-radius: 10px;
+      background: rgba(255,255,255,0.08); padding: 1px 7px; border-radius: 10px;
       color: var(--text-muted); min-width: 20px; text-align: center;
     }
-    .status-tab.active .tab-count { background: #333; color: var(--text-sec); }
+    .status-tab.active .tab-count { background: rgba(0,0,0,0.12); color: #000; }
+
+    #sort-btn {
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 999px;
+      color: var(--text-sec); font-family: var(--font); font-size: 13px;
+      padding: 8px 16px; cursor: pointer; transition: all 0.15s;
+    }
+    #sort-btn:hover { border-color: var(--border-strong); color: #fff; }
 
     /* Page tabs */
     .page-tabs {
@@ -156,7 +174,7 @@
     /* Settings panel */
     .settings-wrap { padding: 24px; max-width: 700px; margin: 0 auto; }
     .settings-card {
-      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 12px;
+      background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px;
       padding: 24px; margin-bottom: 16px;
     }
     .settings-card h2 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
@@ -166,22 +184,22 @@
     .settings-label { font-size: 14px; font-weight: 500; }
     .settings-hint { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
     .settings-input {
-      background: #141414; border: 1px solid var(--border); border-radius: 8px;
+      background: #111; border: 1px solid var(--border); border-radius: 8px;
       color: var(--text); font-family: var(--font-mono); font-size: 14px;
       padding: 8px 12px; width: 80px; text-align: center; outline: none;
     }
-    .settings-input:focus { border-color: #fff; }
+    .settings-input:focus { border-color: var(--border-strong); }
     .settings-textarea {
-      background: #141414; border: 1px solid var(--border); border-radius: 8px;
+      background: #111; border: 1px solid var(--border); border-radius: 8px;
       color: var(--text); font-family: var(--font); font-size: 13px;
       padding: 10px 12px; width: 100%; min-height: 60px; outline: none; resize: vertical;
     }
-    .settings-textarea:focus { border-color: #fff; }
+    .settings-textarea:focus { border-color: var(--border-strong); }
 
     .toggle-wrap { position: relative; width: 44px; height: 24px; flex-shrink: 0; }
     .toggle-wrap input { opacity: 0; width: 0; height: 0; position: absolute; }
     .toggle-track {
-      position: absolute; inset: 0; background: #333; border-radius: 12px;
+      position: absolute; inset: 0; background: rgba(255,255,255,0.14); border-radius: 12px;
       cursor: pointer; transition: background 0.2s;
     }
     .toggle-track::after {
@@ -189,20 +207,20 @@
       width: 20px; height: 20px; background: #888; border-radius: 50%;
       transition: transform 0.2s, background 0.2s;
     }
-    .toggle-wrap input:checked + .toggle-track { background: #3b82f6; }
-    .toggle-wrap input:checked + .toggle-track::after { transform: translateX(20px); background: #fff; }
+    .toggle-wrap input:checked + .toggle-track { background: #fff; }
+    .toggle-wrap input:checked + .toggle-track::after { transform: translateX(20px); background: #000; }
 
     .btn-save {
-      background: #fff; color: #000; border: none; border-radius: 10px;
+      background: #fff; color: #000; border: none; border-radius: 999px;
       padding: 10px 24px; font-family: var(--font); font-size: 14px; font-weight: 600;
-      cursor: pointer; transition: all 0.2s; margin-top: 8px;
+      cursor: pointer; transition: opacity 0.2s; margin-top: 8px;
     }
-    .btn-save:hover { background: #ddd; }
+    .btn-save:hover { opacity: 0.9; }
     .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
     .save-status { font-size: 12px; color: #66bb6a; margin-left: 12px; display: inline-block; }
 
     .limit-bar {
-      margin-top: 16px; background: #1a1a1a; border-radius: 8px; overflow: hidden; height: 8px;
+      margin-top: 16px; background: #161616; border-radius: 8px; overflow: hidden; height: 8px;
     }
     .limit-bar-fill { height: 100%; border-radius: 8px; transition: width 0.5s ease; }
     .limit-info { display: flex; justify-content: space-between; margin-top: 6px; font-size: 12px; color: var(--text-muted); }
@@ -217,6 +235,35 @@
     .empty-state h2 { font-size: 18px; margin-bottom: 8px; color: var(--text-sec); }
 
     .loading { text-align: center; padding: 40px; color: var(--text-muted); }
+
+    /* Front-page manager */
+    .gallery-slot {
+      display: grid; grid-template-columns: 1fr 220px; gap: 10px;
+      margin-bottom: 14px; align-items: center;
+    }
+    .gallery-slot-num {
+      font-size: 11px; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 5px;
+    }
+    .fp-input {
+      width: 100%; background: #111; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-family: var(--font-mono); font-size: 13px;
+      padding: 9px 12px; outline: none;
+    }
+    .fp-input:focus { border-color: var(--border-strong); box-shadow: 0 0 0 3px rgba(255,255,255,0.07); }
+    .fp-caption {
+      background: #111; border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-family: var(--font); font-size: 13px;
+      padding: 9px 12px; outline: none; width: 100%;
+    }
+    .fp-caption:focus { border-color: var(--border-strong); }
+    .preview-thumb {
+      width: 100%; aspect-ratio: 1;
+      border-radius: 10px; border: 1px solid var(--border);
+      background: var(--bg-elevated); object-fit: cover;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--text-muted);
+    }
   </style>
 </head>
 <body>
@@ -226,7 +273,7 @@
     <div class="login-box">
       <h1>Admin Dashboard</h1>
       <p>Cities3ds order management</p>
-      <input type="password" id="admin-pw" placeholder="Enter admin password" autocomplete="off" />
+      <input type="password" id="admin-pw" placeholder="Enter admin password" autocomplete="off" maxlength="512" />
       <button id="login-btn">Sign In</button>
       <div class="login-error" id="login-error"></div>
     </div>
@@ -277,7 +324,7 @@
           <button class="status-tab" data-filter="shipped">Shipped <span class="tab-count" id="tab-shipped">0</span></button>
           <button class="status-tab" data-filter="delivered">Delivered <span class="tab-count" id="tab-delivered">0</span></button>
         </div>
-        <button id="sort-btn" onclick="sortOldestFirst=!sortOldestFirst;renderOrders()" style="background:var(--bg-panel);border:1px solid var(--border);border-radius:8px;color:var(--text-sec);font-family:var(--font);font-size:13px;padding:8px 14px;cursor:pointer">↑ Oldest first</button>
+        <button id="sort-btn">↑ Oldest first</button>
       </div>
       <div id="orders-list">
         <div class="loading">Loading orders...</div>
@@ -343,10 +390,10 @@
         <!-- Hero text -->
         <div class="settings-card">
           <h2>Hero Text</h2>
-          <p>Overrides the headline and subtitle shown in the landing page hero. Use <code style="font-family:var(--font-mono);font-size:11px;background:#1a1a1a;padding:2px 6px;border-radius:4px">&lt;br/&gt;</code> and <code style="font-family:var(--font-mono);font-size:11px;background:#1a1a1a;padding:2px 6px;border-radius:4px">&lt;em&gt;&lt;/em&gt;</code> for formatting. Leave blank to use site defaults.</p>
+          <p>Overrides the headline and subtitle shown in the landing page hero. Only <code style="font-family:var(--font-mono);font-size:11px;background:#161616;padding:2px 6px;border-radius:4px">&lt;br/&gt;</code> and <code style="font-family:var(--font-mono);font-size:11px;background:#161616;padding:2px 6px;border-radius:4px">&lt;em&gt;&lt;/em&gt;</code> are rendered; other tags are stripped. Leave blank to use site defaults.</p>
           <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px">
-            <div class="settings-label">Headline HTML</div>
-            <textarea class="settings-textarea" id="fp-headline" rows="2" placeholder="Your City,&lt;br/&gt;&lt;em&gt;in 3D.&lt;/em&gt;"></textarea>
+            <div class="settings-label">Headline</div>
+            <textarea class="settings-textarea" id="fp-headline" rows="2" placeholder="Cities&lt;br/&gt;in 3D."></textarea>
           </div>
           <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:8px;margin-top:16px">
             <div class="settings-label">Subtitle</div>
@@ -356,8 +403,8 @@
 
         <!-- Gallery images -->
         <div class="settings-card">
-          <h2>Gallery Images</h2>
-          <p>Enter image URLs (relative paths like <code style="font-family:var(--font-mono);font-size:11px;background:#1a1a1a;padding:2px 6px;border-radius:4px">/images/photo.jpg</code> or full https:// URLs) and optional captions. Empty slots show a placeholder on the site.</p>
+          <h2>Gallery — “Recent prints”</h2>
+          <p>Enter image URLs (relative paths like <code style="font-family:var(--font-mono);font-size:11px;background:#161616;padding:2px 6px;border-radius:4px">/images/photo.jpg</code> or full https:// URLs) and optional captions. The landing-page gallery section appears only when at least one photo is set.</p>
           <div id="gallery-slots"></div>
         </div>
 
@@ -376,464 +423,6 @@
 
   </div>
 
-  <style>
-    .gallery-slot {
-      display:grid;
-      grid-template-columns: 1fr 220px;
-      gap: 10px;
-      margin-bottom: 14px;
-      align-items: center;
-    }
-    .gallery-slot-num {
-      font-size:11px;font-weight:600;color:var(--text-muted);
-      text-transform:uppercase;letter-spacing:0.05em;
-      margin-bottom: 5px;
-    }
-    .fp-input {
-      width:100%;
-      background: #141414; border: 1px solid var(--border); border-radius: 8px;
-      color: var(--text); font-family: var(--font-mono); font-size: 13px;
-      padding: 9px 12px; outline: none;
-    }
-    .fp-input:focus { border-color: #fff; box-shadow: 0 0 0 3px rgba(255,255,255,0.07); }
-    .fp-caption {
-      background: #141414; border: 1px solid var(--border); border-radius: 8px;
-      color: var(--text); font-family: var(--font); font-size: 13px;
-      padding: 9px 12px; outline: none; width: 100%;
-    }
-    .fp-caption:focus { border-color: #fff; }
-    .preview-thumb {
-      width:100%; aspect-ratio:1;
-      border-radius:10px; border:1px solid var(--border);
-      background:var(--bg-elevated);
-      object-fit:cover;
-      display:flex; align-items:center; justify-content:center;
-      font-size:11px; color:var(--text-muted);
-    }
-  </style>
-
-  <script>
-    let adminToken = '';
-    let orders = [];
-    let activeFilter = 'all';
-    let shopSettings = { orderLimit: 50, preOrderEnabled: true, preOrderMessage: '' };
-
-    // ─── Login ───────────────────────────────────────────────────
-    document.getElementById('login-btn').addEventListener('click', doLogin);
-    document.getElementById('admin-pw').addEventListener('keydown', e => {
-      if (e.key === 'Enter') doLogin();
-    });
-    document.getElementById('logout-btn').addEventListener('click', () => {
-      adminToken = '';
-      document.getElementById('dashboard').style.display = 'none';
-      document.getElementById('login-screen').style.display = 'flex';
-      document.getElementById('admin-pw').value = '';
-    });
-
-    async function doLogin() {
-      const pw = document.getElementById('admin-pw').value.trim();
-      if (!pw) return;
-      document.getElementById('login-error').textContent = '';
-
-      try {
-        const resp = await fetch('/api/admin-verify', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ password: pw }),
-        });
-        const data = await resp.json();
-        if (data.success) {
-          adminToken = data.token;
-          document.getElementById('login-screen').style.display = 'none';
-          document.getElementById('dashboard').style.display = 'block';
-          loadOrders();
-        } else {
-          document.getElementById('login-error').textContent = data.error || 'Invalid password';
-          if (resp.status === 429) {
-            document.getElementById('admin-pw').disabled = true;
-            document.getElementById('login-btn').disabled = true;
-          }
-        }
-      } catch (err) {
-        document.getElementById('login-error').textContent = 'Connection error';
-      }
-    }
-
-    // ─── Load orders ─────────────────────────────────────────────
-    async function loadOrders() {
-      try {
-        const resp = await fetch('/api/admin-orders', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: adminToken, limit: 50 }),
-        });
-        const data = await resp.json();
-        if (data.error) {
-          const el = document.getElementById('orders-list');
-          el.innerHTML = '<div class="empty-state"><h2>Error</h2><p></p></div>';
-          el.querySelector('p').textContent = data.error;
-          return;
-        }
-        orders = data.orders || [];
-        renderOrders();
-        updateStats();
-      } catch (err) {
-        document.getElementById('orders-list').innerHTML = `<div class="empty-state"><h2>Failed to load</h2><p>${err.message}</p></div>`;
-      }
-    }
-
-    // ─── Tab filtering ─────────────────────────────────────────
-    document.getElementById('status-tabs').addEventListener('click', e => {
-      const tab = e.target.closest('.status-tab');
-      if (!tab) return;
-      activeFilter = tab.dataset.filter;
-      document.querySelectorAll('.status-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      renderOrders();
-    });
-
-    function updateStats() {
-      const counts = { all: orders.length, pending: 0, printing: 0, shipped: 0, delivered: 0 };
-      for (const o of orders) {
-        if (counts[o.status] !== undefined) counts[o.status]++;
-      }
-      document.getElementById('stat-total').textContent = counts.all;
-      document.getElementById('stat-pending').textContent = counts.pending;
-      document.getElementById('stat-printing').textContent = counts.printing;
-      document.getElementById('stat-shipped').textContent = counts.shipped;
-      const revenue = orders.reduce((sum, o) => sum + (o.amount || 0), 0) / 100;
-      document.getElementById('stat-revenue').textContent = '$' + revenue.toFixed(2);
-
-      // Update tab counts
-      document.getElementById('tab-all').textContent = counts.all;
-      document.getElementById('tab-pending').textContent = counts.pending;
-      document.getElementById('tab-printing').textContent = counts.printing;
-      document.getElementById('tab-shipped').textContent = counts.shipped;
-      document.getElementById('tab-delivered').textContent = counts.delivered;
-    }
-
-    let sortOldestFirst = true; // default: oldest pending at top
-
-    function renderOrders() {
-      const list = document.getElementById('orders-list');
-      let filtered = activeFilter === 'all' ? [...orders] : orders.filter(o => o.status === activeFilter);
-
-      // Sort: oldest first (ascending) or newest first (descending)
-      filtered.sort((a, b) => sortOldestFirst ? a.created - b.created : b.created - a.created);
-
-      // Update sort button label
-      const sortBtn = document.getElementById('sort-btn');
-      if (sortBtn) sortBtn.textContent = sortOldestFirst ? '↑ Oldest first' : '↓ Newest first';
-
-      if (orders.length === 0) {
-        list.innerHTML = '<div class="empty-state"><h2>No orders yet</h2><p>Orders will appear here once customers complete checkout.</p></div>';
-        return;
-      }
-      if (filtered.length === 0) {
-        list.innerHTML = `<div class="empty-state"><h2>No ${activeFilter} orders</h2><p>Orders with "${activeFilter}" status will appear here.</p></div>`;
-        return;
-      }
-
-      list.innerHTML = filtered.map((o) => {
-        const date = new Date(o.created * 1000);
-        const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-        const amount = '$' + (o.amount / 100).toFixed(2);
-        const orderId = o.orderId || ('C3D-' + o.id.slice(-4).toUpperCase());
-        const shortId = o.id.slice(-8).toUpperCase();
-        const sid = o.id; // stable Stripe session ID — safe for HTML attrs (alphanumeric + _)
-        const addr = o.shipping;
-        const addrStr = addr
-          ? `${escHtml(addr.line1)}${addr.line2 ? ', ' + escHtml(addr.line2) : ''}, ${escHtml(addr.city)}, ${escHtml(addr.state)} ${escHtml(addr.postal)}, ${escHtml(addr.country)}`
-          : 'No address';
-        const m = o.model;
-        const safeId       = escHtml(orderId);
-        const safeName     = escHtml(o.name);
-        const safeEmail    = escHtml(o.email);
-        const safeStatus   = escHtml(o.status);
-        const safeShipName = escHtml(addr ? addr.name : '');
-
-        return `
-          <div class="order-card">
-            <div class="order-header" onclick="toggleOrder('${sid}')">
-              <div class="order-left">
-                <span class="order-id">${safeId}</span>
-                <span class="order-num">#${shortId}</span>
-                <span class="order-date">${dateStr}</span>
-                <span style="font-size:12px;color:var(--text-muted)">${safeName || safeEmail}</span>
-              </div>
-              <div class="order-right">
-                <span class="order-amount">${amount}</span>
-                ${o.preOrder ? '<span class="preorder-badge">Pre-order</span>' : ''}
-                <span class="status-badge status-${safeStatus}">${safeStatus}</span>
-              </div>
-            </div>
-            <div class="order-details" id="order-${sid}">
-              <div class="detail-grid">
-                <div class="detail-section">
-                  <h3>Customer</h3>
-                  <div class="detail-row"><span class="detail-label">Name: </span><span class="detail-val">${safeName || '—'}</span></div>
-                  <div class="detail-row"><span class="detail-label">Email: </span><span class="detail-val">${safeEmail || '—'}</span></div>
-                </div>
-                <div class="detail-section">
-                  <h3>Shipping</h3>
-                  <div class="detail-row"><span class="detail-val">${addr ? safeShipName : '—'}</span></div>
-                  <div class="detail-row"><span class="detail-val">${addrStr}</span></div>
-                </div>
-                <div class="detail-section">
-                  <h3>Model Parameters</h3>
-                  <div class="detail-row"><span class="detail-label">Location: </span><span class="detail-val">${m.lat.toFixed(4)}, ${m.lng.toFixed(4)}</span></div>
-                  <div class="detail-row"><span class="detail-label">Radius: </span><span class="detail-val">${m.radius} km</span></div>
-                  <div class="detail-row"><span class="detail-label">Scale: </span><span class="detail-val">${m.verticalScale}x</span></div>
-                  <div class="detail-row"><span class="detail-label">Shape: </span><span class="detail-val">${m.shape || 'hexagon'}</span></div>
-                  <div class="detail-row"><span class="detail-label">Connected tiles: </span><span class="detail-val">${(Number(m.tileCount) || 1) > 1 ? `${m.tileCount} (separate prints)` : '1'}</span></div>
-                  <div class="detail-row"><span class="detail-label">Rotation: </span><span class="detail-val">${m.rotation ?? 0}°</span></div>
-                  <div class="detail-row"><span class="detail-label">Elevation: </span><span class="detail-val">${m.elevation ? 'Yes' : 'No'}</span></div>
-                  <div class="detail-row"><span class="detail-label">Terrain relief: </span><span class="detail-val">${m.terrainRelief ? 'Yes' : 'No'}</span></div>
-                  <div class="detail-row"><span class="detail-label">Detailed buildings: </span><span class="detail-val">${m.detailedBuildings ? 'Yes' : 'No'}</span></div>
-                  <div class="detail-row"><span class="detail-label">Road elevation: </span><span class="detail-val">${m.roadElevation ? 'Yes' : 'No'}</span></div>
-                </div>
-              </div>
-              <div class="order-actions">
-                <button class="btn-action primary" onclick="openInGenerator('${sid}')">Open in Generator</button>
-                <select class="status-select" onchange="updateStatus('${o.id}', this.value)">
-                  <option value="pending" ${o.status === 'pending' ? 'selected' : ''}>Pending</option>
-                  <option value="printing" ${o.status === 'printing' ? 'selected' : ''}>Printing</option>
-                  <option value="shipped" ${o.status === 'shipped' ? 'selected' : ''}>Shipped</option>
-                  <option value="delivered" ${o.status === 'delivered' ? 'selected' : ''}>Delivered</option>
-                </select>
-              </div>
-            </div>
-          </div>`;
-      }).join('');
-    }
-
-    function toggleOrder(sid) {
-      const el = document.getElementById('order-' + sid);
-      el.classList.toggle('open');
-    }
-
-    // Open the main site with order params pre-filled so you can regenerate & export
-    function openInGenerator(sid) {
-      const o = orders.find(o => o.id === sid);
-      if (!o) return;
-      const m = o.model;
-      const orderId = o.orderId || ('C3D-' + o.id.slice(-4).toUpperCase());
-      const params = new URLSearchParams({
-        lat: m.lat, lng: m.lng, radius: m.radius,
-        scale: m.verticalScale, elevation: m.elevation,
-        terrainRelief:     m.terrainRelief     ?? false,
-        detailedBuildings: m.detailedBuildings ?? false,
-        roadElevation:     m.roadElevation     ?? false,
-        shape:             m.shape             || 'hexagon',
-        rotation:          m.rotation          ?? 0,
-        admin: '1',
-        orderId: orderId,
-      });
-      window.open('/app.html?' + params.toString(), '_blank');
-    }
-
-    // ─── Page tabs ─────────────────────────────────────────────
-    document.querySelector('.page-tabs').addEventListener('click', e => {
-      const tab = e.target.closest('.page-tab');
-      if (!tab) return;
-      const page = tab.dataset.page;
-      document.querySelectorAll('.page-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      document.querySelectorAll('.page-content').forEach(p => p.classList.remove('active'));
-      document.getElementById('page-' + page).classList.add('active');
-      if (page === 'limits') loadSettings();
-      if (page === 'frontpage') loadFrontPageContent();
-    });
-
-    // ─── Settings ────────────────────────────────────────────
-    async function loadSettings() {
-      try {
-        const resp = await fetch('/api/admin-settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: adminToken }),
-        });
-        const data = await resp.json();
-        if (data.settings) {
-          shopSettings = data.settings;
-          document.getElementById('setting-order-limit').value = shopSettings.orderLimit;
-          document.getElementById('setting-preorder-enabled').checked = shopSettings.preOrderEnabled;
-          document.getElementById('setting-preorder-message').value = shopSettings.preOrderMessage;
-        }
-      } catch { /* use defaults */ }
-      updateLimitBar();
-    }
-
-    function updateLimitBar() {
-      const count = orders.length;
-      const limit = shopSettings.orderLimit || 1;
-      const pct = Math.min(100, Math.round((count / limit) * 100));
-      const fill = document.getElementById('limit-bar-fill');
-      fill.style.width = pct + '%';
-      fill.style.background = pct >= 100 ? '#ff9800' : pct >= 80 ? '#ffc107' : '#66bb6a';
-      document.getElementById('limit-count-label').textContent = `${count} / ${shopSettings.orderLimit} orders`;
-      document.getElementById('limit-pct-label').textContent = pct + '%';
-    }
-
-    document.getElementById('save-settings-btn').addEventListener('click', async () => {
-      const btn = document.getElementById('save-settings-btn');
-      const status = document.getElementById('save-status');
-      btn.disabled = true;
-      status.textContent = 'Saving...';
-      status.style.color = 'var(--text-muted)';
-
-      try {
-        const resp = await fetch('/api/admin-update-settings', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token: adminToken,
-            orderLimit: parseInt(document.getElementById('setting-order-limit').value, 10),
-            preOrderEnabled: document.getElementById('setting-preorder-enabled').checked,
-            preOrderMessage: document.getElementById('setting-preorder-message').value,
-          }),
-        });
-        const data = await resp.json();
-        if (data.success) {
-          shopSettings = data.settings;
-          status.textContent = 'Saved!';
-          status.style.color = '#66bb6a';
-          updateLimitBar();
-        } else {
-          status.textContent = 'Error: ' + (data.error || 'Unknown');
-          status.style.color = '#ff6b6b';
-        }
-      } catch (err) {
-        status.textContent = 'Failed: ' + err.message;
-        status.style.color = '#ff6b6b';
-      }
-      btn.disabled = false;
-      setTimeout(() => { status.textContent = ''; }, 3000);
-    });
-
-    // ─── Front Page content ────────────────────────────────────
-    let fpContent = null;
-
-    function buildGallerySlots(gallery) {
-      const container = document.getElementById('gallery-slots');
-      container.innerHTML = '';
-      for (let i = 0; i < 6; i++) {
-        const item = gallery[i] || { url: '', caption: '' };
-        const slot = document.createElement('div');
-        slot.style.marginBottom = '20px';
-        slot.innerHTML = `
-          <div class="gallery-slot-num">Photo ${i+1}</div>
-          <div class="gallery-slot">
-            <div>
-              <input class="fp-input" id="gurl-${i}" placeholder="https://... or /images/photo.jpg" value="${escHtml(item.url)}" />
-            </div>
-            <div>
-              <input class="fp-caption" id="gcap-${i}" placeholder="Caption (optional)" value="${escHtml(item.caption)}" />
-            </div>
-          </div>`;
-        container.appendChild(slot);
-
-        // Live preview on URL change
-        document.getElementById('gurl-' + i)?.addEventListener('input', updateGalleryPreview);
-      }
-      updateGalleryPreview();
-    }
-
-    function escHtml(s) {
-      return (s || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-    }
-
-    function updateGalleryPreview() {
-      const urls = Array.from({ length: 6 }, (_, i) => document.getElementById('gurl-' + i)?.value || '');
-      const hasAny = urls.some(u => u.trim());
-      const previewCard = document.getElementById('gallery-preview-card');
-      const previewGrid = document.getElementById('gallery-preview-grid');
-      previewCard.style.display = hasAny ? '' : 'none';
-      previewGrid.innerHTML = urls.map((url, i) =>
-        url.trim()
-          ? `<img class="preview-thumb" src="${escHtml(url)}" alt="Photo ${i+1}" onerror="this.style.outline='1px solid #ff6b6b';this.alt='⚠ Not found'" />`
-          : `<div class="preview-thumb" style="display:flex;align-items:center;justify-content:center">empty</div>`
-      ).join('');
-    }
-
-    async function loadFrontPageContent() {
-      try {
-        const resp = await fetch('/api/content');
-        const data = await resp.json();
-        fpContent = data.content || {};
-      } catch {
-        fpContent = {};
-      }
-
-      const DEFAULT_HEADLINE = 'Your City,<br/><em>in 3D.</em>';
-      const DEFAULT_SUB = 'Pick any place on Earth. We generate a real 3D model with actual buildings, roads, and terrain — then print and ship it to you.';
-
-      document.getElementById('fp-headline').value = fpContent.heroHeadline === DEFAULT_HEADLINE ? '' : (fpContent.heroHeadline || '');
-      document.getElementById('fp-sub').value       = fpContent.heroSub === DEFAULT_SUB ? '' : (fpContent.heroSub || '');
-      buildGallerySlots(fpContent.gallery || Array(6).fill({ url: '', caption: '' }));
-    }
-
-    document.getElementById('save-frontpage-btn').addEventListener('click', async () => {
-      const btn    = document.getElementById('save-frontpage-btn');
-      const status = document.getElementById('fp-save-status');
-      btn.disabled = true;
-      status.textContent = 'Saving…';
-      status.style.color = 'var(--text-muted)';
-
-      const gallery = Array.from({ length: 6 }, (_, i) => ({
-        url:     (document.getElementById('gurl-' + i)?.value || '').trim(),
-        caption: (document.getElementById('gcap-' + i)?.value || '').trim(),
-      }));
-
-      const heroHeadlineRaw = document.getElementById('fp-headline').value.trim();
-      const heroSubRaw      = document.getElementById('fp-sub').value.trim();
-
-      try {
-        const resp = await fetch('/api/admin-update-content', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token: adminToken,
-            heroHeadline: heroHeadlineRaw || null,
-            heroSub:      heroSubRaw      || null,
-            gallery,
-          }),
-        });
-        const data = await resp.json();
-        if (data.success) {
-          fpContent = data.content;
-          status.textContent = '✓ Saved — changes live on the site';
-          status.style.color = '#66bb6a';
-        } else {
-          status.textContent = 'Error: ' + (data.error || 'Unknown');
-          status.style.color = '#ff6b6b';
-        }
-      } catch (err) {
-        status.textContent = 'Failed: ' + err.message;
-        status.style.color = '#ff6b6b';
-      }
-      btn.disabled = false;
-      setTimeout(() => { status.textContent = ''; }, 4000);
-    });
-
-    async function updateStatus(sessionId, status) {
-      try {
-        const resp = await fetch('/api/admin-update-order', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ token: adminToken, sessionId, status }),
-        });
-        const data = await resp.json();
-        if (data.success) {
-          const o = orders.find(o => o.id === sessionId);
-          if (o) o.status = status;
-          renderOrders();
-          updateStats();
-        }
-      } catch (err) {
-        alert('Failed to update: ' + err.message);
-      }
-    }
-  </script>
+  <script type="module" src="/src/admin.js"></script>
 </body>
 </html>

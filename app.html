@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob: https://*.tile.openstreetmap.org https://unpkg.com https://s3.amazonaws.com; connect-src 'self' https://nominatim.openstreetmap.org https://overpass-api.de https://overpass.kumi.systems https://overpass.openstreetmap.fr https://overpass.openstreetmap.ru https://overpass.private.coffee https://maps.mail.ru https://s3.amazonaws.com https://tile.nextzen.org;" />
-  <title>Cities3ds</title>
+  <!-- CSP is set site-wide by the worker (one canonical policy for all pages). -->
+  <title>Cities3ds — Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
@@ -16,16 +16,18 @@
     <!-- ── Header ─────────────────────────────────────────────────── -->
     <header id="header">
       <div class="header-left">
-        <div class="logo">
-          <svg width="28" height="28" viewBox="0 0 32 32" fill="none">
+        <a class="logo" href="/" title="Back to Cities3ds">
+          <svg width="26" height="26" viewBox="0 0 32 32" fill="none">
             <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z" stroke="currentColor" stroke-width="2" fill="none"/>
             <path d="M16 8L22.66 11.5V20.5L16 24L9.34 20.5V11.5L16 8Z" fill="currentColor" opacity="0.3"/>
           </svg>
           <span class="logo-text">Cities<span class="logo-accent">3d</span>s</span>
-        </div>
+          <span class="logo-divider"></span>
+          <span class="logo-studio">Studio</span>
+        </a>
       </div>
       <div class="header-right">
-        <div class="header-badge">v0.3 Demo</div>
+        <a class="header-badge" href="/#how">How it works</a>
       </div>
     </header>
 
@@ -69,22 +71,26 @@
             <span class="setting-name">Shape</span>
           </div>
           <div class="shape-selector" id="shape-selector">
-            <button class="shape-btn active" data-shape="hexagon" title="Hexagon">
+            <button class="shape-btn active" data-shape="hexagon" title="Hexagon — tiles into a honeycomb">
               <svg width="20" height="20" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M16 2L28.66 9.5V24.5L16 32L3.34 24.5V9.5L16 2Z"/>
               </svg>
+              <span class="shape-btn-label">Hexagon</span>
             </button>
-            <button class="shape-btn" data-shape="square" title="Square">
+            <button class="shape-btn" data-shape="square" title="Square — tiles into a grid">
               <svg width="20" height="20" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="26" height="26"/>
               </svg>
+              <span class="shape-btn-label">Square</span>
             </button>
-            <button class="shape-btn" data-shape="circle" title="Circle">
+            <button class="shape-btn" data-shape="circle" title="Circle — single tile">
               <svg width="20" height="20" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="16" cy="16" r="13"/>
               </svg>
+              <span class="shape-btn-label">Circle</span>
             </button>
           </div>
+          <div class="tile-hint">Square &amp; hexagon maps can grow — click the dashed tiles on the map to connect up to 3×3.</div>
 
           <!-- Rotation control removed: maps always generate north-up. Hidden
                input kept at 0 so existing JS references resolve without null checks. -->
