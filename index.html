@@ -31,7 +31,9 @@
       html { scroll-behavior: auto !important; }
     }
 
-    html { scroll-behavior: smooth; }
+    /* NOTE: no CSS scroll-behavior:smooth — it silently swallows programmatic
+       scrolls in some embedded/quirky environments. landing.js implements its
+       own rAF tween for anchors + the scroll rail, which works everywhere. */
     body {
       font-family: var(--font);
       background: var(--bg);
@@ -164,10 +166,45 @@
     /* ── Scroll progress line (fills as you scroll) ──────────────────── */
     #scroll-progress {
       position: fixed; top: 0; left: 0;
-      height: 2px; width: 0;
+      height: 3px; width: 0;
       background: #fff; z-index: 400;
       pointer-events: none;
     }
+
+    /* ── Scroll slider rail (right edge) — drag the thumb or click the
+           track to fly through the page; the thumb mirrors your position ── */
+    #scroll-rail {
+      position: fixed; right: 12px; top: 50%;
+      transform: translateY(-50%);
+      height: 46vh; width: 26px;             /* generous grab area */
+      display: flex; align-items: stretch; justify-content: center;
+      z-index: 390; cursor: grab;
+      touch-action: none;
+      opacity: 0; animation: railIn 0.9s var(--ease) 1.3s both;
+    }
+    #scroll-rail.dragging { cursor: grabbing; }
+    @keyframes railIn {
+      from { opacity: 0; transform: translateY(-50%) translateX(10px); }
+      to   { opacity: 1; transform: translateY(-50%); }
+    }
+    .rail-track {
+      width: 2px; height: 100%; border-radius: 2px;
+      background: rgba(255, 255, 255, 0.16);
+      position: relative;
+      transition: background 0.25s var(--ease);
+    }
+    #scroll-rail:hover .rail-track,
+    #scroll-rail.dragging .rail-track { background: rgba(255, 255, 255, 0.32); }
+    .rail-thumb {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      top: 0; width: 4px; height: 58px; border-radius: 4px;
+      background: #fff;
+      box-shadow: 0 0 14px rgba(255, 255, 255, 0.35);
+      transition: width 0.2s var(--ease);
+    }
+    #scroll-rail:hover .rail-thumb,
+    #scroll-rail.dragging .rail-thumb { width: 7px; }
+    @media (max-width: 900px) { #scroll-rail { display: none; } }
 
     /* ── Scroll-down cue — white line with a travelling pulse ────────── */
     .scroll-cue {
@@ -411,6 +448,11 @@
 
   <!-- ── Scroll progress (fills as you read) ───────────────────────── -->
   <div id="scroll-progress" aria-hidden="true"></div>
+
+  <!-- ── Scroll slider rail — drag to scroll ───────────────────────── -->
+  <div id="scroll-rail" title="Drag to scroll">
+    <div class="rail-track"><div class="rail-thumb" id="rail-thumb"></div></div>
+  </div>
 
   <!-- ── Hero ──────────────────────────────────────────────────────── -->
   <section class="hero">

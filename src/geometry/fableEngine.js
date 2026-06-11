@@ -33,8 +33,8 @@
 import * as THREE from 'three';
 import { MODEL_RADIUS_MM, BASE_THICKNESS_MM, ensureCCW } from '../utils/helpers.js';
 import { getShapeVertices } from '../geo/geoMath.js';
-import { buildMapModelV2, makeHeightField, Acc, ROAD_HALF_W } from './mapEngine.js';
-import { rasterizeNetwork, buildFieldMesh } from './netMesh.js';
+import { buildMapModelV2, makeHeightField, Acc, roadHalfWidthMM } from './mapEngine.js';
+import { rasterizeNetwork, buildFieldMesh, scanlineFillPolygon } from './netMesh.js';
 
 const R = MODEL_RADIUS_MM;
 const BASE = BASE_THICKNESS_MM;
@@ -61,30 +61,9 @@ function boardInsideFn(shape) {
   };
 }
 
-// Scanline-fill a polygon into grid cells (even-odd). Calls set(k) per cell.
-function fillPolygon(ring, set) {
-  const step = (2 * R) / (N - 1);
-  let minY = Infinity, maxY = -Infinity;
-  for (const p of ring) { if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y; }
-  const j0 = Math.max(0, Math.ceil((minY + R) / step));
-  const j1 = Math.min(N - 1, Math.floor((maxY + R) / step));
-  for (let j = j0; j <= j1; j++) {
-    const y = -R + j * step;
-    const xs = [];
-    for (let i = 0, q = ring.length - 1; i < ring.length; q = i++) {
-      const a = ring[q], b = ring[i];
-      if ((a.y > y) !== (b.y > y)) {
-        xs.push(a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y));
-      }
-    }
-    xs.sort((p, qq) => p - qq);
-    for (let s = 0; s + 1 < xs.length; s += 2) {
-      const i0 = Math.max(0, Math.ceil((xs[s] + R) / step));
-      const i1 = Math.min(N - 1, Math.floor((xs[s + 1] + R) / step));
-      for (let i = i0; i <= i1; i++) set(j * N + i);
-    }
-  }
-}
+// Scanline-fill a polygon into grid cells — shared netMesh helper, bound to
+// this engine's grid.
+const fillPolygon = (ring, set) => scanlineFillPolygon(ring, N, R, set);
 
 // One 3×3 smoothing pass over a ±1 indicator → zero-crossing between cells →
 // marching squares interpolates a rounded shoreline instead of stair-steps.
@@ -130,10 +109,11 @@ export function buildMapModelFable(features, terrainOptions, projection, vertExa
 
   onProgress?.('Fable: rasterising ground classes…', 68);
 
-  // 2a. ROADS — true SDF (smooth, per-class widths), wins every cell it touches.
+  // 2a. ROADS — true SDF with REAL-WORLD widths at map scale (clamped to the
+  //     printable floor), wins every ground cell it touches.
   const allRoads = [...(features.roads || []), ...(features.paths || [])];
   const roadF = rasterizeNetwork(allRoads, N, R,
-    (road) => ROAD_HALF_W[road.tags?.highway] ?? 0.55, inside);
+    (road) => roadHalfWidthMM(road, projection.horizontalScale), inside);
 
   // 2b. WATER — indicator + per-cell level (flat per polygon: sea at the fixed
   //     sea line, inland lakes at their local low percentile, like V2).
@@ -171,8 +151,17 @@ export function buildMapModelFable(features, terrainOptions, projection, vertExa
     nParkPolys++;
   }
 
-  // 3. Priority masking → one owner per cell → overlaps impossible.
-  //    (Applied BEFORE smoothing so the smoothed shoreline respects roads.)
+  // 3. Priority masking → ONE owner per cell → overlaps impossible.
+  //    BUILDING > road > water > park: buildings own their ground outright,
+  //    so no ground feature ever runs through a footprint.
+  for (const b of (features.buildings || [])) {
+    const poly = b.polygon;
+    if (!poly || poly.length < 3) continue;
+    fillPolygon(poly, (k) => {
+      if (roadF[k] > -0.05) roadF[k] = -0.05;
+      waterInd[k] = -1; parkInd[k] = -1;
+    });
+  }
   for (let k = 0; k < N * N; k++) {
     if (roadF[k] > 0) { waterInd[k] = -1; parkInd[k] = -1; }
     else if (waterInd[k] > 0) parkInd[k] = -1;

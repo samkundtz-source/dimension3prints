@@ -82,6 +82,33 @@ function rasterizeNetwork(roads, N, R, halfWidthOf, insideBoard) {
 // into buildFieldMesh.
 export { rasterizeNetwork };
 
+// Scanline-fill a polygon into the N×N grid (even-odd rule); calls set(k) for
+// every covered cell index. Shared by the building mask and the Fable engine's
+// water/park rasterization.
+export function scanlineFillPolygon(ring, N, R, set) {
+  const step = (2 * R) / (N - 1);
+  let minY = Infinity, maxY = -Infinity;
+  for (const p of ring) { if (p.y < minY) minY = p.y; if (p.y > maxY) maxY = p.y; }
+  const j0 = Math.max(0, Math.ceil((minY + R) / step));
+  const j1 = Math.min(N - 1, Math.floor((maxY + R) / step));
+  for (let j = j0; j <= j1; j++) {
+    const y = -R + j * step;
+    const xs = [];
+    for (let i = 0, q = ring.length - 1; i < ring.length; q = i++) {
+      const a = ring[q], b = ring[i];
+      if ((a.y > y) !== (b.y > y)) {
+        xs.push(a.x + (y - a.y) * (b.x - a.x) / (b.y - a.y));
+      }
+    }
+    xs.sort((p, qq) => p - qq);
+    for (let s = 0; s + 1 < xs.length; s += 2) {
+      const i0 = Math.max(0, Math.ceil((xs[s] + R) / step));
+      const i1 = Math.min(N - 1, Math.floor((xs[s + 1] + R) / step));
+      for (let i = i0; i <= i1; i++) set(j * N + i);
+    }
+  }
+}
+
 // ─── 2+3. Grid-conforming solid extraction ──────────────────────────────────
 /**
  * Build the unified network solid into `acc` (an {pos[], idx[], n} accumulator).
@@ -90,8 +117,16 @@ export { rasterizeNetwork };
  * Returns the number of covered grid cells (0 → nothing emitted).
  */
 export function buildNetworkMesh(acc, roads, opts) {
-  const { R, boundaryInside, halfWidthOf, gridN = 384 } = opts;
+  const { R, boundaryInside, halfWidthOf, gridN = 384, maskPolys } = opts;
   const field = rasterizeNetwork(roads, gridN, R, halfWidthOf, boundaryInside);
+  // Mask polygons (building footprints) carve the network: a road may run UP
+  // TO a building but never through it — buildings own their ground.
+  if (maskPolys) {
+    for (const poly of maskPolys) {
+      if (!poly || poly.length < 3) continue;
+      scanlineFillPolygon(poly, gridN, R, (k) => { if (field[k] > -0.05) field[k] = -0.05; });
+    }
+  }
   return buildFieldMesh(acc, field, opts);
 }
 

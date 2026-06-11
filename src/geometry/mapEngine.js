@@ -20,7 +20,7 @@
 
 import * as THREE from 'three';
 import earcut from 'earcut';
-import { MODEL_RADIUS_MM, BASE_THICKNESS_MM, bilinearInterp } from '../utils/helpers.js';
+import { MODEL_RADIUS_MM, BASE_THICKNESS_MM, bilinearInterp, ROAD_WIDTHS_M, ROAD_MIN_VISUAL_HALF_MM } from '../utils/helpers.js';
 import { buildNetworkMesh } from './netMesh.js';
 import { getShapeVertices } from '../geo/geoMath.js';
 
@@ -842,21 +842,21 @@ function collectBuildings(acc, buildings, hf, vExag) {
 // 2 sides) sitting ON the terrain — not a paper-thin double-sided quad — so it
 // reads clearly and never culls. RISE is well above the building foot-sink so
 // roads always sit on top of the surface.
-// Half-width (mm) by OSM highway class — gives the printed map a real road
-// HIERARCHY: motorways read as broad arteries, residential streets as fine
-// lines, footpaths as hairlines. Every full width stays ≥0.6mm (one 0.4mm
-// nozzle pass + margin) so everything still prints. Unknown classes get the
-// residential width.
-export const ROAD_HALF_W = {
-  motorway: 1.30, motorway_link: 0.90,
-  trunk:    1.15, trunk_link:    0.80,
-  primary:  1.00, primary_link:  0.70,
-  secondary:0.85, secondary_link:0.65,
-  tertiary: 0.70, tertiary_link: 0.55,
-  unclassified: 0.55, residential: 0.55, living_street: 0.50, road: 0.55,
-  service: 0.40, pedestrian: 0.45,
-  footway: 0.30, path: 0.30, cycleway: 0.30, steps: 0.30, track: 0.35, bridleway: 0.30,
-};
+// Road half-width in MODEL mm — derived from the REAL road width at the
+// current map scale, clamped to a printable minimum. This is the fix for
+// "roads bigger than the buildings": a 2m footpath maps to ~0.13mm at 1km
+// radius and gets only the 0.44mm printable floor, instead of a fixed 0.6mm
+// that dwarfed row-houses. Widths now scale correctly with capture radius:
+// zoom out and streets thin down exactly like the buildings do.
+// ROAD_WIDTHS_M holds real centre→kerb half-widths (m); the MIN table holds
+// the printability floor (half ≥ 0.22mm → full ≥ 0.44mm ≈ one nozzle pass).
+export function roadHalfWidthMM(road, mmPerM) {
+  const t = road.tags?.highway || 'residential';
+  const realHalf = (ROAD_WIDTHS_M[t] ?? 4) * (mmPerM || 0.065);
+  const minHalf = ROAD_MIN_VISUAL_HALF_MM[t] ?? 0.3;
+  const half = realHalf > minHalf ? realHalf : minHalf;
+  return half > 1.35 ? 1.35 : half;   // visual cap so motorways stay elegant
+}
 
 // Signed inside-distance to the active board edge (positive inside). Used by
 // the network rasterizer so road regions close cleanly along the border.
@@ -881,7 +881,7 @@ function boardInsideDist(x, y) {
 // smooth outline, and netMesh emits one manifold draped slab per connected
 // region. No overlapping ribbons, no coplanar z-fighting, no jagged seams —
 // the network reads as a single smooth object, like a real printed map.
-function collectRoads(acc, roads, hf, seaLevelY) {
+function collectRoads(acc, roads, hf, seaLevelY, mmPerM, maskPolys) {
   const RISE = 1.0;   // road surface above local ground (mm)
 
   // Engineered road grade: average the terrain over a small cross so the
@@ -901,10 +901,10 @@ function collectRoads(acc, roads, hf, seaLevelY) {
     R,
     gridN: 384,                         // 0.34mm cells — below nozzle width
     boundaryInside: boardInsideDist,
-    halfWidthOf: (road) => ROAD_HALF_W[road.tags?.highway] ?? 0.55,
+    halfWidthOf: (road) => roadHalfWidthMM(road, mmPerM),
     topAt: (x, y) => ground(x, y) + RISE,
     bottomDrop: 1.6,                    // sink well into the terrain
-    minArea: 0.5,
+    maskPolys,                          // building footprints — roads stop at walls
   });
   if (!regions) return 0;
   return (roads || []).filter(r => r.points && r.points.length >= 2).length;
@@ -1125,7 +1125,9 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   // its own unified ground inlay.
   let nR = 0, nW = 0, nP = 0;
   if (engineOpts.blackLayer !== false) {
-    nR = collectRoads(blackAcc, [...(features.roads || []), ...(features.paths || [])], hf, SEA_LEVEL_Y);
+    const buildingMasks = (features.buildings || []).map(b => b.polygon).filter(p => p && p.length >= 3);
+    nR = collectRoads(blackAcc, [...(features.roads || []), ...(features.paths || [])], hf, SEA_LEVEL_Y,
+      projection.horizontalScale, buildingMasks);
     // Render the REAL water polygons (smooth OSM shorelines) draped on the
     // terrain surface so they're always visible and follow the ground.
     // Size/isSea filter keeps oceans from blanketing land.
