@@ -882,7 +882,10 @@ function boardInsideDist(x, y) {
 // region. No overlapping ribbons, no coplanar z-fighting, no jagged seams —
 // the network reads as a single smooth object, like a real printed map.
 function collectRoads(acc, roads, hf, seaLevelY, mmPerM, maskPolys) {
-  const RISE = 1.0;   // road surface above local ground (mm)
+  // Roads are THIN SURFACE STRIPS, not slabs: 0.35mm proud of the ground
+  // (≈2 print layers — clearly visible, crisply printable) instead of the old
+  // 1.0mm which towered over short buildings at city scale.
+  const RISE = 0.35;
 
   // Engineered road grade: average the terrain over a small cross so the
   // surface rolls smoothly instead of tracking every terrain-cell bump, and
@@ -903,7 +906,7 @@ function collectRoads(acc, roads, hf, seaLevelY, mmPerM, maskPolys) {
     boundaryInside: boardInsideDist,
     halfWidthOf: (road) => roadHalfWidthMM(road, mmPerM),
     topAt: (x, y) => ground(x, y) + RISE,
-    bottomDrop: 1.6,                    // sink well into the terrain
+    bottomDrop: 0.9,                    // 0.55mm anchored into the terrain
     maskPolys,                          // building footprints — roads stop at walls
   });
   if (!regions) return 0;
@@ -999,7 +1002,7 @@ function collectParkPolys(acc, parks, hf) {
     // Level: a flat plateau just above the local ground. 80th-percentile of
     // sampled terrain keeps the plate above most of the park without letting
     // one bump float the whole thing; floor dips well below the lowest point.
-    let topY = BASE + 0.35, botY = BASE - 0.6;
+    let topY = BASE + 0.25, botY = BASE - 0.6;
     if (hf) {
       const hs = [];
       for (const p of ring) hs.push(hf.heightAt(p.x, p.y));
@@ -1007,7 +1010,9 @@ function collectParkPolys(acc, parks, hf) {
       for (const p of ring) { cx += p.x; cy += p.y; }
       hs.push(hf.heightAt(cx / nV, cy / nV));
       hs.sort((a, b) => a - b);
-      topY = hs[Math.floor(hs.length * 0.8)] + 0.35;
+      // Parks sit just UNDER the road strips (0.25 vs 0.35) so crossings read
+      // road-over-park.
+      topY = hs[Math.floor(hs.length * 0.8)] + 0.25;
       botY = hs[0] - 0.8;
     }
 

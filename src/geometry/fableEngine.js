@@ -184,16 +184,17 @@ export function buildMapModelFable(features, terrainOptions, projection, vertExa
   const blackAcc = new Acc();
 
   const floorY = SEA_LEVEL_Y + 0.25;
+  // Thin surface strips (0.35mm ≈ 2 layers), not slabs — see mapEngine.
   const roadTop = (x, y) => {
-    if (!hf) return BASE + 1.0;
+    if (!hf) return BASE + 0.35;
     const d = 1.4;
     let h = (hf.heightAt(x, y) + hf.heightAt(x + d, y) + hf.heightAt(x - d, y)
            + hf.heightAt(x, y + d) + hf.heightAt(x, y - d)) / 5;
     if (h < floorY) h = floorY;
-    return h + 1.0;
+    return h + 0.35;
   };
   const roadCells = buildFieldMesh(blackAcc, roadF, {
-    R, gridN: N, topAt: roadTop, bottomDrop: 1.6,
+    R, gridN: N, topAt: roadTop, bottomDrop: 0.9,
   });
 
   const lvlAt = (x, y) => {
@@ -207,7 +208,7 @@ export function buildMapModelFable(features, terrainOptions, projection, vertExa
   });
 
   const parkCells = buildFieldMesh(blackAcc, parkS, {
-    R, gridN: N, topAt: (x, y) => groundAt(x, y) + 0.35, bottomDrop: 1.2,
+    R, gridN: N, topAt: (x, y) => groundAt(x, y) + 0.25, bottomDrop: 0.9,
   });
 
   const blackMesh = blackAcc.build('road');
