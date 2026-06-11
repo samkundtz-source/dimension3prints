@@ -87,15 +87,18 @@
 
     /* ── Hero ────────────────────────────────────────────────────────── */
     .hero {
-      min-height: calc(100vh - 52px);
+      height: calc(100vh - 52px);
+      min-height: 620px;
       display: flex; flex-direction: column; align-items: center; justify-content: center;
-      text-align: center; padding: 72px 24px 110px;
+      text-align: center; padding: 0 24px;
       position: relative; overflow: hidden; isolation: isolate;
     }
+    /* The hero photo is pre-cropped to the model itself (city_hero.jpg), so
+       centering the image centers the MODEL behind the headline. */
     .hero-bg {
       position: absolute; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      width: min(1600px, 130vw); max-height: 130vh;
+      height: min(86vh, 940px); width: auto; max-width: 94vw;
       object-fit: contain; pointer-events: none; z-index: 0;
       opacity: 0; animation: heroBgIn 1.4s var(--ease) 0.05s forwards;
     }
@@ -103,7 +106,7 @@
       from { opacity: 0; transform: translate(-50%, -50%) scale(1.06); }
       to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
     }
-    .hero > * { position: relative; z-index: 1; }
+    .hero > *:not(.hero-bg):not(.scroll-cue) { position: relative; z-index: 1; }
     .hero-eyebrow {
       font-size: 13px; font-weight: 500; opacity: 0.66; margin-bottom: 22px;
       letter-spacing: -0.005em; text-shadow: 0 1px 8px rgba(0,0,0,0.7);
@@ -157,6 +160,48 @@
       from { opacity: 0; transform: translateY(20px); }
       to   { opacity: 1; transform: translateY(0); }
     }
+
+    /* ── Scroll progress line (fills as you scroll) ──────────────────── */
+    #scroll-progress {
+      position: fixed; top: 0; left: 0;
+      height: 2px; width: 0;
+      background: #fff; z-index: 400;
+      pointer-events: none;
+    }
+
+    /* ── Scroll-down cue — white line with a travelling pulse ────────── */
+    .scroll-cue {
+      position: absolute; bottom: 26px; left: 50%;
+      transform: translateX(-50%);
+      display: flex; flex-direction: column; align-items: center; gap: 10px;
+      z-index: 1; text-decoration: none;
+      opacity: 0; animation: fadeUp 1s var(--ease) 1.15s both;
+    }
+    .scroll-cue-label {
+      font-size: 10.5px; font-weight: 500;
+      letter-spacing: 0.16em; text-transform: uppercase;
+      color: var(--text-muted);
+      transition: color 0.25s var(--ease);
+      text-shadow: 0 1px 6px rgba(0,0,0,0.8);
+    }
+    .scroll-cue:hover .scroll-cue-label { color: var(--text); }
+    .scroll-track {
+      width: 2px; height: 54px;
+      background: rgba(255, 255, 255, 0.16);
+      border-radius: 2px; overflow: hidden; position: relative;
+    }
+    .scroll-track::after {
+      content: ''; position: absolute; left: 0; width: 100%; height: 42%;
+      top: -42%;
+      background: #fff; border-radius: 2px;
+      animation: scrollDrip 2.1s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+    }
+    @keyframes scrollDrip {
+      0%   { top: -42%; }
+      62%  { top: 100%; }
+      100% { top: 100%; }
+    }
+    .scroll-cue:hover .scroll-track::after { animation-duration: 1.1s; }
 
     /* ── Spec strip ──────────────────────────────────────────────────── */
     .spec-strip { border-top: 1px solid var(--border); border-bottom: 1px solid var(--border); }
@@ -364,9 +409,12 @@
     </div>
   </nav>
 
+  <!-- ── Scroll progress (fills as you read) ───────────────────────── -->
+  <div id="scroll-progress" aria-hidden="true"></div>
+
   <!-- ── Hero ──────────────────────────────────────────────────────── -->
-  <section class="hero" style="padding-top: 40px">
-    <img class="hero-bg" id="hero-bg-img" src="/images/city_cinematic.jpg" alt="" />
+  <section class="hero">
+    <img class="hero-bg" id="hero-bg-img" src="/images/city_hero.jpg" alt="" />
     <div class="hero-eyebrow">Custom 3D-printed city maps</div>
     <h1 class="hero-title" id="hero-headline">Cities<br>in 3D.</h1>
     <p class="hero-sub" id="hero-sub">Pick any place on Earth. We turn it into a 3D-printed model — buildings, roads, parks, terrain. Yours, delivered.</p>
@@ -381,6 +429,10 @@
         </span>
       </a>
     </div>
+    <a class="scroll-cue" href="#how" aria-label="Scroll down to How it works">
+      <span class="scroll-cue-label">Scroll</span>
+      <span class="scroll-track"></span>
+    </a>
   </section>
 
   <!-- ── Spec strip ────────────────────────────────────────────────── -->

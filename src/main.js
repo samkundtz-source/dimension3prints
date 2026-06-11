@@ -25,6 +25,7 @@ import { createProjection, getHexVerticesGeo, getHexVertices, getShapeVertices, 
 import { geocode, fetchOSMData, parseOSMData, parseMSBuildings, parseOvertureWater, parseOvertureBuildings, resolveOverlaps } from './geo/osmData.js';
 import { buildMapModel } from './geometry/buildMap.js';
 import { buildMapModelV2 } from './geometry/mapEngine.js';
+import { buildMapModelFable } from './geometry/fableEngine.js';
 import { SceneManager }  from './preview/scene.js';
 import { exportSTL, export3MF, exportTilesSTLZip, exportTiles3MFZip } from './export/exporters.js';
 import { MODEL_RADIUS_MM } from './utils/helpers.js';
@@ -514,7 +515,12 @@ async function generate() {
         setStatus(`Terrain unavailable (${err.message}) — using flat base`, 56);
       }
     }
-    const result = buildMapModelV2(features, terrainOptions, projection, vertExag, setStatus, currentShape);
+    // Engine select: Fable (admin beta — unified mutually-exclusive ground
+    // inlay) vs the current terrain-fused engine. Compare side by side.
+    const useFable = !!el('fable-engine')?.checked;
+    if (useFable) setStatus('FABLE engine (beta)…', 61);
+    const result = (useFable ? buildMapModelFable : buildMapModelV2)(
+      features, terrainOptions, projection, vertExag, setStatus, currentShape);
     let group = result.group;
     const modelStats = result.stats;
     // Anchor's elevation mapping — reused by every connected tile so the whole

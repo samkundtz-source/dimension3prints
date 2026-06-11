@@ -21,6 +21,7 @@
 import * as THREE from 'three';
 import earcut from 'earcut';
 import { MODEL_RADIUS_MM, BASE_THICKNESS_MM, bilinearInterp } from '../utils/helpers.js';
+import { buildNetworkMesh } from './netMesh.js';
 import { getShapeVertices } from '../geo/geoMath.js';
 
 const R = MODEL_RADIUS_MM;           // model half-width (mm)
@@ -28,7 +29,7 @@ const BASE = BASE_THICKNESS_MM;      // solid floor thickness (mm)
 const BUILDING_VSCALE = 0.5;         // halve building height (raw was too tall)
 
 // ─── Geometry accumulator (same pattern as buildMap) ────────────────────────
-class Acc {
+export class Acc {
   constructor() { this.pos = []; this.idx = []; this.n = 0; }
   add(pos, idx) {
     const base = this.n;
@@ -278,7 +279,7 @@ function boxBlurGrid(grid, N, passes) {
   return cur;
 }
 
-function makeHeightField(elevGrid, N, vScaleMMperM, normOverride = null) {
+export function makeHeightField(elevGrid, N, vScaleMMperM, normOverride = null) {
   // Use ROBUST low/high (5th/95th percentile) instead of absolute min/max so a
   // patch of sea (elevation 0) or a single spike doesn't drag the whole land
   // onto a plateau / flatten the relief. This keeps coastal cities thin.
@@ -846,7 +847,7 @@ function collectBuildings(acc, buildings, hf, vExag) {
 // lines, footpaths as hairlines. Every full width stays ≥0.6mm (one 0.4mm
 // nozzle pass + margin) so everything still prints. Unknown classes get the
 // residential width.
-const ROAD_HALF_W = {
+export const ROAD_HALF_W = {
   motorway: 1.30, motorway_link: 0.90,
   trunk:    1.15, trunk_link:    0.80,
   primary:  1.00, primary_link:  0.70,
@@ -857,88 +858,56 @@ const ROAD_HALF_W = {
   footway: 0.30, path: 0.30, cycleway: 0.30, steps: 0.30, track: 0.35, bridleway: 0.30,
 };
 
-function collectRoads(acc, roads, hf) {
-  const RISE = 1.0;      // height of road top above terrain (mm)
-  const BOT = 0.3;       // how far the slab sinks into the terrain
+// Signed inside-distance to the active board edge (positive inside). Used by
+// the network rasterizer so road regions close cleanly along the border.
+function boardInsideDist(x, y) {
+  if (!BOUNDARY) {
+    return Math.min(CLIP - Math.abs(x), CLIP - Math.abs(y));
+  }
+  let d = Infinity;
+  for (let i = 0, j = BOUNDARY.length - 1; i < BOUNDARY.length; j = i++) {
+    const a = BOUNDARY[j], b = BOUNDARY[i];
+    const ex = b.x - a.x, ey = b.y - a.y;
+    const L = Math.hypot(ex, ey) || 1;
+    const c = (ex * (y - a.y) - ey * (x - a.x)) / L; // + inside for CCW ring
+    if (c < d) d = c;
+  }
+  return d;
+}
 
-  // Render each road as ONE continuous extruded ribbon following the whole
-  // polyline (mitred corners), instead of overlapping per-segment boxes + joint
-  // discs. Result: a single SMOOTH strip per road, and a closed manifold tube
-  // (top + bottom + both side walls + end caps) so the slicer reports no
-  // non-manifold edges. Miter is clamped so corners stay tidy and never spill
-  // past the board edge.
-  const ribbon = (P, HW) => {
-    const pl = [P[0]];                                   // drop repeated points
-    for (let i = 1; i < P.length; i++) {
-      const q = pl[pl.length - 1];
-      if (Math.hypot(P[i].x - q.x, P[i].y - q.y) > 1e-4) pl.push(P[i]);
-    }
-    const m = pl.length;
-    if (m < 2) return false;
-    const segN = [];                                     // left unit normal per segment
-    for (let i = 0; i < m - 1; i++) {
-      const dx = pl[i + 1].x - pl[i].x, dy = pl[i + 1].y - pl[i].y;
-      const L = Math.hypot(dx, dy) || 1;
-      segN.push({ x: -dy / L, y: dx / L });
-    }
-    const base = acc.n;
-    for (let i = 0; i < m; i++) {
-      let nx, ny;
-      if (i === 0)          { nx = segN[0].x;     ny = segN[0].y; }
-      else if (i === m - 1) { nx = segN[m - 2].x; ny = segN[m - 2].y; }
-      else {
-        let mx = segN[i - 1].x + segN[i].x, my = segN[i - 1].y + segN[i].y;
-        const ml = Math.hypot(mx, my) || 1; mx /= ml; my /= ml;
-        const cos = mx * segN[i].x + my * segN[i].y;     // cos(½ turn)
-        const scale = Math.min(1.5, cos > 0.01 ? 1 / cos : 1.5); // clamp → no overhang
-        nx = mx * scale; ny = my * scale;
-      }
-      const g  = hf ? hf.heightAt(pl[i].x, pl[i].y) : BASE;
-      const lx = pl[i].x + nx * HW, ly = pl[i].y + ny * HW;
-      const rx = pl[i].x - nx * HW, ry = pl[i].y - ny * HW;
-      acc.pos.push(lx, g + RISE, -ly);   // 0 L-top
-      acc.pos.push(rx, g + RISE, -ry);   // 1 R-top
-      acc.pos.push(rx, g - BOT,  -ry);   // 2 R-bot
-      acc.pos.push(lx, g - BOT,  -ly);   // 3 L-bot
-      acc.n += 4;
-    }
-    const V = (i, k) => base + i * 4 + k;
-    for (let i = 0; i < m - 1; i++) {
-      acc.idx.push(V(i,0), V(i,1), V(i+1,1),  V(i,0), V(i+1,1), V(i+1,0)); // top
-      acc.idx.push(V(i,3), V(i+1,2), V(i,2),  V(i,3), V(i+1,3), V(i+1,2)); // bottom
-      acc.idx.push(V(i,0), V(i+1,0), V(i+1,3), V(i,0), V(i+1,3), V(i,3));  // left wall
-      acc.idx.push(V(i,1), V(i,2), V(i+1,2),  V(i,1), V(i+1,2), V(i+1,1)); // right wall
-    }
-    acc.idx.push(V(0,0), V(0,3), V(0,2),       V(0,0), V(0,2), V(0,1));         // start cap
-    acc.idx.push(V(m-1,0), V(m-1,1), V(m-1,2), V(m-1,0), V(m-1,2), V(m-1,3));   // end cap
-    return true;
+// THE ROAD FIX — the whole street network is rendered as ONE unified solid:
+// every road stamps a capsule into a signed-distance field (max-union →
+// perfectly rounded joins at every intersection), marching squares traces the
+// smooth outline, and netMesh emits one manifold draped slab per connected
+// region. No overlapping ribbons, no coplanar z-fighting, no jagged seams —
+// the network reads as a single smooth object, like a real printed map.
+function collectRoads(acc, roads, hf, seaLevelY) {
+  const RISE = 1.0;   // road surface above local ground (mm)
+
+  // Engineered road grade: average the terrain over a small cross so the
+  // surface rolls smoothly instead of tracking every terrain-cell bump, and
+  // clamp above sea level so river crossings read as continuous causeways
+  // (this kills the "dotted line over the river" artefact).
+  const floorY = (seaLevelY ?? BASE) + 0.25;
+  const ground = (x, y) => {
+    if (!hf) return BASE;
+    const d = 1.4;
+    let h = (hf.heightAt(x, y) + hf.heightAt(x + d, y) + hf.heightAt(x - d, y)
+           + hf.heightAt(x, y + d) + hf.heightAt(x, y - d)) / 5;
+    return h < floorY ? floorY : h;
   };
 
-  let count = 0;
-  for (const road of (roads || [])) {
-    const pts = road.points;
-    if (!pts || pts.length < 2) continue;
-    const HW = ROAD_HALF_W[road.tags?.highway] ?? 0.55;  // class width
-    // Clip to the board and chain consecutive in-bounds segments into
-    // continuous polylines, then ribbon each.
-    let cur = [];
-    let drew = false;
-    const flush = () => { if (cur.length >= 2 && ribbon(cur, HW)) drew = true; cur = []; };
-    for (let i = 0; i < pts.length - 1; i++) {
-      const seg = clipSegmentToSquare(pts[i], pts[i + 1], HW + 0.2);
-      if (!seg) { flush(); continue; }
-      const [a, b] = seg;
-      if (cur.length === 0) { cur.push(a, b); }
-      else {
-        const last = cur[cur.length - 1];
-        if (Math.hypot(last.x - a.x, last.y - a.y) < 0.05) cur.push(b);
-        else { flush(); cur.push(a, b); }
-      }
-    }
-    flush();
-    if (drew) count++;
-  }
-  return count;
+  const regions = buildNetworkMesh(acc, roads, {
+    R,
+    gridN: 384,                         // 0.34mm cells — below nozzle width
+    boundaryInside: boardInsideDist,
+    halfWidthOf: (road) => ROAD_HALF_W[road.tags?.highway] ?? 0.55,
+    topAt: (x, y) => ground(x, y) + RISE,
+    bottomDrop: 1.6,                    // sink well into the terrain
+    minArea: 0.5,
+  });
+  if (!regions) return 0;
+  return (roads || []).filter(r => r.points && r.points.length >= 2).length;
 }
 
 // ─── Water from REAL OSM polygons, rendered FLAT (smooth shorelines) ─────────
@@ -1068,7 +1037,7 @@ function collectParkPolys(acc, parks, hf) {
  * @param {Function} onProgress
  * @returns {{ group: THREE.Group, stats: Object }}
  */
-export function buildMapModelV2(features, terrainOptions, projection, vertExag, onProgress, shape = 'square') {
+export function buildMapModelV2(features, terrainOptions, projection, vertExag, onProgress, shape = 'square', engineOpts = {}) {
   onProgress?.('New engine: building terrain…', 62);
   const group = new THREE.Group();
 
@@ -1151,15 +1120,20 @@ export function buildMapModelV2(features, terrainOptions, projection, vertExag, 
   const nB = collectBuildings(bldgAcc, features.buildings, hf, mmPerM);
   onProgress?.(`New engine: ${nB} buildings draped`, 78);
   // Roads AND footpaths render together — per-class widths give the hierarchy
-  // (arteries wide, streets fine, paths hairline).
-  const nR = collectRoads(blackAcc, [...(features.roads || []), ...(features.paths || [])], hf);
-  // Render the REAL water polygons (smooth OSM shorelines) draped on the
-  // terrain surface so they're always visible and follow the ground — the
-  // natural-looking system. Size/isSea filter keeps oceans from blanketing land.
-  const nW = collectWaterPolys(blackAcc, waterPolys, hf, SEA_LEVEL_Y);
-  // Parks & green areas as subtly raised plates — detail that makes the map
-  // read instantly (Central Park, squares, golf courses…).
-  const nP = collectParkPolys(blackAcc, features.parks, hf);
+  // (arteries wide, streets fine, paths hairline). The Fable engine reuses
+  // this function for terrain+buildings only (blackLayer:false) and supplies
+  // its own unified ground inlay.
+  let nR = 0, nW = 0, nP = 0;
+  if (engineOpts.blackLayer !== false) {
+    nR = collectRoads(blackAcc, [...(features.roads || []), ...(features.paths || [])], hf, SEA_LEVEL_Y);
+    // Render the REAL water polygons (smooth OSM shorelines) draped on the
+    // terrain surface so they're always visible and follow the ground.
+    // Size/isSea filter keeps oceans from blanketing land.
+    nW = collectWaterPolys(blackAcc, waterPolys, hf, SEA_LEVEL_Y);
+    // Parks & green areas as subtly raised plates — detail that makes the map
+    // read instantly (Central Park, squares, golf courses…).
+    nP = collectParkPolys(blackAcc, features.parks, hf);
+  }
   onProgress?.(`New engine: ${nP} parks · finalising…`, 90);
 
   const terrainMesh  = whiteAcc.build(hf ? 'terrain' : 'base');

@@ -22,6 +22,28 @@ document.querySelectorAll('.reveal').forEach(el => io.observe(el));
 const heroImg = document.getElementById('hero-bg-img');
 if (heroImg) heroImg.addEventListener('error', () => { heroImg.style.display = 'none'; });
 
+// ── 2b. Scroll progress line — fills the top edge as you move down the page,
+//        and the hero scroll-cue fades out once you've started scrolling.
+const progress = document.getElementById('scroll-progress');
+const cue = document.querySelector('.scroll-cue');
+let ticking = false;
+function onScroll() {
+  if (ticking) return;
+  ticking = true;
+  requestAnimationFrame(() => {
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    const t = max > 0 ? window.scrollY / max : 0;
+    if (progress) progress.style.width = (t * 100).toFixed(2) + '%';
+    if (cue) {
+      cue.style.opacity = window.scrollY > 40 ? '0' : '';
+      cue.style.pointerEvents = window.scrollY > 40 ? 'none' : '';
+    }
+    ticking = false;
+  });
+}
+window.addEventListener('scroll', onScroll, { passive: true });
+onScroll();
+
 // ── 3. Admin-managed content ────────────────────────────────────────────────
 // The headline/sub are stored as admin-entered "rich text". We do NOT inject
 // them as raw HTML — only text plus <br> and <em> survive, everything else is
